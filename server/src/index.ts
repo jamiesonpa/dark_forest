@@ -15,9 +15,7 @@ const gameServer = new Server({
   server: httpServer,
 })
 
-gameServer
-  .define('star_system', StarSystemRoom)
-  .filterBy(['roomTag'])
+gameServer.define('star_system', StarSystemRoom)
 
 httpServer.listen(port, host, () => {
   console.log(`Colyseus server listening on ${host}:${port}`)

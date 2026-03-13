@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { PilotStation } from '@/ui/stations/PilotStation'
 import EWConsole from '@/systems/ew/EWConsole'
 import { StationSelector, type StationId } from '@/ui/stations/StationSelector'
@@ -24,7 +24,6 @@ export default function App() {
   const [serverWindowOpen, setServerWindowOpen] = useState(false)
   const setLocalPlayerId = useGameStore((s) => s.setLocalPlayerId)
   const upsertRemoteShips = useGameStore((s) => s.upsertRemoteShips)
-  const autoJoinAttemptedRef = useRef(false)
 
   const handleKey = useCallback((e: KeyboardEvent) => {
     if (e.key === 'F1') { e.preventDefault(); setStation('pilot') }
@@ -69,14 +68,6 @@ export default function App() {
       multiplayerClient.disconnect()
     }
   }, [setLocalPlayerId, upsertRemoteShips])
-
-  useEffect(() => {
-    // Ensure the local client joins by default so remote peers become visible immediately.
-    if (autoJoinAttemptedRef.current) return
-    if (status !== 'disconnected') return
-    autoJoinAttemptedRef.current = true
-    void connectMultiplayer()
-  }, [status, connectMultiplayer])
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>

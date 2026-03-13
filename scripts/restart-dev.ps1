@@ -6,6 +6,8 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $serverDir = Join-Path $root "server"
+$serverLogPath = Join-Path $root ".server-dev.log"
+$serverErrLogPath = Join-Path $root ".server-dev.err.log"
 
 function Stop-ByPort([int[]]$ports) {
   $procIds = @()
@@ -85,12 +87,22 @@ if (-not (Wait-PortFree -ports @(2567, 5173, 5174, 5175))) {
 
 if (-not $NoServer) {
   Write-Host "Starting server in background (no pop-out)..."
+  Set-Content -Path $serverLogPath -Value "" -Encoding Unicode
+  Set-Content -Path $serverErrLogPath -Value "" -Encoding Unicode
   $serverCommand = "/c cd /d ""$serverDir"" && .\node_modules\.bin\tsx.cmd src/index.ts"
-  $serverProc = Start-Process -FilePath "cmd.exe" -ArgumentList $serverCommand -WindowStyle Hidden -PassThru
+  $serverProc = Start-Process `
+    -FilePath "cmd.exe" `
+    -ArgumentList $serverCommand `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $serverLogPath `
+    -RedirectStandardError $serverErrLogPath `
+    -PassThru
   if (-not $serverProc) {
     throw "Failed to start server process."
   }
   Write-Host ("Server PID: " + $serverProc.Id)
+  Write-Host ("Server log: " + $serverLogPath)
+  Write-Host ("Server error log: " + $serverErrLogPath)
 
   $serverReady = $false
   for ($attempt = 1; $attempt -le 20; $attempt++) {

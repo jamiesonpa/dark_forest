@@ -15,7 +15,7 @@
     "@react-three/drei": "^9.92.7",
     "@react-three/fiber": "^8.15.12",
     "@react-three/postprocessing": "^2.19.1",
-    "colyseus.js": "^0.16.22",
+    "colyseus.js": "^0.15.28",
     "postprocessing": "^6.38.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
