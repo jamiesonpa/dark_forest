@@ -7,7 +7,6 @@ import { useIRSTStore } from '@/state/irstStore'
 const IRST_W = 320
 const IRST_H = 240
 export const IRSTCameraSphereRadius = 600
-export const IRSTCameraSphereCenter: [number, number, number] = [0, 0, 0]
 
 export function IRSTCamera() {
   const { gl, scene } = useThree()
@@ -120,10 +119,10 @@ export function IRSTCamera() {
     const outY = Math.sin(inclinationRad)
     const outZ = Math.cos(bearingRad) * Math.cos(inclinationRad)
 
-    // The rendered player ship stays at scene origin, so anchor the IRST sphere there.
-    const camX = IRSTCameraSphereCenter[0] + outX * IRSTCameraSphereRadius
-    const camY = IRSTCameraSphereCenter[1] + outY * IRSTCameraSphereRadius
-    const camZ = IRSTCameraSphereCenter[2] + outZ * IRSTCameraSphereRadius
+    const [shipX, shipY, shipZ] = ship.position
+    const camX = shipX + outX * IRSTCameraSphereRadius
+    const camY = shipY + outY * IRSTCameraSphereRadius
+    const camZ = shipZ + outZ * IRSTCameraSphereRadius
     const zoom = Math.max(1, Math.min(10, ship.irstZoom))
     cam.current.fov = 40 / zoom
     cam.current.updateProjectionMatrix()

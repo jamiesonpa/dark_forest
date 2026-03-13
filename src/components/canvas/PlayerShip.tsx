@@ -1,9 +1,7 @@
-import { useRef, useEffect, useMemo, useCallback } from 'react'
+import { useRef, useEffect, useMemo } from 'react'
 import { useLoader, useFrame } from '@react-three/fiber'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
-import { TransformControls } from '@react-three/drei'
 import * as THREE from 'three'
-import { useGameStore } from '@/state/gameStore'
 import type { ShipState } from '@/state/types'
 
 const RAVEN_OBJ = '/models/caldari_battleship_Raven.obj'
@@ -52,56 +50,6 @@ function createThrusterParticleData() {
   return { positions, velocities, lifetimes, maxLifetimes, colors, sizes, spawnSizes, endSizeScales }
 }
 
-function AxisArrow({
-  axis,
-  color,
-  length = 110,
-}: {
-  axis: 'x' | 'y' | 'z'
-  color: number
-  length?: number
-}) {
-  const headLength = 16
-  const shaftLength = Math.max(1, length - headLength)
-  const rotation: [number, number, number] =
-    axis === 'x'
-      ? [0, 0, -Math.PI / 2]
-      : axis === 'y'
-        ? [0, 0, 0]
-        : [Math.PI / 2, 0, 0]
-  const shaftPosition: [number, number, number] =
-    axis === 'x' ? [shaftLength / 2, 0, 0] : axis === 'y' ? [0, shaftLength / 2, 0] : [0, 0, shaftLength / 2]
-  const headPosition: [number, number, number] =
-    axis === 'x' ? [length, 0, 0] : axis === 'y' ? [0, length, 0] : [0, 0, length]
-
-  return (
-    <group>
-      <mesh position={shaftPosition} rotation={rotation}>
-        <cylinderGeometry args={[1.2, 1.2, shaftLength, 10]} />
-        <meshBasicMaterial color={color} depthTest={false} depthWrite={false} toneMapped={false} />
-      </mesh>
-      <mesh position={headPosition} rotation={rotation}>
-        <coneGeometry args={[3.4, headLength, 12]} />
-        <meshBasicMaterial color={color} depthTest={false} depthWrite={false} toneMapped={false} />
-      </mesh>
-    </group>
-  )
-}
-
-function PivotDebugGizmo() {
-  return (
-    <group renderOrder={999}>
-      <mesh>
-        <sphereGeometry args={[7, 18, 18]} />
-        <meshBasicMaterial color={0xff3333} depthTest={false} depthWrite={false} toneMapped={false} />
-      </mesh>
-      <AxisArrow axis="x" color={0xff3333} />
-      <AxisArrow axis="y" color={0x33ff33} />
-      <AxisArrow axis="z" color={0x3388ff} />
-    </group>
-  )
-}
-
 interface PlayerShipProps {
   ship: ShipState
   isLocal: boolean
@@ -110,21 +58,12 @@ interface PlayerShipProps {
 
 export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   const groupRef = useRef<THREE.Group>(null)
-  const debugPivotRef = useRef<THREE.Group>(null)
   const thrusterPointsRefs = useRef<Array<THREE.Points | null>>([])
   const thrusterMaterialRefs = useRef<Array<THREE.PointsMaterial | null>>([])
   const warpDistortionPointsRefs = useRef<Array<THREE.Points | null>>([])
   const warpDistortionMaterialRefs = useRef<Array<THREE.PointsMaterial | null>>([])
-  const debugPivotEnabled = useGameStore((s) => s.debugPivotEnabled)
-  const debugPivotResetCount = useGameStore((s) => s.debugPivotResetCount)
-  const setDebugPivotPosition = useGameStore((s) => s.setDebugPivotPosition)
-  const setDebugPivotDragging = useGameStore((s) => s.setDebugPivotDragging)
   const obj = useLoader(OBJLoader, RAVEN_OBJ)
   const hullTexture = useLoader(THREE.TextureLoader, RAVEN_TEX)
-  const debugPivotStartPosition = useMemo<[number, number, number]>(
-    () => useGameStore.getState().debugPivotPosition,
-    [debugPivotEnabled]
-  )
   const shipCenterOffset = useMemo<[number, number, number]>(() => {
     const box = new THREE.Box3().setFromObject(obj)
     const center = new THREE.Vector3()
@@ -217,13 +156,6 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   }, [hullTexture])
 
   useEffect(() => {
-    if (!isLocal) return
-    if (!debugPivotEnabled) {
-      setDebugPivotDragging(false)
-    }
-  }, [debugPivotEnabled, isLocal, setDebugPivotDragging])
-
-  useEffect(() => {
     const configureParticleMaterial = (material: THREE.PointsMaterial | null) => {
       if (!material) return
       material.onBeforeCompile = (shader) => {
@@ -273,27 +205,6 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
       configureParticleMaterial(material)
     })
   }, [])
-
-  const syncDebugPivotPosition = useCallback((source?: THREE.Object3D | null) => {
-    const targetObject = source ?? debugPivotRef.current
-    if (!targetObject) return
-    const p = targetObject.position
-    const prev = useGameStore.getState().debugPivotPosition
-    if (
-      Math.abs(p.x - prev[0]) > 0.0001 ||
-      Math.abs(p.y - prev[1]) > 0.0001 ||
-      Math.abs(p.z - prev[2]) > 0.0001
-    ) {
-      setDebugPivotPosition([p.x, p.y, p.z])
-    }
-  }, [setDebugPivotPosition])
-
-  useEffect(() => {
-    if (!isLocal) return
-    if (!debugPivotRef.current) return
-    debugPivotRef.current.position.set(0, 0, 0)
-    syncDebugPivotPosition(debugPivotRef.current)
-  }, [debugPivotResetCount, isLocal, syncDebugPivotPosition])
 
   useFrame((_state, delta) => {
     if (!groupRef.current) return
@@ -586,9 +497,6 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
         : 0
     })
 
-    if (isLocal && debugPivotEnabled) {
-      syncDebugPivotPosition()
-    }
   })
 
   useEffect(() => {
@@ -639,29 +547,6 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   return (
     <group ref={groupRef} position={ship.position}>
       <group name={isLocal ? getPlayerPivotAnchorName(playerId) : undefined} position={[0, 0, 0]} />
-      {isLocal && debugPivotEnabled && (
-        <TransformControls
-          object={debugPivotRef as unknown as { current: THREE.Object3D }}
-          mode="translate"
-          space="local"
-          size={0.7}
-          onChange={(event) => {
-            const target = (event as { target?: { object?: THREE.Object3D } }).target?.object ?? null
-            syncDebugPivotPosition(target)
-          }}
-          onObjectChange={() => syncDebugPivotPosition()}
-          onMouseDown={() => setDebugPivotDragging(true)}
-          onMouseUp={() => {
-            syncDebugPivotPosition()
-            setDebugPivotDragging(false)
-          }}
-          onPointerUp={() => setDebugPivotDragging(false)}
-        >
-          <group ref={debugPivotRef} position={debugPivotStartPosition}>
-            <PivotDebugGizmo />
-          </group>
-        </TransformControls>
-      )}
       <group position={visualOriginCorrection}>
         <primitive object={centeredObj} scale={1} />
         {thrusterEmitters.map((_, index) => {

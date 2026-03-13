@@ -18,14 +18,17 @@ export function OrbitCameraController() {
   const setDebugPivotPosition = useGameStore((s) => s.setDebugPivotPosition)
   const debugPivotDragging = useGameStore((s) => s.debugPivotDragging)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
+  const localShipPosition = useGameStore((s) => s.ship.position)
 
   useFrame(({ scene }) => {
     const controls = controlsRef.current
     if (!controls) return
 
     if (debugPivotEnabled) {
+      // debugPivotPosition is local-space relative to the local ship.
+      const [px, py, pz] = localShipPosition
       const [tx, ty, tz] = debugPivotPosition
-      targetVecRef.current.set(tx, ty, tz)
+      targetVecRef.current.set(px + tx, py + ty, pz + tz)
     } else {
       if (!shipPivotAnchorRef.current || !shipPivotAnchorRef.current.parent) {
         shipPivotAnchorRef.current = scene.getObjectByName(getPlayerPivotAnchorName(localPlayerId)) ?? null
@@ -37,13 +40,20 @@ export function OrbitCameraController() {
         targetVecRef.current.set(...SHIP_CENTER_PIVOT)
       }
 
+      const localAnchor = shipPivotAnchor
+        ? [
+            shipPivotAnchor.position.x,
+            shipPivotAnchor.position.y,
+            shipPivotAnchor.position.z,
+          ] as [number, number, number]
+        : SHIP_CENTER_PIVOT
       const prevPivot = useGameStore.getState().debugPivotPosition
       if (
-        Math.abs(targetVecRef.current.x - prevPivot[0]) > 0.001 ||
-        Math.abs(targetVecRef.current.y - prevPivot[1]) > 0.001 ||
-        Math.abs(targetVecRef.current.z - prevPivot[2]) > 0.001
+        Math.abs(localAnchor[0] - prevPivot[0]) > 0.001 ||
+        Math.abs(localAnchor[1] - prevPivot[1]) > 0.001 ||
+        Math.abs(localAnchor[2] - prevPivot[2]) > 0.001
       ) {
-        setDebugPivotPosition([targetVecRef.current.x, targetVecRef.current.y, targetVecRef.current.z])
+        setDebugPivotPosition(localAnchor)
       }
     }
 

@@ -2,7 +2,7 @@ import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
-import { IRSTCameraSphereCenter, IRSTCameraSphereRadius } from './IRSTCamera'
+import { IRSTCameraSphereRadius } from './IRSTCamera'
 
 const CONE_LENGTH = 260
 const CONE_RADIUS = 70
@@ -30,9 +30,10 @@ export function IRSTCameraDebugCone() {
       Math.cos(bearingRad) * Math.cos(inclinationRad),
     ).normalize()
 
-    const camX = IRSTCameraSphereCenter[0] + OUT_DIR.x * IRSTCameraSphereRadius
-    const camY = IRSTCameraSphereCenter[1] + OUT_DIR.y * IRSTCameraSphereRadius
-    const camZ = IRSTCameraSphereCenter[2] + OUT_DIR.z * IRSTCameraSphereRadius
+    const [shipX, shipY, shipZ] = ship.position
+    const camX = shipX + OUT_DIR.x * IRSTCameraSphereRadius
+    const camY = shipY + OUT_DIR.y * IRSTCameraSphereRadius
+    const camZ = shipZ + OUT_DIR.z * IRSTCameraSphereRadius
 
     CONE_POS.set(camX, camY, camZ).addScaledVector(OUT_DIR, CONE_LENGTH * 0.5)
     CONE_QUAT.setFromUnitVectors(Y_AXIS, OUT_DIR)
