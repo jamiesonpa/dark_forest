@@ -15,6 +15,7 @@ export interface NetworkShipSnapshot {
 }
 
 export type MultiplayerStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
+const DEFAULT_ROOM_TAG = 'default'
 
 type Handlers = {
   onStatusChange?: (status: MultiplayerStatus, detail?: string) => void
@@ -67,7 +68,9 @@ class ColyseusMultiplayerClient {
     this.updateStatus('connecting')
     try {
       const client = new Client(serverUrl)
-      const room = await client.joinOrCreate<ColyseusRoomState>('star_system')
+      const room = await client.joinOrCreate<ColyseusRoomState>('star_system', {
+        roomTag: DEFAULT_ROOM_TAG,
+      })
       this.room = room
       this.updateStatus('connected')
       this.handlers.onJoined?.(room.sessionId)

@@ -32,7 +32,7 @@ function Stop-WorkspaceDevProcs([string]$workspacePath) {
   $patterns = @(
     "*vite*",
     "*npm run dev*",
-    "*tsx watch src/index.ts*",
+    "*watch src/index.ts*",
     "*tsx src/index.ts*",
     "*tsx.cmd src/index.ts*"
   )

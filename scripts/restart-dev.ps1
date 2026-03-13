@@ -50,13 +50,23 @@ function Wait-PortFree([int[]]$ports, [int]$maxAttempts = 20) {
 }
 
 function Stop-WorkspaceDevProcs([string]$workspacePath) {
+  $patterns = @(
+    "*vite*",
+    "*npm run dev*",
+    "*watch src/index.ts*",
+    "*tsx src/index.ts*",
+    "*tsx.cmd src/index.ts*"
+  )
+
   $devProcs = Get-CimInstance Win32_Process | Where-Object {
-    $_.CommandLine -and
-    $_.CommandLine -like "*$workspacePath*" -and
-    (
-      $_.CommandLine -like "*vite*" -or
-      $_.CommandLine -like "*tsx watch src/index.ts*"
-    )
+    if (-not $_.CommandLine) { return $false }
+    if ($_.CommandLine -notlike "*$workspacePath*") { return $false }
+
+    foreach ($pattern in $patterns) {
+      if ($_.CommandLine -like $pattern) { return $true }
+    }
+
+    return $false
   }
 
   foreach ($proc in $devProcs) {
