@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ShipStatusPrototype } from './ShipStatusPrototype'
 import { ShipAttitudePanel } from './ShipAttitudePanel'
 import { IRSTView } from './IRSTView'
@@ -23,8 +23,18 @@ export function HUD() {
   const asteroidBeltMaxSize = useGameStore((s) => s.asteroidBeltMaxSize)
   const setAsteroidBeltSettings = useGameStore((s) => s.setAsteroidBeltSettings)
   const spawnAsteroidBelt = useGameStore((s) => s.spawnAsteroidBelt)
+  const localPlayerId = useGameStore((s) => s.localPlayerId)
+  const shipsById = useGameStore((s) => s.shipsById)
   const [perf, setPerf] = useState({ fps: 0, avgFps: 0, frameMs: 0 })
+  const [remoteActivityMs, setRemoteActivityMs] = useState<Record<string, number>>({})
+  const [remoteNowMs, setRemoteNowMs] = useState(() => Date.now())
   const rafRef = useRef<number | null>(null)
+  const prevRemotePositionsRef = useRef<Record<string, [number, number, number]>>({})
+  const playerIds = useMemo(() => Object.keys(shipsById), [shipsById])
+  const remotePlayerIds = useMemo(
+    () => playerIds.filter((id) => id !== localPlayerId),
+    [playerIds, localPlayerId]
+  )
 
   useEffect(() => {
     let lastFrameAt = performance.now()
@@ -60,6 +70,50 @@ export function HUD() {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     }
+  }, [])
+
+  useEffect(() => {
+    const nextPrev = { ...prevRemotePositionsRef.current }
+    const nextActivity = { ...remoteActivityMs }
+    let activityChanged = false
+
+    remotePlayerIds.forEach((id) => {
+      const ship = shipsById[id]
+      if (!ship) return
+      const prev = prevRemotePositionsRef.current[id]
+      const curr = ship.position
+      if (!prev) {
+        nextActivity[id] = Date.now()
+        activityChanged = true
+      } else {
+        const moved = Math.hypot(curr[0] - prev[0], curr[1] - prev[1], curr[2] - prev[2])
+        if (moved > 0.01) {
+          nextActivity[id] = Date.now()
+          activityChanged = true
+        }
+      }
+      nextPrev[id] = [curr[0], curr[1], curr[2]]
+    })
+
+    Object.keys(nextPrev).forEach((id) => {
+      if (!remotePlayerIds.includes(id)) delete nextPrev[id]
+    })
+    Object.keys(nextActivity).forEach((id) => {
+      if (!remotePlayerIds.includes(id)) {
+        delete nextActivity[id]
+        activityChanged = true
+      }
+    })
+
+    prevRemotePositionsRef.current = nextPrev
+    if (activityChanged) {
+      setRemoteActivityMs(nextActivity)
+    }
+  }, [remotePlayerIds, shipsById, remoteActivityMs])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setRemoteNowMs(Date.now()), 250)
+    return () => window.clearInterval(timer)
   }, [])
 
   return (
@@ -115,6 +169,41 @@ export function HUD() {
               <span className="hud-debug-axis">MS</span>
               <span className="hud-debug-value">{perf.frameMs.toFixed(2)}</span>
             </div>
+            <div className="hud-debug-row">
+              <span className="hud-debug-axis">PLAYERS</span>
+              <span className="hud-debug-value">{playerIds.length}</span>
+            </div>
+            <div className="hud-debug-row">
+              <span className="hud-debug-axis">REMOTE</span>
+              <span className="hud-debug-value">{remotePlayerIds.length}</span>
+            </div>
+            <div className="hud-debug-row">
+              <span className="hud-debug-axis">LOCAL ID</span>
+              <span className="hud-debug-value">{localPlayerId.slice(0, 8) || '-'}</span>
+            </div>
+            <div className="hud-debug-row">
+              <span className="hud-debug-axis">ROOM IDS</span>
+              <span className="hud-debug-value">
+                {playerIds.length > 0
+                  ? playerIds.map((id) => id.slice(0, 8)).join(', ')
+                  : '-'}
+              </span>
+            </div>
+            {remotePlayerIds.map((id) => {
+              const ship = shipsById[id]
+              const activityMs = remoteActivityMs[id]
+              const ageSec = activityMs ? (remoteNowMs - activityMs) / 1000 : -1
+              return (
+                <div key={id} className="hud-debug-row">
+                  <span className="hud-debug-axis">{`R ${id.slice(0, 4)}`}</span>
+                  <span className="hud-debug-value">
+                    {ship
+                      ? `x:${ship.position[0].toFixed(1)} z:${ship.position[2].toFixed(1)} lastMove:${ageSec < 0 ? '-' : `${ageSec.toFixed(1)}s`}`
+                      : 'missing'}
+                  </span>
+                </div>
+              )
+            })}
             <button
               type="button"
               className={`hud-debug-toggle ${showIRSTCone ? 'active' : ''}`}

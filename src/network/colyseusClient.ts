@@ -39,7 +39,7 @@ type ColyseusShip = {
 }
 
 type ColyseusRoomState = {
-  ships: Map<string, ColyseusShip> & {
+  ships?: Map<string, ColyseusShip> & {
     forEach: (callback: (value: ColyseusShip, key: string) => void) => void
   }
 }
@@ -48,6 +48,7 @@ class ColyseusMultiplayerClient {
   private room: Room<ColyseusRoomState> | null = null
   private handlers: Handlers = {}
   private status: MultiplayerStatus = 'disconnected'
+  private syncTimer: ReturnType<typeof setInterval> | null = null
 
   setHandlers(handlers: Handlers) {
     this.handlers = handlers
@@ -70,9 +71,10 @@ class ColyseusMultiplayerClient {
       this.room = room
       this.updateStatus('connected')
       this.handlers.onJoined?.(room.sessionId)
+      this.publishSnapshot(room.state)
 
       room.onStateChange((state) => {
-        this.handlers.onShipsUpdate?.(this.toSnapshot(state))
+        this.publishSnapshot(state)
       })
       room.onLeave((code) => {
         this.room = null
@@ -81,6 +83,12 @@ class ColyseusMultiplayerClient {
       room.onError((code, message) => {
         this.updateStatus('error', `Room error (${code}): ${message}`)
       })
+
+      // Fallback polling keeps UI state in sync even if patch callbacks are missed.
+      this.syncTimer = setInterval(() => {
+        if (!this.room) return
+        this.publishSnapshot(this.room.state)
+      }, 250)
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Failed to connect'
       this.updateStatus('error', detail)
@@ -89,6 +97,10 @@ class ColyseusMultiplayerClient {
   }
 
   disconnect() {
+    if (this.syncTimer) {
+      clearInterval(this.syncTimer)
+      this.syncTimer = null
+    }
     if (this.room) {
       void this.room.leave()
       this.room = null
@@ -111,8 +123,13 @@ class ColyseusMultiplayerClient {
     this.handlers.onStatusChange?.(status, detail)
   }
 
-  private toSnapshot(state: ColyseusRoomState): Record<string, NetworkShipSnapshot> {
+  private publishSnapshot(state: ColyseusRoomState | undefined | null) {
+    this.handlers.onShipsUpdate?.(this.toSnapshot(state))
+  }
+
+  private toSnapshot(state: ColyseusRoomState | undefined | null): Record<string, NetworkShipSnapshot> {
     const next: Record<string, NetworkShipSnapshot> = {}
+    if (!state?.ships) return next
     state.ships.forEach((ship, key) => {
       next[key] = {
         id: ship.id,

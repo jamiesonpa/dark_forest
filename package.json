@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:restart": "powershell -ExecutionPolicy Bypass -File ./scripts/restart-dev.ps1",
+    "dev:stop": "powershell -ExecutionPolicy Bypass -File ./scripts/stop-dev.ps1",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

@@ -6,9 +6,12 @@ const { Room } = colyseus
 
 export class StarSystemRoom extends Room<StarSystemRoomState> {
   maxClients = 20
+  private moveDebugLastLogMs = new Map<string, number>()
+  private moveDebugLastPos = new Map<string, { x: number; y: number; z: number }>()
 
   onCreate(_options: Record<string, unknown>) {
     this.setState(new StarSystemRoomState())
+    console.log(`[room:${this.roomId}] created`)
     // Room state is now synced to all clients
     this.onMessage('warp', (client, message: { celestialId: string }) => {
       const ship = this.state.ships.get(client.sessionId)
@@ -21,6 +24,23 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
         ship.y = message.y
         ship.z = message.z
       }
+
+      const nowMs = Date.now()
+      const lastLog = this.moveDebugLastLogMs.get(client.sessionId) ?? 0
+      const prevPos = this.moveDebugLastPos.get(client.sessionId)
+      const movedDistance = prevPos
+        ? Math.hypot(message.x - prevPos.x, message.y - prevPos.y, message.z - prevPos.z)
+        : 0
+
+      // Debug log once per second per player to confirm move packets arrive.
+      if (nowMs - lastLog >= 1000) {
+        console.log(
+          `[room:${this.roomId}] move session=${client.sessionId.slice(0, 8)} pos=(${message.x.toFixed(1)}, ${message.y.toFixed(1)}, ${message.z.toFixed(1)}) delta=${movedDistance.toFixed(1)}`
+        )
+        this.moveDebugLastLogMs.set(client.sessionId, nowMs)
+      }
+
+      this.moveDebugLastPos.set(client.sessionId, { x: message.x, y: message.y, z: message.z })
     })
   }
 
@@ -34,9 +54,17 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
     ship.y = 0
     ship.z = Math.sin(angle) * SPAWN_RING_RADIUS
     this.state.ships.set(client.sessionId, ship)
+    console.log(
+      `[room:${this.roomId}] join session=${client.sessionId} players=${this.state.ships.size}`
+    )
   }
 
   onLeave(client: Client) {
     this.state.ships.delete(client.sessionId)
+    this.moveDebugLastLogMs.delete(client.sessionId)
+    this.moveDebugLastPos.delete(client.sessionId)
+    console.log(
+      `[room:${this.roomId}] leave session=${client.sessionId} players=${this.state.ships.size}`
+    )
   }
 }
