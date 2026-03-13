@@ -6,6 +6,7 @@ import { StarSystemRoom } from './rooms/StarSystemRoom.js'
 const { Server } = colyseus
 
 const port = Number(process.env.PORT ?? 2567)
+const host = process.env.HOST ?? '0.0.0.0'
 const app = express()
 app.use(express.json())
 const httpServer = createServer(app)
@@ -16,6 +17,6 @@ const gameServer = new Server({
 
 gameServer.define('star_system', StarSystemRoom)
 
-httpServer.listen(port, () => {
-  console.log(`Colyseus server listening on ws://localhost:${port}`)
+httpServer.listen(port, host, () => {
+  console.log(`Colyseus server listening on ${host}:${port}`)
 })

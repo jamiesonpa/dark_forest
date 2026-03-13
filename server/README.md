@@ -14,10 +14,10 @@ cd server && npm install
 npm run dev
 ```
 
-Server listens on `ws://localhost:2567` by default. Set `PORT` to change.
+Server listens on `0.0.0.0:2567` by default (all interfaces). Set `PORT` to change port and `HOST` to override bind address.
 
-For LAN multiplayer, start the server on the host machine and share the host LAN IP
-(example: `192.168.1.24`) with the joining player.
+For LAN/Tailscale multiplayer, start the server on the host machine and share the host IP
+(example LAN: `192.168.1.24`, example Tailscale: `100.x.y.z`) with the joining player.
 
 ## Room: `star_system`
 
@@ -36,7 +36,7 @@ Client integration: use `colyseus.js` or `colyseus-client` to join the room and 
    - In the game HUD, connect to `localhost:2567`
 2. Friend machine:
    - Start only the game client.
-   - In the game HUD, connect to `<host-lan-ip>:2567` (example `192.168.1.24:2567`).
+   - In the game HUD, connect to `<host-ip>:2567` (example `192.168.1.24:2567` or `100.x.y.z:2567`).
 3. Verify:
    - Both players appear in the same room.
    - Second join spawns offset from first ship.
