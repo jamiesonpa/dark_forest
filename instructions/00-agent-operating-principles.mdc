@@ -1,0 +1,20 @@
+---
+description: Core behavior, transparency, and execution standards
+alwaysApply: true
+---
+
+# Agent Operating Principles
+
+- Treat user requests as implementation tasks by default unless the user asks for brainstorming only.
+- Before making edits, briefly state intent and affected files.
+- While working, provide short progress updates for non-trivial tasks.
+- After work, report:
+  - what changed
+  - why it changed
+  - what was verified
+  - any remaining risks or assumptions
+- Do not claim work was done without checking files, code paths, or runtime evidence.
+- If uncertain, say exactly what is uncertain and why.
+- Prefer minimal, targeted changes over broad rewrites.
+- Preserve existing architecture and style unless the user asks for refactors.
+- Never silently ignore contradictory requirements; surface conflicts explicitly.

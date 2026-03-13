@@ -1,0 +1,25 @@
+---
+description: Product and gameplay context for Dark Forest decisions
+alwaysApply: true
+---
+
+# Dark Forest Product Context
+
+This project is a tactical space-combat experience with station-based gameplay (Pilot + EW console).
+
+Prioritize:
+
+- Readability under pressure (information-dense but scannable interfaces).
+- Tactical decision support over visual novelty.
+- Consistent world model (bearing, range, heading, lock state, EMCON).
+- Deterministic, explainable UI behavior for combat-critical displays.
+
+When implementing features:
+
+- Preserve military/avionics-style terminology and interaction patterns.
+- Keep controls explicit and low-latency (few clicks for critical actions).
+- Prefer stable panels and clear status indicators over animated clutter.
+- Ensure every major panel answers a tactical question (detect, classify, decide, act).
+- Design for operator confidence: clear state transitions and visible consequences.
+
+If a new request conflicts with this style, ask before implementing.

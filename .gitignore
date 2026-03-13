@@ -1,0 +1,7 @@
+node_modules/
+dist/
+server/node_modules/
+*.tsbuildinfo
+.vite/
+.env
+starmap_2020_8k.exr

@@ -1,0 +1,41 @@
+import type { EnemyState, ShipState } from '@/state/types'
+
+export const defaultShipState: ShipState = {
+  position: [0, 0, 0],
+  shield: 5000,
+  shieldMax: 5000,
+  armor: 4000,
+  armorMax: 4000,
+  hull: 6000,
+  hullMax: 6000,
+  capacitor: 800,
+  capacitorMax: 800,
+  targetSpeed: 0,
+  mwdActive: false,
+  mwdRemaining: 0,
+  mwdCooldownRemaining: 0,
+  dampenersActive: true,
+  bearing: 0,
+  inclination: 0,
+  actualHeading: 0,
+  actualSpeed: 0,
+  actualInclination: 0,
+  rollAngle: 0,
+  thermalSignature: 285,
+  radioSignature: -42,
+  irstMode: 'BHOT',
+  laserRange: -1,
+  irstZoom: 2,
+  irstBearing: 0,
+  irstInclination: 0,
+}
+
+export const defaultEnemyState: EnemyState = {
+  thrustersOn: true,
+  shieldsUp: true,
+  speed: 0,
+  heading: 90,
+  radarMode: 'off',
+  position: [0, 0, -20000],
+  missileLaunched: false,
+}

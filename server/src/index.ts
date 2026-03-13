@@ -1,0 +1,19 @@
+import { createServer } from 'http'
+import express from 'express'
+import { Server } from 'colyseus'
+import { StarSystemRoom } from './rooms/StarSystemRoom.js'
+
+const port = Number(process.env.PORT ?? 2567)
+const app = express()
+app.use(express.json())
+const httpServer = createServer(app)
+
+const gameServer = new Server({
+  server: httpServer,
+})
+
+gameServer.define('star_system', StarSystemRoom)
+
+httpServer.listen(port, () => {
+  console.log(`Colyseus server listening on ws://localhost:${port}`)
+})

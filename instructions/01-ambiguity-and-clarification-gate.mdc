@@ -1,0 +1,25 @@
+---
+description: Force clarifying questions when requirements are ambiguous
+alwaysApply: true
+---
+
+# Ambiguity And Clarification Gate
+
+Before coding, stop and ask clarifying questions if any of the following are true:
+
+- Multiple valid interpretations would produce different implementations.
+- Acceptance criteria are missing (what counts as done is unclear).
+- Scope is unclear (single file vs system-wide, feature vs bugfix).
+- Backward compatibility expectations are unspecified.
+- UI/UX behavior is undefined for key states (empty/loading/error/disabled).
+- A request conflicts with existing project conventions.
+
+When asking, use this format:
+
+1) "My current understanding: <one sentence>"
+2) "Ambiguity: <specific point>"
+3) "Options: A / B / C"
+4) "Recommendation: <best default>"
+5) "Please confirm: <decision needed>"
+
+If ambiguity is low-risk, proceed with a clearly stated assumption and label it as an assumption in the final response.
