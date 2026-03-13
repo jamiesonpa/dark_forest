@@ -4,11 +4,13 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { TransformControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
+import type { ShipState } from '@/state/types'
 
 const RAVEN_OBJ = '/models/caldari_battleship_Raven.obj'
 const RAVEN_TEX = '/models/raven_tex.png'
 export const PLAYER_SHIP_HULL_OBJECT_NAME = 'player-ship-hull'
 export const PLAYER_SHIP_PIVOT_ANCHOR_NAME = 'player-ship-pivot-anchor'
+export const getPlayerPivotAnchorName = (playerId: string) => `${PLAYER_SHIP_PIVOT_ANCHOR_NAME}-${playerId}`
 const MAX_SUBWARP_SPEED = 215
 const MWD_SPEED = 800
 const THRUSTER_PARTICLE_COUNT = 74
@@ -100,7 +102,13 @@ function PivotDebugGizmo() {
   )
 }
 
-export function PlayerShip() {
+interface PlayerShipProps {
+  ship: ShipState
+  isLocal: boolean
+  playerId: string
+}
+
+export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   const groupRef = useRef<THREE.Group>(null)
   const debugPivotRef = useRef<THREE.Group>(null)
   const thrusterPointsRefs = useRef<Array<THREE.Points | null>>([])
@@ -209,10 +217,11 @@ export function PlayerShip() {
   }, [hullTexture])
 
   useEffect(() => {
+    if (!isLocal) return
     if (!debugPivotEnabled) {
       setDebugPivotDragging(false)
     }
-  }, [debugPivotEnabled, setDebugPivotDragging])
+  }, [debugPivotEnabled, isLocal, setDebugPivotDragging])
 
   useEffect(() => {
     const configureParticleMaterial = (material: THREE.PointsMaterial | null) => {
@@ -280,14 +289,14 @@ export function PlayerShip() {
   }, [setDebugPivotPosition])
 
   useEffect(() => {
+    if (!isLocal) return
     if (!debugPivotRef.current) return
     debugPivotRef.current.position.set(0, 0, 0)
     syncDebugPivotPosition(debugPivotRef.current)
-  }, [debugPivotResetCount, syncDebugPivotPosition])
+  }, [debugPivotResetCount, isLocal, syncDebugPivotPosition])
 
   useFrame((_state, delta) => {
     if (!groupRef.current) return
-    const ship = useGameStore.getState().ship
     const yaw = THREE.MathUtils.degToRad(ship.actualHeading)
     const pitch = THREE.MathUtils.degToRad(ship.actualInclination)
     const roll = THREE.MathUtils.degToRad(ship.rollAngle)
@@ -577,7 +586,7 @@ export function PlayerShip() {
         : 0
     })
 
-    if (debugPivotEnabled) {
+    if (isLocal && debugPivotEnabled) {
       syncDebugPivotPosition()
     }
   })
@@ -628,9 +637,9 @@ export function PlayerShip() {
   if (!centeredObj) return null
 
   return (
-    <group ref={groupRef} position={[0, 0, 0]}>
-      <group name={PLAYER_SHIP_PIVOT_ANCHOR_NAME} position={[0, 0, 0]} />
-      {debugPivotEnabled && (
+    <group ref={groupRef} position={ship.position}>
+      <group name={isLocal ? getPlayerPivotAnchorName(playerId) : undefined} position={[0, 0, 0]} />
+      {isLocal && debugPivotEnabled && (
         <TransformControls
           object={debugPivotRef as unknown as { current: THREE.Object3D }}
           mode="translate"

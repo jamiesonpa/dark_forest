@@ -1,7 +1,9 @@
 import { createServer } from 'http'
 import express from 'express'
-import { Server } from 'colyseus'
+import colyseus from 'colyseus'
 import { StarSystemRoom } from './rooms/StarSystemRoom.js'
+
+const { Server } = colyseus
 
 const port = Number(process.env.PORT ?? 2567)
 const app = express()

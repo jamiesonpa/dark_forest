@@ -1,5 +1,8 @@
-import { Room, Client } from 'colyseus'
+import colyseus, { type Client } from 'colyseus'
 import { StarSystemRoomState, ShipState } from '../schema/GameState.js'
+
+const SPAWN_RING_RADIUS = 1200
+const { Room } = colyseus
 
 export class StarSystemRoom extends Room<StarSystemRoomState> {
   maxClients = 20
@@ -25,6 +28,11 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
     const ship = new ShipState()
     ship.id = client.sessionId
     ship.name = 'Raven'
+    const playerIndex = this.state.ships.size
+    const angle = (Math.PI * 2 * playerIndex) / Math.max(1, this.maxClients)
+    ship.x = Math.cos(angle) * SPAWN_RING_RADIUS
+    ship.y = 0
+    ship.z = Math.sin(angle) * SPAWN_RING_RADIUS
     this.state.ships.set(client.sessionId, ship)
   }
 

@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
-import { PLAYER_SHIP_PIVOT_ANCHOR_NAME } from './PlayerShip'
+import { getPlayerPivotAnchorName } from './PlayerShip'
 
 const MIN_DISTANCE = 200
 const MAX_DISTANCE = 2343.75
@@ -17,6 +17,7 @@ export function OrbitCameraController() {
   const debugPivotPosition = useGameStore((s) => s.debugPivotPosition)
   const setDebugPivotPosition = useGameStore((s) => s.setDebugPivotPosition)
   const debugPivotDragging = useGameStore((s) => s.debugPivotDragging)
+  const localPlayerId = useGameStore((s) => s.localPlayerId)
 
   useFrame(({ scene }) => {
     const controls = controlsRef.current
@@ -27,7 +28,7 @@ export function OrbitCameraController() {
       targetVecRef.current.set(tx, ty, tz)
     } else {
       if (!shipPivotAnchorRef.current || !shipPivotAnchorRef.current.parent) {
-        shipPivotAnchorRef.current = scene.getObjectByName(PLAYER_SHIP_PIVOT_ANCHOR_NAME) ?? null
+        shipPivotAnchorRef.current = scene.getObjectByName(getPlayerPivotAnchorName(localPlayerId)) ?? null
       }
       const shipPivotAnchor = shipPivotAnchorRef.current
       if (shipPivotAnchor) {
@@ -48,7 +49,7 @@ export function OrbitCameraController() {
 
     controls.enabled = !debugPivotDragging
     controls.target.copy(targetVecRef.current)
-  })
+  }, 1)
 
   return (
     <OrbitControls

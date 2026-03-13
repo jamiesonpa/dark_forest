@@ -9,16 +9,29 @@ const LOCAL_CELESTIAL_OFFSET: [number, number, number] = [0, 0, -2500]
 
 export function Grid() {
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
+  const shipsById = useGameStore((s) => s.shipsById)
+  const localPlayerId = useGameStore((s) => s.localPlayerId)
   const celestial = useMemo(
     () => getCelestialById(currentCelestialId),
     [currentCelestialId]
+  )
+  const ships = useMemo(
+    () => Object.entries(shipsById),
+    [shipsById]
   )
 
   if (!celestial) return null
 
   return (
     <group position={[0, 0, 0]}>
-      <PlayerShip />
+      {ships.map(([id, ship]) => (
+        <PlayerShip
+          key={id}
+          playerId={id}
+          ship={ship}
+          isLocal={id === localPlayerId}
+        />
+      ))}
       <AsteroidBelt />
       <group position={LOCAL_CELESTIAL_OFFSET}>
         <CelestialBody celestial={celestial} isDistant={false} />

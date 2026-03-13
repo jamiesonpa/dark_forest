@@ -25,6 +25,7 @@ import {
   TURN_RATE_GAIN,
 } from '@/systems/simulation/constants'
 import { clamp, lerp, shortestAngleDelta } from '@/systems/simulation/lib/math'
+import { multiplayerClient } from '@/network/colyseusClient'
 
 type SimControlKey = 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown' | 'Shift' | 'Control'
 type HoldKey = Exclude<SimControlKey, 'Shift' | 'Control'>
@@ -67,6 +68,7 @@ export function SimulationLoop() {
   const elapsedRef = useRef(0)
   const keyStateRef = useRef({ ...EMPTY_KEY_STATE })
   const keyHoldStartRef = useRef({ ...EMPTY_HOLD_STATE })
+  const lastMoveSendMsRef = useRef(0)
 
   useEffect(() => {
     const thrustEuler = new THREE.Euler(0, 0, 0, 'YXZ')
@@ -314,6 +316,13 @@ export function SimulationLoop() {
       }
 
       state.setShipState(shipPatch)
+      if (multiplayerClient.isConnected()) {
+        const nowMs = performance.now()
+        if (nowMs - lastMoveSendMsRef.current >= 66) {
+          multiplayerClient.sendMove(newPos)
+          lastMoveSendMsRef.current = nowMs
+        }
+      }
 
       const enemy = state.enemy
       let enemyX = enemy.position[0]
