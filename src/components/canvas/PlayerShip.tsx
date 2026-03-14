@@ -18,6 +18,12 @@ const THRUSTER_EMITTERS: ReadonlyArray<{ position: [number, number, number]; rad
   { position: [82, 0, -295], radiusScale: 0.5 },
 ]
 const PARTICLE_INACTIVE_POSITION = 0
+const REMOTE_POSITION_LERP_SPEED = 12
+const REMOTE_ROTATION_LERP_SPEED = 10
+
+function shortestAngleDeltaDeg(fromDeg: number, toDeg: number) {
+  return ((toDeg - fromDeg + 540) % 360) - 180
+}
 
 function createThrusterParticleData() {
   const positions = new Float32Array(THRUSTER_PARTICLE_COUNT * 3)
@@ -58,6 +64,14 @@ interface PlayerShipProps {
 
 export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   const groupRef = useRef<THREE.Group>(null)
+  const targetPositionRef = useRef(new THREE.Vector3(ship.position[0], ship.position[1], ship.position[2]))
+  const renderPositionRef = useRef(new THREE.Vector3(ship.position[0], ship.position[1], ship.position[2]))
+  const targetHeadingRef = useRef(ship.actualHeading)
+  const targetInclinationRef = useRef(ship.actualInclination)
+  const targetRollRef = useRef(ship.rollAngle)
+  const renderHeadingRef = useRef(ship.actualHeading)
+  const renderInclinationRef = useRef(ship.actualInclination)
+  const renderRollRef = useRef(ship.rollAngle)
   const thrusterPointsRefs = useRef<Array<THREE.Points | null>>([])
   const thrusterMaterialRefs = useRef<Array<THREE.PointsMaterial | null>>([])
   const warpDistortionPointsRefs = useRef<Array<THREE.Points | null>>([])
@@ -146,6 +160,26 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
     }
   }, [thrusterParticleTexture])
 
+  useEffect(() => {
+    targetPositionRef.current.set(ship.position[0], ship.position[1], ship.position[2])
+    targetHeadingRef.current = ship.actualHeading
+    targetInclinationRef.current = ship.actualInclination
+    targetRollRef.current = ship.rollAngle
+
+    if (isLocal) {
+      renderPositionRef.current.copy(targetPositionRef.current)
+      renderHeadingRef.current = targetHeadingRef.current
+      renderInclinationRef.current = targetInclinationRef.current
+      renderRollRef.current = targetRollRef.current
+    }
+  }, [
+    ship.position,
+    ship.actualHeading,
+    ship.actualInclination,
+    ship.rollAngle,
+    isLocal,
+  ])
+
   const configuredHullTexture = useMemo(() => {
     hullTexture.colorSpace = THREE.SRGBColorSpace
     hullTexture.flipY = true
@@ -208,9 +242,30 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
 
   useFrame((_state, delta) => {
     if (!groupRef.current) return
-    const yaw = THREE.MathUtils.degToRad(ship.actualHeading)
-    const pitch = THREE.MathUtils.degToRad(ship.actualInclination)
-    const roll = THREE.MathUtils.degToRad(ship.rollAngle)
+    if (isLocal) {
+      renderPositionRef.current.set(ship.position[0], ship.position[1], ship.position[2])
+      renderHeadingRef.current = ship.actualHeading
+      renderInclinationRef.current = ship.actualInclination
+      renderRollRef.current = ship.rollAngle
+    } else {
+      const posAlpha = 1 - Math.exp(-REMOTE_POSITION_LERP_SPEED * delta)
+      const rotAlpha = 1 - Math.exp(-REMOTE_ROTATION_LERP_SPEED * delta)
+
+      renderPositionRef.current.lerp(targetPositionRef.current, posAlpha)
+      renderHeadingRef.current += shortestAngleDeltaDeg(renderHeadingRef.current, targetHeadingRef.current) * rotAlpha
+      renderInclinationRef.current = THREE.MathUtils.lerp(
+        renderInclinationRef.current,
+        targetInclinationRef.current,
+        rotAlpha
+      )
+      renderRollRef.current = THREE.MathUtils.lerp(renderRollRef.current, targetRollRef.current, rotAlpha)
+    }
+
+    groupRef.current.position.copy(renderPositionRef.current)
+
+    const yaw = THREE.MathUtils.degToRad(renderHeadingRef.current)
+    const pitch = THREE.MathUtils.degToRad(renderInclinationRef.current)
+    const roll = THREE.MathUtils.degToRad(renderRollRef.current)
     groupRef.current.rotation.set(-pitch, -yaw, roll, 'YXZ')
 
     const isMwdActive = ship.mwdActive
@@ -545,7 +600,7 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   if (!centeredObj) return null
 
   return (
-    <group ref={groupRef} position={ship.position}>
+    <group ref={groupRef}>
       <group name={isLocal ? getPlayerPivotAnchorName(playerId) : undefined} position={[0, 0, 0]} />
       <group position={visualOriginCorrection}>
         <primitive object={centeredObj} scale={1} />
