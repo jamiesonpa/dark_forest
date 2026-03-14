@@ -63,6 +63,13 @@ export interface GameStore {
   warpState: WarpState
   warpTargetId: string | null
   selectedTargetId: string | null
+  selectedWarpDestinationId: string | null
+  warpSourceCelestialId: string | null
+  warpTravelProgress: number
+  warpRequiredBearing: number
+  warpRequiredInclination: number
+  warpAlignmentErrorDeg: number
+  warpAligned: boolean
   gridObjects: GridObject[]
   rwrContacts: RWRContact[]
   ewLockState: Record<string, 'soft' | 'hard'>
@@ -87,6 +94,14 @@ export interface GameStore {
   resetDebugPivot: () => void
   setWarpState: (state: WarpState, targetId?: string | null) => void
   setSelectedTarget: (id: string | null) => void
+  setSelectedWarpDestination: (id: string | null) => void
+  setWarpAlignmentStatus: (payload: {
+    requiredBearing: number
+    requiredInclination: number
+    totalErrorDeg: number
+    aligned: boolean
+  }) => void
+  setWarpTravelProgress: (progress: number) => void
   setGridObjects: (objects: GridObject[]) => void
   asteroidBeltThickness: number
   asteroidBeltJitter: number

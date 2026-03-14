@@ -22,6 +22,13 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   warpState: 'idle',
   warpTargetId: null,
   selectedTargetId: null,
+  selectedWarpDestinationId: null,
+  warpSourceCelestialId: null,
+  warpTravelProgress: 0,
+  warpRequiredBearing: 0,
+  warpRequiredInclination: 0,
+  warpAlignmentErrorDeg: Number.POSITIVE_INFINITY,
+  warpAligned: false,
   gridObjects: [],
   asteroidBeltThickness: 2600,
   asteroidBeltJitter: 420,
@@ -42,8 +49,22 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       debugPivotResetCount: s.debugPivotResetCount + 1,
     })),
   setWarpState: (state, targetId = null) =>
-    set({ warpState: state, warpTargetId: targetId ?? null }),
+    set((s) => ({
+      warpState: state,
+      warpTargetId: targetId ?? null,
+      warpTravelProgress: state === 'warping' ? s.warpTravelProgress : state === 'idle' ? 0 : s.warpTravelProgress,
+    })),
   setSelectedTarget: (id) => set({ selectedTargetId: id }),
+  setSelectedWarpDestination: (id) => set({ selectedWarpDestinationId: id }),
+  setWarpAlignmentStatus: (payload) =>
+    set({
+      warpRequiredBearing: payload.requiredBearing,
+      warpRequiredInclination: payload.requiredInclination,
+      warpAlignmentErrorDeg: payload.totalErrorDeg,
+      warpAligned: payload.aligned,
+    }),
+  setWarpTravelProgress: (progress) =>
+    set({ warpTravelProgress: Math.max(0, Math.min(1, progress)) }),
   setGridObjects: (objects) => set({ gridObjects: objects }),
   setAsteroidBeltSettings: (partial) =>
     set((s) => {
@@ -88,11 +109,20 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       asteroidBeltSpawnNonce: s.asteroidBeltSpawnNonce + 1,
     })),
   startWarp: (targetCelestialId) =>
-    set({ warpState: 'aligning', warpTargetId: targetCelestialId }),
+    set((s) => ({
+      warpState: 'aligning',
+      warpTargetId: targetCelestialId,
+      warpSourceCelestialId: s.currentCelestialId,
+      selectedWarpDestinationId: targetCelestialId,
+      warpTravelProgress: 0,
+    })),
   finishWarp: () =>
     set((s) => ({
+      selectedWarpDestinationId: s.warpSourceCelestialId ?? s.selectedWarpDestinationId,
       currentCelestialId: s.warpTargetId ?? s.currentCelestialId,
       warpState: 'idle',
+      warpSourceCelestialId: null,
+      warpTravelProgress: 0,
       warpTargetId: null,
     })),
 })

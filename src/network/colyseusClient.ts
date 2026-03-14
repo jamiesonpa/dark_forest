@@ -14,6 +14,14 @@ export interface NetworkShipSnapshot {
   capacitorMax: number
 }
 
+export interface WarpIntentPayload {
+  celestialId: string
+  requiredBearing: number
+  requiredInclination: number
+  alignmentErrorDeg: number
+  clientStartedAt: number
+}
+
 export type MultiplayerStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
 type Handlers = {
@@ -43,6 +51,8 @@ type ColyseusRoomState = {
     forEach: (callback: (value: ColyseusShip, key: string) => void) => void
   }
 }
+
+type WireSnapshot = Record<string, NetworkShipSnapshot>
 
 class ColyseusMultiplayerClient {
   private room: Room<ColyseusRoomState> | null = null
@@ -75,6 +85,9 @@ class ColyseusMultiplayerClient {
 
       room.onStateChange((state) => {
         this.publishSnapshot(state)
+      })
+      room.onMessage('ships_snapshot', (snapshot: WireSnapshot) => {
+        this.handlers.onShipsUpdate?.(snapshot)
       })
       room.onLeave((code) => {
         this.room = null
@@ -116,6 +129,11 @@ class ColyseusMultiplayerClient {
   sendWarp(celestialId: string) {
     if (!this.room) return
     this.room.send('warp', { celestialId })
+  }
+
+  sendWarpIntent(payload: WarpIntentPayload) {
+    if (!this.room) return
+    this.room.send('warp', payload)
   }
 
   private updateStatus(status: MultiplayerStatus, detail?: string) {

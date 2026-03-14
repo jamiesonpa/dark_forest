@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
+import { useGameStore } from '@/state/gameStore'
+import { getCelestialById } from '@/utils/systemData'
+import { getWorldShipPosition } from '@/systems/warp/navigationMath'
 
-const SUN_DIRECTION = new THREE.Vector3(0.32, 0.18, 0.93).normalize()
+const DEFAULT_SUN_DIRECTION = new THREE.Vector3(0.32, 0.18, 0.93).normalize()
 const SUN_DISTANCE = 60000
 const FLARE_DISTANCE = 3200
 const OCCLUSION_SAMPLE_INTERVAL = 4
@@ -131,7 +134,9 @@ function createUltraDiffuseHaloTexture() {
 
 export function SunSystem() {
   const { camera, scene } = useThree()
+  const directionalLightRef = useRef<THREE.DirectionalLight>(null)
   const sunAnchorRef = useRef<THREE.Group>(null)
+  const irstSunGroupRef = useRef<THREE.Group>(null)
   const sunDiscRef = useRef<THREE.Sprite>(null)
   const sunCoreRef = useRef<THREE.Sprite>(null)
   const haloRef = useRef<THREE.Sprite>(null)
@@ -151,9 +156,12 @@ export function SunSystem() {
   const worldDir = useMemo(() => new THREE.Vector3(), [])
   const camPos = useMemo(() => new THREE.Vector3(), [])
   const sunRayDir = useMemo(() => new THREE.Vector3(), [])
-  const irstSunPosition = useMemo(() => SUN_DIRECTION.clone().multiplyScalar(SUN_DISTANCE), [])
+  const sunDirection = useMemo(() => new THREE.Vector3(), [])
+  const sunLightPos = useMemo(() => new THREE.Vector3(), [])
   const irstSunCoreRef = useRef<THREE.Sprite>(null)
   const irstSunHaloRef = useRef<THREE.Sprite>(null)
+  const currentCelestialId = useGameStore((s) => s.currentCelestialId)
+  const shipPosition = useGameStore((s) => s.ship.position)
 
   const refreshOccluders = () => {
     const next: THREE.Object3D[] = []
@@ -213,12 +221,27 @@ export function SunSystem() {
       refreshOccluders()
     }
 
+    const currentCelestial = getCelestialById(currentCelestialId)
+    if (currentCelestial) {
+      const shipWorldPosition = getWorldShipPosition(shipPosition, currentCelestial.position)
+      sunDirection.set(-shipWorldPosition[0], -shipWorldPosition[1], -shipWorldPosition[2])
+      if (sunDirection.lengthSq() < 0.0001) {
+        sunDirection.copy(DEFAULT_SUN_DIRECTION)
+      } else {
+        sunDirection.normalize()
+      }
+    } else {
+      sunDirection.copy(DEFAULT_SUN_DIRECTION)
+    }
+
     camera.getWorldPosition(camPos)
-    sunPos.copy(camPos).addScaledVector(SUN_DIRECTION, SUN_DISTANCE)
+    sunPos.copy(camPos).addScaledVector(sunDirection, SUN_DISTANCE)
     sunAnchorRef.current?.position.copy(sunPos)
+    irstSunGroupRef.current?.position.copy(sunPos)
+    directionalLightRef.current?.position.copy(sunLightPos.copy(sunDirection).multiplyScalar(20000))
 
     forward.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize()
-    const alignment = THREE.MathUtils.smoothstep(forward.dot(SUN_DIRECTION), 0.45, 0.995)
+    const alignment = THREE.MathUtils.smoothstep(forward.dot(sunDirection), 0.45, 0.995)
 
     ndc.copy(sunPos).project(camera)
     const inFront = ndc.z > -1 && ndc.z < 1
@@ -299,7 +322,8 @@ export function SunSystem() {
   return (
     <>
       <directionalLight
-        position={SUN_DIRECTION.clone().multiplyScalar(20000).toArray()}
+        ref={directionalLightRef}
+        position={DEFAULT_SUN_DIRECTION.clone().multiplyScalar(20000).toArray()}
         intensity={2.4}
         castShadow
         shadow-mapSize-width={2048}
@@ -380,7 +404,7 @@ export function SunSystem() {
         </sprite>
       ))}
 
-      <group position={irstSunPosition.toArray()} userData={{ sunVisual: true }} renderOrder={7}>
+      <group ref={irstSunGroupRef} userData={{ sunVisual: true }} renderOrder={7}>
         <sprite
           ref={irstSunHaloRef}
           userData={{ sunVisual: true }}

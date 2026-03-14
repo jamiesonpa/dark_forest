@@ -7,6 +7,7 @@ import { WarpEffect } from './WarpEffect'
 import { IRSTCamera } from './IRSTCamera'
 import { IRSTCameraDebugCone } from './IRSTCameraDebugCone'
 import { SunSystem } from './SunSystem'
+import { WarpTargetMarkers } from './WarpTargetMarkers'
 import { useGameStore } from '@/state/gameStore'
 import { STAR_SYSTEM, getCelestialById } from '@/utils/systemData'
 
@@ -38,6 +39,7 @@ export function StarSystem() {
       <Skybox />
       <ambientLight intensity={0.08} />
       <SunSystem />
+      <WarpTargetMarkers />
       {distantCelestials.map((c) => (
         <CelestialBody key={c.id} celestial={c} isDistant />
       ))}

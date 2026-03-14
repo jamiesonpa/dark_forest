@@ -126,6 +126,11 @@ export function SimulationLoop() {
       const nowSec = now / 1000
       const dampenersOnline = ship.dampenersActive
 
+      if (state.warpState === 'warping' || state.warpState === 'landing') {
+        raf = requestAnimationFrame(tick)
+        return
+      }
+
       let commandedBearing = ship.bearing
       let commandedInclination = ship.inclination
 

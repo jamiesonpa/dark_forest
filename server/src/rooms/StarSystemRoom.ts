@@ -4,10 +4,48 @@ import { StarSystemRoomState, ShipState } from '../schema/GameState.js'
 const SPAWN_RING_RADIUS = 1200
 const { Room } = colyseus
 
+type ShipSnapshot = {
+  id: string
+  name: string
+  position: [number, number, number]
+  shield: number
+  shieldMax: number
+  armor: number
+  armorMax: number
+  hull: number
+  hullMax: number
+  capacitor: number
+  capacitorMax: number
+}
+
 export class StarSystemRoom extends Room<StarSystemRoomState> {
   maxClients = 20
   private moveDebugLastLogMs = new Map<string, number>()
   private moveDebugLastPos = new Map<string, { x: number; y: number; z: number }>()
+
+  private buildSnapshot(): Record<string, ShipSnapshot> {
+    const snapshot: Record<string, ShipSnapshot> = {}
+    this.state.ships.forEach((ship, sessionId) => {
+      snapshot[sessionId] = {
+        id: ship.id,
+        name: ship.name,
+        position: [ship.x, ship.y, ship.z],
+        shield: ship.shield,
+        shieldMax: ship.shieldMax,
+        armor: ship.armor,
+        armorMax: ship.armorMax,
+        hull: ship.hull,
+        hullMax: ship.hullMax,
+        capacitor: ship.capacitor,
+        capacitorMax: ship.capacitorMax,
+      }
+    })
+    return snapshot
+  }
+
+  private broadcastSnapshot() {
+    this.broadcast('ships_snapshot', this.buildSnapshot())
+  }
 
   onCreate(_options: Record<string, unknown>) {
     this.setState(new StarSystemRoomState())
@@ -24,6 +62,7 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
         ship.y = message.y
         ship.z = message.z
       }
+      this.broadcastSnapshot()
 
       const nowMs = Date.now()
       const lastLog = this.moveDebugLastLogMs.get(client.sessionId) ?? 0
@@ -54,6 +93,7 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
     ship.y = 0
     ship.z = Math.sin(angle) * SPAWN_RING_RADIUS
     this.state.ships.set(client.sessionId, ship)
+    this.broadcastSnapshot()
     console.log(
       `[room:${this.roomId}] join session=${client.sessionId} players=${this.state.ships.size}`
     )
@@ -61,6 +101,7 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
 
   onLeave(client: Client) {
     this.state.ships.delete(client.sessionId)
+    this.broadcastSnapshot()
     this.moveDebugLastLogMs.delete(client.sessionId)
     this.moveDebugLastPos.delete(client.sessionId)
     console.log(

@@ -61,6 +61,11 @@ export function ShipStatusPrototype() {
   const setTargetSpeed = useGameStore((s) => s.setTargetSpeed)
   const setMwdActive = useGameStore((s) => s.setMwdActive)
   const setDampenersActive = useGameStore((s) => s.setDampenersActive)
+  const startWarp = useGameStore((s) => s.startWarp)
+  const selectedWarpDestinationId = useGameStore((s) => s.selectedWarpDestinationId)
+  const warpAligned = useGameStore((s) => s.warpAligned)
+  const warpState = useGameStore((s) => s.warpState)
+  const warpTravelProgress = useGameStore((s) => s.warpTravelProgress)
   const [hoverPct, setHoverPct] = useState<number | null>(null)
 
   const setSpeedMps = ship.mwdActive ? MWD_SPEED_MPS : ship.targetSpeed
@@ -113,6 +118,8 @@ export function ShipStatusPrototype() {
   const canActivateMwd =
     ship.capacitor >= ship.capacitorMax * MWD_CAPACITOR_ACTIVATION_FRACTION &&
     mwdCooldownRemaining <= 0
+  const warpBusy = warpState !== 'idle'
+  const canWarp = !warpBusy && Boolean(selectedWarpDestinationId) && warpAligned
 
   const pctFromPointer = (clientX: number, clientY: number, bounds: DOMRect) => {
     const localX = ((clientX - bounds.left) / bounds.width) * GAUGE_VIEWBOX_SIZE
@@ -390,6 +397,17 @@ export function ShipStatusPrototype() {
               : mwdCooldownRemaining > 0
                 ? `CD ${mwdCooldownRemaining.toFixed(1)}s`
                 : 'MWD'}
+          </button>
+          <button
+            type="button"
+            className={`warp-button ship-status-v2-warp-button ${canWarp ? 'ready' : ''} ${warpBusy ? 'active' : ''}`.trim()}
+            onClick={() => {
+              if (!selectedWarpDestinationId || !canWarp) return
+              startWarp(selectedWarpDestinationId)
+            }}
+            disabled={!canWarp}
+          >
+            {warpBusy ? `WARP ${(warpTravelProgress * 100).toFixed(0)}%` : 'WARP'}
           </button>
         </div>
       </div>
