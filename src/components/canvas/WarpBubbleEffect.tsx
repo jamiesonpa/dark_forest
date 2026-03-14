@@ -13,7 +13,8 @@ const BASE_FLOW = 0.72
 const SPEED_FLOW_MULT = 0.00022
 const MAX_SPEED_RATIO = 3
 const MAX_SIZE_MULTIPLIER = 40
-const SPEED_SMOOTH = 3.2
+const SPEED_SMOOTH_ACCEL = 4.5
+const SPEED_SMOOTH_DECEL = 12
 
 type ParticleState = {
   u: Float32Array
@@ -138,19 +139,28 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
     const rawSpeedNorm = warpReferenceSpeed > 0
       ? THREE.MathUtils.clamp(ship.actualSpeed / warpReferenceSpeed, 0, 1)
       : 0
-    speedNormRef.current = THREE.MathUtils.lerp(speedNormRef.current, rawSpeedNorm, dt * SPEED_SMOOTH)
+    const smoothing =
+      rawSpeedNorm < speedNormRef.current
+        ? SPEED_SMOOTH_DECEL
+        : SPEED_SMOOTH_ACCEL
+    speedNormRef.current = THREE.MathUtils.lerp(speedNormRef.current, rawSpeedNorm, dt * smoothing)
+    if (rawSpeedNorm < 0.02) {
+      // Prevent lingering trail when ship speed has effectively reached zero.
+      speedNormRef.current = rawSpeedNorm
+    }
     const smoothSpeedNorm = speedNormRef.current
     const sizeMultiplier = THREE.MathUtils.lerp(1, MAX_SIZE_MULTIPLIER, smoothSpeedNorm)
     const speedRatio = Math.min(MAX_SPEED_RATIO, Math.max(0, ship.actualSpeed * SPEED_FLOW_MULT))
-    const flow = BASE_FLOW * (1 + smoothSpeedNorm * 7) + speedRatio * 0.42
+    const flow = (BASE_FLOW + speedRatio * 0.42) * smoothSpeedNorm
 
     if (!active) {
-      material.opacity = THREE.MathUtils.lerp(material.opacity, 0, dt * 5)
-      speedNormRef.current = THREE.MathUtils.lerp(speedNormRef.current, 0, dt * 6)
+      material.opacity = THREE.MathUtils.lerp(material.opacity, 0, dt * 8)
+      speedNormRef.current = THREE.MathUtils.lerp(speedNormRef.current, 0, dt * 14)
       return
     }
 
-    material.opacity = THREE.MathUtils.lerp(material.opacity, 0.72, dt * 4)
+    const targetOpacity = 0.06 + 0.66 * smoothSpeedNorm
+    material.opacity = THREE.MathUtils.lerp(material.opacity, targetOpacity, dt * 6)
 
     for (let i = 0; i < PARTICLE_COUNT; i += 1) {
       const idx = i * 3

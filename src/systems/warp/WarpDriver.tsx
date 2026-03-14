@@ -13,7 +13,7 @@ import {
 } from '@/systems/warp/navigationMath'
 
 const ALIGN_STABLE_MS = 250
-const LANDING_DURATION_MS = 700
+const LANDING_DURATION_MS = 1400
 const ARRIVAL_OFFSET_DISTANCE = 100_000
 
 type WarpSession = {
@@ -30,6 +30,7 @@ type WarpSession = {
 
 type LandingSession = {
   startMs: number
+  startSpeed: number
   fromPosition: [number, number, number]
   arrivalOffsetAtDestination: [number, number, number]
 }
@@ -148,7 +149,9 @@ export function WarpDriver() {
         } else {
           const linearProgress = Math.min(1, Math.max(0, (nowMs - session.startMs) / session.durationMs))
           const easedProgress = smooth01(linearProgress)
-          const speedProfile = 6 * linearProgress * (1 - linearProgress)
+          const speedProgress = Math.min(0.97, linearProgress)
+          const bellCurve = 6 * speedProgress * (1 - speedProgress)
+          const speedProfile = 0.22 + 0.78 * bellCurve
           const worldX = session.sourceWorldPosition[0] + session.travelVector[0] * easedProgress
           const worldY = session.sourceWorldPosition[1] + session.travelVector[1] * easedProgress
           const worldZ = session.sourceWorldPosition[2] + session.travelVector[2] * easedProgress
@@ -157,7 +160,7 @@ export function WarpDriver() {
           const localZ = worldZ - session.sourceCelestialWorldPosition[2]
           const nextLocal: [number, number, number] = [localX, localY, localZ]
 
-          const warpSpeed = session.averageSpeed * speedProfile
+          const warpSpeed = session.peakSpeed * speedProfile
           state.setShipState({
             position: nextLocal,
             actualSpeed: warpSpeed,
@@ -210,6 +213,7 @@ export function WarpDriver() {
             }
             landingSessionRef.current = {
               startMs: nowMs,
+              startSpeed: Math.max(warpSpeed, session.peakSpeed * 0.18),
               fromPosition: nextLocal,
               arrivalOffsetAtDestination,
             }
@@ -233,15 +237,14 @@ export function WarpDriver() {
         } else {
           const p = Math.min(1, Math.max(0, (nowMs - landing.startMs) / LANDING_DURATION_MS))
           const eased = smooth01(p)
-          const from = landing.fromPosition
           const nextLocal: [number, number, number] = [
-            from[0] * (1 - eased),
-            from[1] * (1 - eased),
-            from[2] * (1 - eased),
+            landing.fromPosition[0],
+            landing.fromPosition[1],
+            landing.fromPosition[2],
           ]
           state.setShipState({
             position: nextLocal,
-            actualSpeed: Math.max(0, state.ship.actualSpeed * (1 - dt * 3)),
+            actualSpeed: Math.max(0, landing.startSpeed * (1 - eased)),
             targetSpeed: 0,
             mwdActive: false,
             mwdRemaining: 0,

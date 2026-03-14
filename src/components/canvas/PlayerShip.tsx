@@ -601,7 +601,7 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   }, [centeredObj, configuredHullTexture])
 
   if (!centeredObj) return null
-  const warpBubbleActive = isLocal && warpState === 'warping'
+  const warpBubbleActive = isLocal && (warpState === 'warping' || warpState === 'landing')
 
   return (
     <group ref={groupRef}>

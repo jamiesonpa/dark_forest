@@ -13,6 +13,8 @@ export function OrbitCameraController() {
   const controlsRef = useRef<React.ComponentRef<typeof OrbitControls>>(null)
   const shipPivotAnchorRef = useRef<THREE.Object3D | null>(null)
   const targetVecRef = useRef(new THREE.Vector3())
+  const prevTargetRef = useRef<THREE.Vector3 | null>(null)
+  const targetDeltaRef = useRef(new THREE.Vector3())
   const debugPivotEnabled = useGameStore((s) => s.debugPivotEnabled)
   const debugPivotPosition = useGameStore((s) => s.debugPivotPosition)
   const setDebugPivotPosition = useGameStore((s) => s.setDebugPivotPosition)
@@ -20,7 +22,7 @@ export function OrbitCameraController() {
   const localPlayerId = useGameStore((s) => s.localPlayerId)
   const localShipPosition = useGameStore((s) => s.ship.position)
 
-  useFrame(({ scene }) => {
+  useFrame(({ scene, camera }) => {
     const controls = controlsRef.current
     if (!controls) return
 
@@ -56,6 +58,19 @@ export function OrbitCameraController() {
         setDebugPivotPosition(localAnchor)
       }
     }
+
+    // Prevent abrupt camera snaps when the target jumps between grid frames
+    // (for example, right as warp landing re-anchors local coordinates).
+    if (prevTargetRef.current) {
+      targetDeltaRef.current.copy(targetVecRef.current).sub(prevTargetRef.current)
+      if (targetDeltaRef.current.lengthSq() > 0.000001) {
+        ;(camera as THREE.PerspectiveCamera).position.add(targetDeltaRef.current)
+      }
+    }
+    if (!prevTargetRef.current) {
+      prevTargetRef.current = new THREE.Vector3()
+    }
+    prevTargetRef.current.copy(targetVecRef.current)
 
     controls.enabled = !debugPivotDragging
     controls.target.copy(targetVecRef.current)
