@@ -3,7 +3,6 @@ import { Skybox } from './Skybox'
 import { Grid } from './Grid'
 import { OrbitCameraController } from './OrbitCameraController'
 import { CelestialBody } from './CelestialBody'
-import { WarpEffect } from './WarpEffect'
 import { IRSTCamera } from './IRSTCamera'
 import { IRSTCameraDebugCone } from './IRSTCameraDebugCone'
 import { SunSystem } from './SunSystem'
@@ -13,7 +12,6 @@ import { STAR_SYSTEM, getCelestialById } from '@/utils/systemData'
 
 export function StarSystem() {
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
-  const warpState = useGameStore((s) => s.warpState)
   const currentCelestial = useMemo(
     () => getCelestialById(currentCelestialId),
     [currentCelestialId]
@@ -44,7 +42,6 @@ export function StarSystem() {
         <CelestialBody key={c.id} celestial={c} isDistant />
       ))}
       <Grid />
-      {warpState === 'warping' && <WarpEffect />}
       <IRSTCamera />
       <IRSTCameraDebugCone />
       <OrbitCameraController />

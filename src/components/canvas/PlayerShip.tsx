@@ -3,6 +3,8 @@ import { useLoader, useFrame } from '@react-three/fiber'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import * as THREE from 'three'
 import type { ShipState } from '@/state/types'
+import { useGameStore } from '@/state/gameStore'
+import { WarpBubbleEffect } from './WarpBubbleEffect'
 
 const RAVEN_OBJ = '/models/caldari_battleship_Raven.obj'
 const RAVEN_TEX = '/models/raven_tex.png'
@@ -63,6 +65,7 @@ interface PlayerShipProps {
 }
 
 export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
+  const warpState = useGameStore((s) => s.warpState)
   const groupRef = useRef<THREE.Group>(null)
   const targetPositionRef = useRef(new THREE.Vector3(ship.position[0], ship.position[1], ship.position[2]))
   const renderPositionRef = useRef(new THREE.Vector3(ship.position[0], ship.position[1], ship.position[2]))
@@ -598,10 +601,12 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   }, [centeredObj, configuredHullTexture])
 
   if (!centeredObj) return null
+  const warpBubbleActive = isLocal && warpState === 'warping'
 
   return (
     <group ref={groupRef}>
       <group name={isLocal ? getPlayerPivotAnchorName(playerId) : undefined} position={[0, 0, 0]} />
+      {isLocal && <WarpBubbleEffect ship={ship} active={warpBubbleActive} />}
       <group position={visualOriginCorrection}>
         <primitive object={centeredObj} scale={1} />
         {thrusterEmitters.map((_, index) => {

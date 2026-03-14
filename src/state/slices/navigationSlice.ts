@@ -25,6 +25,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   selectedWarpDestinationId: null,
   warpSourceCelestialId: null,
   warpTravelProgress: 0,
+  warpReferenceSpeed: 0,
   warpRequiredBearing: 0,
   warpRequiredInclination: 0,
   warpAlignmentErrorDeg: Number.POSITIVE_INFINITY,
@@ -53,6 +54,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       warpState: state,
       warpTargetId: targetId ?? null,
       warpTravelProgress: state === 'warping' ? s.warpTravelProgress : state === 'idle' ? 0 : s.warpTravelProgress,
+      warpReferenceSpeed: state === 'idle' ? 0 : s.warpReferenceSpeed,
     })),
   setSelectedTarget: (id) => set({ selectedTargetId: id }),
   setSelectedWarpDestination: (id) => set({ selectedWarpDestinationId: id }),
@@ -65,6 +67,8 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
     }),
   setWarpTravelProgress: (progress) =>
     set({ warpTravelProgress: Math.max(0, Math.min(1, progress)) }),
+  setWarpReferenceSpeed: (speed) =>
+    set({ warpReferenceSpeed: Math.max(0, speed) }),
   setGridObjects: (objects) => set({ gridObjects: objects }),
   setAsteroidBeltSettings: (partial) =>
     set((s) => {
@@ -115,6 +119,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       warpSourceCelestialId: s.currentCelestialId,
       selectedWarpDestinationId: targetCelestialId,
       warpTravelProgress: 0,
+      warpReferenceSpeed: 0,
     })),
   finishWarp: () =>
     set((s) => ({
@@ -123,6 +128,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       warpState: 'idle',
       warpSourceCelestialId: null,
       warpTravelProgress: 0,
+      warpReferenceSpeed: 0,
       warpTargetId: null,
     })),
 })

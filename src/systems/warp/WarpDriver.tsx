@@ -14,10 +14,13 @@ import {
 
 const ALIGN_STABLE_MS = 250
 const LANDING_DURATION_MS = 700
+const ARRIVAL_OFFSET_DISTANCE = 100_000
 
 type WarpSession = {
   startMs: number
   durationMs: number
+  averageSpeed: number
+  peakSpeed: number
   sourceCelestialId: string
   destinationCelestialId: string
   sourceWorldPosition: [number, number, number]
@@ -28,6 +31,7 @@ type WarpSession = {
 type LandingSession = {
   startMs: number
   fromPosition: [number, number, number]
+  arrivalOffsetAtDestination: [number, number, number]
 }
 
 function smooth01(t: number) {
@@ -103,9 +107,13 @@ export function WarpDriver() {
               const travelVector = vectorBetweenWorldPoints(sourceWorld, destinationWorld)
               const travelDistance = vectorMagnitude(travelVector)
               const durationMs = getDistanceScaledWarpDurationMs(travelDistance)
+              const averageSpeed = travelDistance / Math.max(0.001, durationMs / 1000)
+              const peakSpeed = averageSpeed * 1.5
               warpSessionRef.current = {
                 startMs: nowMs,
                 durationMs,
+                averageSpeed,
+                peakSpeed,
                 sourceCelestialId: sourceCelestial.id,
                 destinationCelestialId: destinationCelestial.id,
                 sourceWorldPosition: sourceWorld,
@@ -113,6 +121,7 @@ export function WarpDriver() {
                 travelVector,
               }
               state.setWarpTravelProgress(0)
+              state.setWarpReferenceSpeed(peakSpeed)
               state.setWarpState('warping', destinationCelestial.id)
               multiplayerClient.sendWarpIntent({
                 celestialId: destinationCelestial.id,
@@ -139,6 +148,7 @@ export function WarpDriver() {
         } else {
           const linearProgress = Math.min(1, Math.max(0, (nowMs - session.startMs) / session.durationMs))
           const easedProgress = smooth01(linearProgress)
+          const speedProfile = 6 * linearProgress * (1 - linearProgress)
           const worldX = session.sourceWorldPosition[0] + session.travelVector[0] * easedProgress
           const worldY = session.sourceWorldPosition[1] + session.travelVector[1] * easedProgress
           const worldZ = session.sourceWorldPosition[2] + session.travelVector[2] * easedProgress
@@ -147,7 +157,7 @@ export function WarpDriver() {
           const localZ = worldZ - session.sourceCelestialWorldPosition[2]
           const nextLocal: [number, number, number] = [localX, localY, localZ]
 
-          const warpSpeed = vectorMagnitude(session.travelVector) / Math.max(0.001, session.durationMs / 1000)
+          const warpSpeed = session.averageSpeed * speedProfile
           state.setShipState({
             position: nextLocal,
             actualSpeed: warpSpeed,
@@ -179,9 +189,29 @@ export function WarpDriver() {
           }
 
           if (linearProgress >= 1) {
+            const sourceCelestial = getCelestialById(session.sourceCelestialId)
+            const destinationCelestial = getCelestialById(session.destinationCelestialId)
+            let arrivalOffsetAtDestination: [number, number, number] = [0, 0, 0]
+            if (sourceCelestial && destinationCelestial) {
+              const sourceWorld = worldPositionForCelestial(sourceCelestial)
+              const destinationWorld = worldPositionForCelestial(destinationCelestial)
+              const fromDestinationToSource = vectorBetweenWorldPoints(destinationWorld, sourceWorld)
+              const mag = vectorMagnitude(fromDestinationToSource)
+              if (mag > 0.0001) {
+                const nx = fromDestinationToSource[0] / mag
+                const ny = fromDestinationToSource[1] / mag
+                const nz = fromDestinationToSource[2] / mag
+                arrivalOffsetAtDestination = [
+                  nx * ARRIVAL_OFFSET_DISTANCE,
+                  ny * ARRIVAL_OFFSET_DISTANCE,
+                  nz * ARRIVAL_OFFSET_DISTANCE,
+                ]
+              }
+            }
             landingSessionRef.current = {
               startMs: nowMs,
               fromPosition: nextLocal,
+              arrivalOffsetAtDestination,
             }
             state.setWarpState('landing', session.destinationCelestialId)
             warpSessionRef.current = null
@@ -193,8 +223,13 @@ export function WarpDriver() {
         const landing = landingSessionRef.current
         if (!landing) {
           state.finishWarp()
-          state.setShipState({ position: [0, 0, 0], actualSpeed: 0, targetSpeed: 0 })
+          state.setShipState({
+            position: [0, 0, ARRIVAL_OFFSET_DISTANCE],
+            actualSpeed: 0,
+            targetSpeed: 0,
+          })
           state.setWarpTravelProgress(1)
+          state.setWarpReferenceSpeed(0)
         } else {
           const p = Math.min(1, Math.max(0, (nowMs - landing.startMs) / LANDING_DURATION_MS))
           const eased = smooth01(p)
@@ -212,9 +247,14 @@ export function WarpDriver() {
             mwdRemaining: 0,
           })
           if (p >= 1) {
-            state.setShipState({ position: [0, 0, 0], actualSpeed: 0, targetSpeed: 0 })
-            state.setWarpTravelProgress(1)
             state.finishWarp()
+            state.setShipState({
+              position: landing.arrivalOffsetAtDestination,
+              actualSpeed: 0,
+              targetSpeed: 0,
+            })
+            state.setWarpTravelProgress(1)
+            state.setWarpReferenceSpeed(0)
             landingSessionRef.current = null
           }
         }

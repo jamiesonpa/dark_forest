@@ -66,6 +66,7 @@ export interface GameStore {
   selectedWarpDestinationId: string | null
   warpSourceCelestialId: string | null
   warpTravelProgress: number
+  warpReferenceSpeed: number
   warpRequiredBearing: number
   warpRequiredInclination: number
   warpAlignmentErrorDeg: number
@@ -102,6 +103,7 @@ export interface GameStore {
     aligned: boolean
   }) => void
   setWarpTravelProgress: (progress: number) => void
+  setWarpReferenceSpeed: (speed: number) => void
   setGridObjects: (objects: GridObject[]) => void
   asteroidBeltThickness: number
   asteroidBeltJitter: number

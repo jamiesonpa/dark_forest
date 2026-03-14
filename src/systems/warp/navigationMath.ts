@@ -1,6 +1,8 @@
 import type { Celestial } from '@/types/game'
 
-export const METERS_PER_AU = 149_597_870.7
+// Gameplay scale: 1 AU is compressed to world units for readable HUD distances.
+// Tuned so current celestial separations are in the ~100+ AU range.
+export const WORLD_UNITS_PER_AU = 140
 export const WARP_ALIGNMENT_TOLERANCE_DEG = 2.5
 
 export function normalizeBearingDeg(value: number) {
@@ -78,12 +80,13 @@ export function isWarpAligned(
   }
 }
 
-export function formatDistanceAu(distanceMeters: number) {
-  return `${Math.round(distanceMeters / METERS_PER_AU)} AU`
+export function formatDistanceAu(distanceWorldUnits: number) {
+  if (distanceWorldUnits <= 0) return '0 AU'
+  return `${Math.max(1, Math.round(distanceWorldUnits / WORLD_UNITS_PER_AU))} AU`
 }
 
-export function getDistanceScaledWarpDurationMs(distanceMeters: number) {
-  const distanceAu = distanceMeters / METERS_PER_AU
+export function getDistanceScaledWarpDurationMs(distanceWorldUnits: number) {
+  const distanceAu = distanceWorldUnits / WORLD_UNITS_PER_AU
   const minMs = 3500
   const maxMs = 15000
   const normalized = Math.min(1, Math.max(0, Math.log10(1 + distanceAu) / 2.2))
