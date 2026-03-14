@@ -8,6 +8,17 @@ type ShipSnapshot = {
   id: string
   name: string
   position: [number, number, number]
+  targetSpeed: number
+  mwdActive: boolean
+  mwdRemaining: number
+  mwdCooldownRemaining: number
+  dampenersActive: boolean
+  bearing: number
+  inclination: number
+  actualHeading: number
+  actualSpeed: number
+  actualInclination: number
+  rollAngle: number
   shield: number
   shieldMax: number
   armor: number
@@ -30,6 +41,17 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
         id: ship.id,
         name: ship.name,
         position: [ship.x, ship.y, ship.z],
+        targetSpeed: ship.targetSpeed,
+        mwdActive: ship.mwdActive,
+        mwdRemaining: ship.mwdRemaining,
+        mwdCooldownRemaining: ship.mwdCooldownRemaining,
+        dampenersActive: ship.dampenersActive,
+        bearing: ship.bearing,
+        inclination: ship.inclination,
+        actualHeading: ship.actualHeading,
+        actualSpeed: ship.actualSpeed,
+        actualInclination: ship.actualInclination,
+        rollAngle: ship.rollAngle,
         shield: ship.shield,
         shieldMax: ship.shieldMax,
         armor: ship.armor,
@@ -55,12 +77,38 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
       const ship = this.state.ships.get(client.sessionId)
       if (ship) ship.currentCelestialId = message.celestialId
     })
-    this.onMessage('move', (client, message: { x: number; y: number; z: number }) => {
+    this.onMessage('move', (client, message: {
+      x: number
+      y: number
+      z: number
+      targetSpeed?: number
+      mwdActive?: boolean
+      mwdRemaining?: number
+      mwdCooldownRemaining?: number
+      dampenersActive?: boolean
+      bearing?: number
+      inclination?: number
+      actualHeading?: number
+      actualSpeed?: number
+      actualInclination?: number
+      rollAngle?: number
+    }) => {
       const ship = this.state.ships.get(client.sessionId)
       if (ship) {
         ship.x = message.x
         ship.y = message.y
         ship.z = message.z
+        if (typeof message.targetSpeed === 'number') ship.targetSpeed = message.targetSpeed
+        if (typeof message.mwdActive === 'boolean') ship.mwdActive = message.mwdActive
+        if (typeof message.mwdRemaining === 'number') ship.mwdRemaining = message.mwdRemaining
+        if (typeof message.mwdCooldownRemaining === 'number') ship.mwdCooldownRemaining = message.mwdCooldownRemaining
+        if (typeof message.dampenersActive === 'boolean') ship.dampenersActive = message.dampenersActive
+        if (typeof message.bearing === 'number') ship.bearing = message.bearing
+        if (typeof message.inclination === 'number') ship.inclination = message.inclination
+        if (typeof message.actualHeading === 'number') ship.actualHeading = message.actualHeading
+        if (typeof message.actualSpeed === 'number') ship.actualSpeed = message.actualSpeed
+        if (typeof message.actualInclination === 'number') ship.actualInclination = message.actualInclination
+        if (typeof message.rollAngle === 'number') ship.rollAngle = message.rollAngle
       }
       this.broadcastSnapshot()
 

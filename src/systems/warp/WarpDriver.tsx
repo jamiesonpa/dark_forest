@@ -160,7 +160,20 @@ export function WarpDriver() {
           if (multiplayerClient.isConnected()) {
             const nowMoveMs = performance.now()
             if (nowMoveMs - lastMoveSendMsRef.current >= 66) {
-              multiplayerClient.sendMove(nextLocal)
+              multiplayerClient.sendMove({
+                position: nextLocal,
+                targetSpeed: 0,
+                mwdActive: false,
+                mwdRemaining: 0,
+                mwdCooldownRemaining: state.ship.mwdCooldownRemaining,
+                dampenersActive: state.ship.dampenersActive,
+                bearing: state.ship.bearing,
+                inclination: state.ship.inclination,
+                actualHeading: state.ship.actualHeading,
+                actualSpeed: warpSpeed,
+                actualInclination: state.ship.actualInclination,
+                rollAngle: state.ship.rollAngle,
+              })
               lastMoveSendMsRef.current = nowMoveMs
             }
           }

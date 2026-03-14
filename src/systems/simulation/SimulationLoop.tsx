@@ -324,7 +324,20 @@ export function SimulationLoop() {
       if (multiplayerClient.isConnected()) {
         const nowMs = performance.now()
         if (nowMs - lastMoveSendMsRef.current >= 66) {
-          multiplayerClient.sendMove(newPos)
+          multiplayerClient.sendMove({
+            position: newPos,
+            targetSpeed: shipPatch.targetSpeed ?? ship.targetSpeed,
+            mwdActive: shipPatch.mwdActive ?? ship.mwdActive,
+            mwdRemaining: shipPatch.mwdRemaining ?? ship.mwdRemaining,
+            mwdCooldownRemaining: shipPatch.mwdCooldownRemaining ?? ship.mwdCooldownRemaining,
+            dampenersActive: shipPatch.dampenersActive ?? ship.dampenersActive,
+            bearing: shipPatch.bearing ?? ship.bearing,
+            inclination: shipPatch.inclination ?? ship.inclination,
+            actualHeading: newHeading,
+            actualSpeed: newSpeed,
+            actualInclination: newIncl,
+            rollAngle: rollRef.current,
+          })
           lastMoveSendMsRef.current = nowMs
         }
       }

@@ -4,6 +4,17 @@ export interface NetworkShipSnapshot {
   id: string
   name: string
   position: [number, number, number]
+  targetSpeed: number
+  mwdActive: boolean
+  mwdRemaining: number
+  mwdCooldownRemaining: number
+  dampenersActive: boolean
+  bearing: number
+  inclination: number
+  actualHeading: number
+  actualSpeed: number
+  actualInclination: number
+  rollAngle: number
   shield: number
   shieldMax: number
   armor: number
@@ -36,6 +47,17 @@ type ColyseusShip = {
   x: number
   y: number
   z: number
+  targetSpeed: number
+  mwdActive: boolean
+  mwdRemaining: number
+  mwdCooldownRemaining: number
+  dampenersActive: boolean
+  bearing: number
+  inclination: number
+  actualHeading: number
+  actualSpeed: number
+  actualInclination: number
+  rollAngle: number
   shield: number
   shieldMax: number
   armor: number
@@ -59,6 +81,7 @@ class ColyseusMultiplayerClient {
   private handlers: Handlers = {}
   private status: MultiplayerStatus = 'disconnected'
   private syncTimer: ReturnType<typeof setInterval> | null = null
+  private preferWireSnapshots = false
 
   setHandlers(handlers: Handlers) {
     this.handlers = handlers
@@ -79,14 +102,17 @@ class ColyseusMultiplayerClient {
       const client = new Client(serverUrl)
       const room = await client.joinOrCreate<ColyseusRoomState>('star_system')
       this.room = room
+      this.preferWireSnapshots = false
       this.updateStatus('connected')
       this.handlers.onJoined?.(room.sessionId)
       this.publishSnapshot(room.state)
 
       room.onStateChange((state) => {
+        if (this.preferWireSnapshots) return
         this.publishSnapshot(state)
       })
       room.onMessage('ships_snapshot', (snapshot: WireSnapshot) => {
+        this.preferWireSnapshots = true
         this.handlers.onShipsUpdate?.(snapshot)
       })
       room.onLeave((code) => {
@@ -100,6 +126,7 @@ class ColyseusMultiplayerClient {
       // Fallback polling keeps UI state in sync even if patch callbacks are missed.
       this.syncTimer = setInterval(() => {
         if (!this.room) return
+        if (this.preferWireSnapshots) return
         this.publishSnapshot(this.room.state)
       }, 250)
     } catch (error) {
@@ -118,12 +145,41 @@ class ColyseusMultiplayerClient {
       void this.room.leave()
       this.room = null
     }
+    this.preferWireSnapshots = false
     this.updateStatus('disconnected')
   }
 
-  sendMove(position: [number, number, number]) {
+  sendMove(update: {
+    position: [number, number, number]
+    targetSpeed: number
+    mwdActive: boolean
+    mwdRemaining: number
+    mwdCooldownRemaining: number
+    dampenersActive: boolean
+    bearing: number
+    inclination: number
+    actualHeading: number
+    actualSpeed: number
+    actualInclination: number
+    rollAngle: number
+  }) {
     if (!this.room) return
-    this.room.send('move', { x: position[0], y: position[1], z: position[2] })
+    this.room.send('move', {
+      x: update.position[0],
+      y: update.position[1],
+      z: update.position[2],
+      targetSpeed: update.targetSpeed,
+      mwdActive: update.mwdActive,
+      mwdRemaining: update.mwdRemaining,
+      mwdCooldownRemaining: update.mwdCooldownRemaining,
+      dampenersActive: update.dampenersActive,
+      bearing: update.bearing,
+      inclination: update.inclination,
+      actualHeading: update.actualHeading,
+      actualSpeed: update.actualSpeed,
+      actualInclination: update.actualInclination,
+      rollAngle: update.rollAngle,
+    })
   }
 
   sendWarp(celestialId: string) {
@@ -153,6 +209,17 @@ class ColyseusMultiplayerClient {
         id: ship.id,
         name: ship.name,
         position: [ship.x, ship.y, ship.z],
+        targetSpeed: ship.targetSpeed,
+        mwdActive: ship.mwdActive,
+        mwdRemaining: ship.mwdRemaining,
+        mwdCooldownRemaining: ship.mwdCooldownRemaining,
+        dampenersActive: ship.dampenersActive,
+        bearing: ship.bearing,
+        inclination: ship.inclination,
+        actualHeading: ship.actualHeading,
+        actualSpeed: ship.actualSpeed,
+        actualInclination: ship.actualInclination,
+        rollAngle: ship.rollAngle,
         shield: ship.shield,
         shieldMax: ship.shieldMax,
         armor: ship.armor,
