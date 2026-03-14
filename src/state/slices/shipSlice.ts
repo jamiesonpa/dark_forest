@@ -93,13 +93,14 @@ export const createShipSlice: StateCreator<GameStore, [], [], Partial<GameStore>
       const localId = getLocalPlayerId(prevState)
       const nextShips: Record<string, GameStore['ship']> = {}
       Object.entries(snapshot).forEach(([id, remoteShip]) => {
+        if (id === localId) {
+          return
+        }
         const prevShip = prevState.shipsById[id] ?? { ...defaultShipState }
         nextShips[id] = fromSnapshot(remoteShip, prevShip)
       })
 
-      if (!nextShips[localId]) {
-        nextShips[localId] = prevState.shipsById[localId] ?? prevState.ship
-      }
+      nextShips[localId] = prevState.shipsById[localId] ?? prevState.ship
 
       return {
         shipsById: nextShips,
