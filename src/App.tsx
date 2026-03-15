@@ -3,7 +3,6 @@ import { PilotStation } from '@/ui/stations/PilotStation'
 import EWConsole from '@/systems/ew/EWConsole'
 import { StationSelector, type StationId } from '@/ui/stations/StationSelector'
 import { SimulationLoop } from '@/systems/simulation/SimulationLoop'
-import { WarpDriver } from '@/systems/warp/WarpDriver'
 import { multiplayerClient, type MultiplayerStatus } from '@/network/colyseusClient'
 import { useGameStore } from '@/state/gameStore'
 
@@ -24,11 +23,34 @@ export default function App() {
   const [serverWindowOpen, setServerWindowOpen] = useState(false)
   const setLocalPlayerId = useGameStore((s) => s.setLocalPlayerId)
   const upsertRemoteShips = useGameStore((s) => s.upsertRemoteShips)
+  const navAttitudeMode = useGameStore((s) => s.navAttitudeMode)
+  const setNavAttitudeMode = useGameStore((s) => s.setNavAttitudeMode)
+  const setMwdActive = useGameStore((s) => s.setMwdActive)
 
   const handleKey = useCallback((e: KeyboardEvent) => {
+    const isEditableElement = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false
+      const tag = target.tagName
+      return (
+        target.isContentEditable ||
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT'
+      )
+    }
+
     if (e.key === 'F1') { e.preventDefault(); setStation('pilot') }
     if (e.key === 'F2') { e.preventDefault(); setStation('ew') }
-  }, [])
+    if (e.key === 'Backspace' && !isEditableElement(e.target)) {
+      e.preventDefault()
+      setNavAttitudeMode(navAttitudeMode === 'DAC' ? 'AA' : 'DAC')
+    }
+    if (e.key === 'Enter' && !isEditableElement(e.target)) {
+      if (e.repeat) return
+      e.preventDefault()
+      setMwdActive(true)
+    }
+  }, [navAttitudeMode, setNavAttitudeMode, setMwdActive])
 
   const connectMultiplayer = useCallback(async () => {
     setJoinBusy(true)
@@ -72,7 +94,6 @@ export default function App() {
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
       <SimulationLoop />
-      <WarpDriver />
       {station === 'pilot' && <PilotStation />}
       {station === 'ew' && <EWConsole />}
       <StationSelector current={station} onSwitch={setStation} />

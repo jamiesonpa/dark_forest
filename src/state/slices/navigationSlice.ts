@@ -15,6 +15,7 @@ function sanitizePivot(position: [number, number, number]): [number, number, num
 export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<GameStore>> = (set) => ({
   currentCelestialId: 'planet-1',
   debugPivotEnabled: false,
+  orientDebugEnabled: false,
   showIRSTCone: false,
   debugPivotPosition: SHIP_CENTER_PIVOT,
   debugPivotDragging: false,
@@ -30,6 +31,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   warpRequiredInclination: 0,
   warpAlignmentErrorDeg: Number.POSITIVE_INFINITY,
   warpAligned: false,
+  navAttitudeMode: 'AA',
   gridObjects: [],
   asteroidBeltThickness: 2600,
   asteroidBeltJitter: 420,
@@ -41,6 +43,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   asteroidBeltSpawnNonce: 0,
   setCurrentCelestial: (id) => set({ currentCelestialId: id }),
   setDebugPivotEnabled: (enabled) => set({ debugPivotEnabled: enabled }),
+  setOrientDebugEnabled: (enabled) => set({ orientDebugEnabled: enabled }),
   setShowIRSTCone: (enabled) => set({ showIRSTCone: enabled }),
   setDebugPivotPosition: (position) => set({ debugPivotPosition: sanitizePivot(position) }),
   setDebugPivotDragging: (dragging) => set({ debugPivotDragging: dragging }),
@@ -69,6 +72,8 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
     set({ warpTravelProgress: Math.max(0, Math.min(1, progress)) }),
   setWarpReferenceSpeed: (speed) =>
     set({ warpReferenceSpeed: Math.max(0, speed) }),
+  setNavAttitudeMode: (mode) =>
+    set({ navAttitudeMode: mode }),
   setGridObjects: (objects) => set({ gridObjects: objects }),
   setAsteroidBeltSettings: (partial) =>
     set((s) => {

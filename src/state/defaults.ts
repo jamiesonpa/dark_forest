@@ -20,6 +20,7 @@ export const defaultShipState: ShipState = {
   actualHeading: 0,
   actualSpeed: 0,
   actualInclination: 0,
+  dacPitch: 0,
   rollAngle: 0,
   thermalSignature: 285,
   radioSignature: -42,

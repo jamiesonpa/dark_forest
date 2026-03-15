@@ -19,6 +19,7 @@ const THRUSTER_EMITTERS: ReadonlyArray<{ position: [number, number, number]; rad
   { position: [-84, 0, -295], radiusScale: 0.5 },
   { position: [82, 0, -295], radiusScale: 0.5 },
 ]
+const THRUST_CAPACITOR_EPSILON = 0.0001
 const PARTICLE_INACTIVE_POSITION = 0
 const REMOTE_POSITION_LERP_SPEED = 12
 const REMOTE_ROTATION_LERP_SPEED = 10
@@ -246,10 +247,15 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   useFrame((_state, delta) => {
     if (!groupRef.current) return
     if (isLocal) {
-      renderPositionRef.current.set(ship.position[0], ship.position[1], ship.position[2])
-      renderHeadingRef.current = ship.actualHeading
-      renderInclinationRef.current = ship.actualInclination
-      renderRollRef.current = ship.rollAngle
+      const localShip = useGameStore.getState().ship
+      renderPositionRef.current.set(
+        localShip.position[0],
+        localShip.position[1],
+        localShip.position[2]
+      )
+      renderHeadingRef.current = localShip.actualHeading
+      renderInclinationRef.current = localShip.actualInclination
+      renderRollRef.current = localShip.rollAngle
     } else {
       const posAlpha = 1 - Math.exp(-REMOTE_POSITION_LERP_SPEED * delta)
       const rotAlpha = 1 - Math.exp(-REMOTE_ROTATION_LERP_SPEED * delta)
@@ -271,10 +277,11 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
     const roll = THREE.MathUtils.degToRad(renderRollRef.current)
     groupRef.current.rotation.set(-pitch, -yaw, roll, 'YXZ')
 
-    const isMwdActive = ship.mwdActive
+    const hasCapacitorForThrust = ship.capacitor > THRUST_CAPACITOR_EPSILON
+    const isMwdActive = ship.mwdActive && hasCapacitorForThrust
     const mwdDistortionIntensity = 0.5
     const mwdLifetimeMultiplier = 0.5
-    const requestedSpeed = isMwdActive ? MWD_SPEED : ship.targetSpeed
+    const requestedSpeed = hasCapacitorForThrust ? (isMwdActive ? MWD_SPEED : ship.targetSpeed) : 0
     const requestedMax = isMwdActive ? MWD_SPEED : MAX_SUBWARP_SPEED
     const requestedSpeedRatio = THREE.MathUtils.clamp(requestedSpeed / Math.max(1, requestedMax), 0, 1)
     const spawnRate = isMwdActive

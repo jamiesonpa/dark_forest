@@ -21,6 +21,7 @@ export interface ShipState {
   actualHeading: number
   actualSpeed: number
   actualInclination: number
+  dacPitch: number
   rollAngle: number
   thermalSignature: number
   radioSignature: number
@@ -49,9 +50,12 @@ export interface EwJammerState {
   freq: number
 }
 
+export type NavAttitudeMode = 'AA' | 'DAC'
+
 export interface GameStore {
   currentCelestialId: string
   debugPivotEnabled: boolean
+  orientDebugEnabled: boolean
   showIRSTCone: boolean
   debugPivotPosition: [number, number, number]
   debugPivotDragging: boolean
@@ -71,6 +75,7 @@ export interface GameStore {
   warpRequiredInclination: number
   warpAlignmentErrorDeg: number
   warpAligned: boolean
+  navAttitudeMode: NavAttitudeMode
   gridObjects: GridObject[]
   rwrContacts: RWRContact[]
   ewLockState: Record<string, 'soft' | 'hard'>
@@ -89,6 +94,7 @@ export interface GameStore {
   setEnemyState: (partial: Partial<EnemyState>) => void
   setCurrentCelestial: (id: string) => void
   setDebugPivotEnabled: (enabled: boolean) => void
+  setOrientDebugEnabled: (enabled: boolean) => void
   setShowIRSTCone: (enabled: boolean) => void
   setDebugPivotPosition: (position: [number, number, number]) => void
   setDebugPivotDragging: (dragging: boolean) => void
@@ -104,6 +110,7 @@ export interface GameStore {
   }) => void
   setWarpTravelProgress: (progress: number) => void
   setWarpReferenceSpeed: (speed: number) => void
+  setNavAttitudeMode: (mode: NavAttitudeMode) => void
   setGridObjects: (objects: GridObject[]) => void
   asteroidBeltThickness: number
   asteroidBeltJitter: number

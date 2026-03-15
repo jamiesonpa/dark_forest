@@ -147,7 +147,7 @@ export const createShipSlice: StateCreator<GameStore, [], [], Partial<GameStore>
       const updated = {
         ...localShip,
         mwdActive: true,
-        mwdRemaining: 20,
+        mwdRemaining: 5,
         capacitor: Math.max(0, localShip.capacitor - activationCost),
       }
 

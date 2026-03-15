@@ -9,6 +9,7 @@ import { SunSystem } from './SunSystem'
 import { WarpTargetMarkers } from './WarpTargetMarkers'
 import { useGameStore } from '@/state/gameStore'
 import { STAR_SYSTEM, getCelestialById } from '@/utils/systemData'
+import { WarpDriver } from '@/systems/warp/WarpDriver'
 
 export function StarSystem() {
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
@@ -37,6 +38,7 @@ export function StarSystem() {
       <Skybox />
       <ambientLight intensity={0.08} />
       <SunSystem />
+      <WarpDriver />
       <WarpTargetMarkers />
       {distantCelestials.map((c) => (
         <CelestialBody key={c.id} celestial={c} isDistant />

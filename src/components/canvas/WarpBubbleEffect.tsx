@@ -6,15 +6,19 @@ import { useGameStore } from '@/state/gameStore'
 
 const PARTICLE_COUNT = 900
 const APEX_Z = 2600
-const BUBBLE_LENGTH = 5200
+const BUBBLE_LENGTH = 11500
 const MAX_RADIUS = 2700
 const Y_SCALE = 0.82
-const BASE_FLOW = 0.72
-const SPEED_FLOW_MULT = 0.00022
-const MAX_SPEED_RATIO = 3
+const BASE_FLOW = 1.5
+const SPEED_FLOW_MULT = 0.00035
+const MAX_SPEED_RATIO = 5
 const MAX_SIZE_MULTIPLIER = 40
-const SPEED_SMOOTH_ACCEL = 4.5
-const SPEED_SMOOTH_DECEL = 12
+const SPEED_SMOOTH_ACCEL = 2.5
+const SPEED_SMOOTH_DECEL = 5.5
+const TAIL_FADE_START_U = 0.62
+const TAIL_FADE_END_U = 0.9
+const TAIL_CUTOFF_U = 0.92
+const MIN_VISIBLE_FRACTION = 0.3
 
 type ParticleState = {
   u: Float32Array
@@ -151,19 +155,29 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
     const smoothSpeedNorm = speedNormRef.current
     const sizeMultiplier = THREE.MathUtils.lerp(1, MAX_SIZE_MULTIPLIER, smoothSpeedNorm)
     const speedRatio = Math.min(MAX_SPEED_RATIO, Math.max(0, ship.actualSpeed * SPEED_FLOW_MULT))
-    const flow = (BASE_FLOW + speedRatio * 0.42) * smoothSpeedNorm
+    const flow = (BASE_FLOW + speedRatio * 1.05) * smoothSpeedNorm
+    const visibleFraction =
+      MIN_VISIBLE_FRACTION + (1 - MIN_VISIBLE_FRACTION) * Math.pow(smoothSpeedNorm, 0.65)
+    const visibleCount = Math.floor(PARTICLE_COUNT * visibleFraction)
 
     if (!active) {
-      material.opacity = THREE.MathUtils.lerp(material.opacity, 0, dt * 8)
-      speedNormRef.current = THREE.MathUtils.lerp(speedNormRef.current, 0, dt * 14)
+      material.opacity = THREE.MathUtils.lerp(material.opacity, 0, dt * 4)
+      speedNormRef.current = THREE.MathUtils.lerp(speedNormRef.current, 0, dt * 7)
       return
     }
 
-    const targetOpacity = 0.06 + 0.66 * smoothSpeedNorm
+    const targetOpacity = 0.04 + 0.72 * Math.pow(smoothSpeedNorm, 0.78)
     material.opacity = THREE.MathUtils.lerp(material.opacity, targetOpacity, dt * 6)
 
     for (let i = 0; i < PARTICLE_COUNT; i += 1) {
       const idx = i * 3
+      if (i >= visibleCount) {
+        colors[idx] = 0
+        colors[idx + 1] = 0
+        colors[idx + 2] = 0
+        sizes[i] = 0
+        continue
+      }
       let u = particle.u[i] + dt * flow * (0.75 + particle.alpha[i] * 0.45)
       if (u > 1) {
         u -= 1
@@ -199,9 +213,16 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
       positions[idx + 1] = y
       positions[idx + 2] = z
 
-      const fadeHead = THREE.MathUtils.smoothstep(u, 0, 0.25)
-      const fadeTail = 1 - THREE.MathUtils.smoothstep(u, 0.78, 1)
+      const fadeHead = THREE.MathUtils.smoothstep(u, 0, 0.22)
+      const fadeTail = 1 - THREE.MathUtils.smoothstep(u, TAIL_FADE_START_U, TAIL_FADE_END_U)
       const intensity = Math.max(0.08, fadeHead * fadeTail)
+      if (u >= TAIL_CUTOFF_U) {
+        colors[idx] = 0
+        colors[idx + 1] = 0
+        colors[idx + 2] = 0
+        sizes[i] = 0
+        continue
+      }
       colors[idx] = particle.tintR[i] * intensity
       colors[idx + 1] = particle.tintG[i] * intensity
       colors[idx + 2] = particle.tintB[i] * intensity

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
-import { getCelestialById } from '@/utils/systemData'
+import { STAR_SYSTEM, getCelestialById } from '@/utils/systemData'
 import { getWorldShipPosition } from '@/systems/warp/navigationMath'
 
 const DEFAULT_SUN_DIRECTION = new THREE.Vector3(0.32, 0.18, 0.93).normalize()
@@ -160,8 +160,6 @@ export function SunSystem() {
   const sunLightPos = useMemo(() => new THREE.Vector3(), [])
   const irstSunCoreRef = useRef<THREE.Sprite>(null)
   const irstSunHaloRef = useRef<THREE.Sprite>(null)
-  const currentCelestialId = useGameStore((s) => s.currentCelestialId)
-  const shipPosition = useGameStore((s) => s.ship.position)
 
   const refreshOccluders = () => {
     const next: THREE.Object3D[] = []
@@ -221,10 +219,17 @@ export function SunSystem() {
       refreshOccluders()
     }
 
-    const currentCelestial = getCelestialById(currentCelestialId)
+    const liveState = useGameStore.getState()
+    const currentCelestial = getCelestialById(liveState.currentCelestialId)
+    const starCelestial = STAR_SYSTEM.celestials.find((c) => c.id === 'star')
     if (currentCelestial) {
-      const shipWorldPosition = getWorldShipPosition(shipPosition, currentCelestial.position)
-      sunDirection.set(-shipWorldPosition[0], -shipWorldPosition[1], -shipWorldPosition[2])
+      const shipWorldPosition = getWorldShipPosition(liveState.ship.position, currentCelestial.position)
+      const starWorldPosition = starCelestial?.position ?? ([0, 0, 0] as [number, number, number])
+      sunDirection.set(
+        starWorldPosition[0] - shipWorldPosition[0],
+        starWorldPosition[1] - shipWorldPosition[1],
+        starWorldPosition[2] - shipWorldPosition[2]
+      )
       if (sunDirection.lengthSq() < 0.0001) {
         sunDirection.copy(DEFAULT_SUN_DIRECTION)
       } else {

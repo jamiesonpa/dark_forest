@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ShipStatusPrototype } from './ShipStatusPrototype'
 import { ShipAttitudePanel } from './ShipAttitudePanel'
+import { DacFlightHud } from './DacFlightHud'
 import { IRSTView } from './IRSTView'
 import { EngineeringPanel } from './EngineeringPanel'
 import { RWRDisplay } from './RWRDisplay'
@@ -9,9 +10,12 @@ import { useGameStore } from '@/state/gameStore'
 export function HUD() {
   const debugPivotEnabled = useGameStore((s) => s.debugPivotEnabled)
   const setDebugPivotEnabled = useGameStore((s) => s.setDebugPivotEnabled)
+  const orientDebugEnabled = useGameStore((s) => s.orientDebugEnabled)
+  const setOrientDebugEnabled = useGameStore((s) => s.setOrientDebugEnabled)
   const showIRSTCone = useGameStore((s) => s.showIRSTCone)
   const setShowIRSTCone = useGameStore((s) => s.setShowIRSTCone)
   const setShipState = useGameStore((s) => s.setShipState)
+  const navAttitudeMode = useGameStore((s) => s.navAttitudeMode)
   const capacitorMax = useGameStore((s) => s.ship.capacitorMax)
   const pivotPosition = useGameStore((s) => s.debugPivotPosition)
   const asteroidBeltThickness = useGameStore((s) => s.asteroidBeltThickness)
@@ -125,13 +129,14 @@ export function HUD() {
         <EngineeringPanel />
       </div>
       <div className="hud-bottom">
-        <div className="hud-bottom-status-row">
+        <div className={`hud-bottom-status-row ${navAttitudeMode === 'DAC' ? 'dac-mode' : ''}`.trim()}>
           <ShipStatusPrototype />
         </div>
       </div>
       <div className="hud-nav-solution-bottom-right">
         <ShipAttitudePanel />
       </div>
+      <DacFlightHud />
       <div className="hud-bottom-right">
         <RWRDisplay />
       </div>
@@ -204,6 +209,13 @@ export function HUD() {
                 </div>
               )
             })}
+            <button
+              type="button"
+              className={`hud-debug-toggle ${orientDebugEnabled ? 'active' : ''}`}
+              onClick={() => setOrientDebugEnabled(!orientDebugEnabled)}
+            >
+              ORIENT DEBUG
+            </button>
             <button
               type="button"
               className={`hud-debug-toggle ${showIRSTCone ? 'active' : ''}`}
@@ -349,6 +361,7 @@ export function HUD() {
                   actualHeading: 0,
                   inclination: 0,
                   actualInclination: 0,
+                  dacPitch: 0,
                   rollAngle: 0,
                   mwdActive: false,
                   mwdRemaining: 0,
