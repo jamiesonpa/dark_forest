@@ -21,11 +21,23 @@ export default function App() {
   const [joinBusy, setJoinBusy] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [serverWindowOpen, setServerWindowOpen] = useState(false)
+  const [starSystemWindowOpen, setStarSystemWindowOpen] = useState(false)
   const setLocalPlayerId = useGameStore((s) => s.setLocalPlayerId)
   const upsertRemoteShips = useGameStore((s) => s.upsertRemoteShips)
+  const setCurrentCelestial = useGameStore((s) => s.setCurrentCelestial)
+  const setStarSystemSnapshot = useGameStore((s) => s.setStarSystemSnapshot)
+  const starSystemSeed = useGameStore((s) => s.starSystemSeed)
+  const starSystemConfig = useGameStore((s) => s.starSystemConfig)
   const navAttitudeMode = useGameStore((s) => s.navAttitudeMode)
   const setNavAttitudeMode = useGameStore((s) => s.setNavAttitudeMode)
   const setMwdActive = useGameStore((s) => s.setMwdActive)
+  const [cfgSeed, setCfgSeed] = useState(starSystemSeed)
+  const [cfgPlanets, setCfgPlanets] = useState(starSystemConfig.planetCount)
+  const [cfgMoons, setCfgMoons] = useState(starSystemConfig.moonCount)
+  const [cfgBelts, setCfgBelts] = useState(starSystemConfig.asteroidBeltCount)
+  const [cfgMinAu, setCfgMinAu] = useState(starSystemConfig.minOrbitAu)
+  const [cfgMaxAu, setCfgMaxAu] = useState(starSystemConfig.maxOrbitAu)
+  const [cfgSepAu, setCfgSepAu] = useState(starSystemConfig.minSeparationAu)
 
   const handleKey = useCallback((e: KeyboardEvent) => {
     const isEditableElement = (target: EventTarget | null) => {
@@ -74,6 +86,16 @@ export default function App() {
   }, [handleKey])
 
   useEffect(() => {
+    setCfgSeed(starSystemSeed)
+    setCfgPlanets(starSystemConfig.planetCount)
+    setCfgMoons(starSystemConfig.moonCount)
+    setCfgBelts(starSystemConfig.asteroidBeltCount)
+    setCfgMinAu(starSystemConfig.minOrbitAu)
+    setCfgMaxAu(starSystemConfig.maxOrbitAu)
+    setCfgSepAu(starSystemConfig.minSeparationAu)
+  }, [starSystemConfig, starSystemSeed])
+
+  useEffect(() => {
     multiplayerClient.setHandlers({
       onStatusChange: (nextStatus, detail) => {
         setStatus(nextStatus)
@@ -84,12 +106,24 @@ export default function App() {
       },
       onShipsUpdate: (ships) => {
         upsertRemoteShips(ships)
+        const state = useGameStore.getState()
+        const localShip = ships[state.localPlayerId]
+        if (
+          localShip?.currentCelestialId &&
+          state.warpState === 'idle' &&
+          localShip.currentCelestialId !== state.currentCelestialId
+        ) {
+          setCurrentCelestial(localShip.currentCelestialId)
+        }
+      },
+      onStarSystemUpdate: (snapshot) => {
+        setStarSystemSnapshot(snapshot)
       },
     })
     return () => {
       multiplayerClient.disconnect()
     }
-  }, [setLocalPlayerId, upsertRemoteShips])
+  }, [setCurrentCelestial, setLocalPlayerId, setStarSystemSnapshot, upsertRemoteShips])
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
@@ -155,6 +189,26 @@ export default function App() {
         >
           <span>⚙</span>
           <span>Server</span>
+        </button>
+        <button
+          onClick={() => setStarSystemWindowOpen(true)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            width: '100%',
+            padding: '8px 10px',
+            borderRadius: 6,
+            border: '1px solid rgba(160, 170, 200, 0.45)',
+            background: 'rgba(10, 10, 12, 0.85)',
+            color: '#d6dbf5',
+            cursor: 'pointer',
+            fontFamily: 'system-ui, sans-serif',
+            fontSize: 12,
+          }}
+        >
+          <span>✦</span>
+          <span>Star System Config</span>
         </button>
         <span style={{ color: '#d6dbf5', fontFamily: 'system-ui, sans-serif', fontSize: 12 }}>
           Status: {status}
@@ -237,6 +291,90 @@ export default function App() {
           </div>
           <div style={{ marginTop: 8 }}>Status: {status}</div>
           {statusDetail ? <div style={{ color: '#ffb3b3', marginTop: 4 }}>{statusDetail}</div> : null}
+        </div>
+      )}
+
+      {starSystemWindowOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 90,
+            left: 500,
+            zIndex: 10000,
+            width: 340,
+            borderRadius: 10,
+            background: 'rgba(8, 10, 16, 0.95)',
+            border: '1px solid rgba(160, 170, 200, 0.5)',
+            color: '#d6dbf5',
+            fontFamily: 'system-ui, sans-serif',
+            fontSize: 12,
+            boxShadow: '0 10px 24px rgba(0,0,0,0.45)',
+            padding: 12,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 10,
+            }}
+          >
+            <strong>Star System Config</strong>
+            <button
+              onClick={() => setStarSystemWindowOpen(false)}
+              style={{
+                borderRadius: 4,
+                border: '1px solid rgba(200, 210, 255, 0.35)',
+                background: 'rgba(20, 20, 24, 0.9)',
+                color: '#f3f4ff',
+                cursor: 'pointer',
+                width: 24,
+                height: 24,
+              }}
+            >
+              x
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'center' }}>
+            <span>Seed</span>
+            <input type="number" value={cfgSeed} onChange={(e) => setCfgSeed(Number(e.target.value) || 1)} />
+            <span>Planets</span>
+            <input type="number" value={cfgPlanets} onChange={(e) => setCfgPlanets(Number(e.target.value) || 0)} />
+            <span>Moons</span>
+            <input type="number" value={cfgMoons} onChange={(e) => setCfgMoons(Number(e.target.value) || 0)} />
+            <span>Belts</span>
+            <input type="number" value={cfgBelts} onChange={(e) => setCfgBelts(Number(e.target.value) || 0)} />
+            <span>Min Orbit (AU)</span>
+            <input type="number" value={cfgMinAu} onChange={(e) => setCfgMinAu(Number(e.target.value) || 0)} />
+            <span>Max Orbit (AU)</span>
+            <input type="number" value={cfgMaxAu} onChange={(e) => setCfgMaxAu(Number(e.target.value) || 0)} />
+            <span>Min Separation (AU)</span>
+            <input type="number" value={cfgSepAu} onChange={(e) => setCfgSepAu(Number(e.target.value) || 0)} />
+          </div>
+          <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Active seed: {starSystemSeed}</span>
+            <button
+              onClick={() => {
+                if (status !== 'connected') {
+                  setStatusDetail('Join multiplayer server first, then regenerate the system.')
+                  return
+                }
+                multiplayerClient.sendRegenerateSystem({
+                  seed: cfgSeed,
+                  planetCount: cfgPlanets,
+                  moonCount: cfgMoons,
+                  asteroidBeltCount: cfgBelts,
+                  minOrbitAu: cfgMinAu,
+                  maxOrbitAu: cfgMaxAu,
+                  minSeparationAu: cfgSepAu,
+                })
+              }}
+              style={{ cursor: 'pointer' }}
+            >
+              Regenerate
+            </button>
+          </div>
         </div>
       )}
     </div>

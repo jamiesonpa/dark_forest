@@ -1,6 +1,6 @@
 import type { StateCreator } from 'zustand'
 import type { GameStore } from '@/state/types'
-import { getCelestialById } from '@/utils/systemData'
+import { DEFAULT_STAR_SYSTEM_SNAPSHOT, getCelestialById } from '@/utils/systemData'
 import {
   getWarpCapacitorRequiredAmount,
   vectorBetweenWorldPoints,
@@ -10,6 +10,7 @@ import {
 
 const SHIP_CENTER_PIVOT: [number, number, number] = [0, 0, 0]
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
+const WARP_MIN_POST_CAPACITOR = 1
 
 function sanitizePivot(position: [number, number, number]): [number, number, number] {
   const [x, y, z] = position
@@ -21,6 +22,9 @@ function sanitizePivot(position: [number, number, number]): [number, number, num
 }
 
 export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<GameStore>> = (set) => ({
+  starSystem: DEFAULT_STAR_SYSTEM_SNAPSHOT.system,
+  starSystemSeed: DEFAULT_STAR_SYSTEM_SNAPSHOT.seed,
+  starSystemConfig: DEFAULT_STAR_SYSTEM_SNAPSHOT.config,
   currentCelestialId: 'planet-1',
   debugPivotEnabled: false,
   orientDebugEnabled: false,
@@ -49,6 +53,34 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   asteroidBeltMinSize: 26,
   asteroidBeltMaxSize: 140,
   asteroidBeltSpawnNonce: 0,
+  setStarSystemSnapshot: (snapshot) =>
+    set((s) => {
+      const warpables = snapshot.system.celestials.filter((c) => c.id !== 'star')
+      const fallbackCelestialId = warpables[0]?.id ?? 'star'
+      const fallbackDestinationId =
+        warpables.find((c) => c.id !== (s.currentCelestialId || fallbackCelestialId))?.id
+        ?? fallbackCelestialId
+      const currentExists = snapshot.system.celestials.some((c) => c.id === s.currentCelestialId)
+      const selectedExists = s.selectedWarpDestinationId
+        ? snapshot.system.celestials.some((c) => c.id === s.selectedWarpDestinationId)
+        : false
+      const sourceExists = s.warpSourceCelestialId
+        ? snapshot.system.celestials.some((c) => c.id === s.warpSourceCelestialId)
+        : false
+      const targetExists = s.warpTargetId
+        ? snapshot.system.celestials.some((c) => c.id === s.warpTargetId)
+        : false
+
+      return {
+        starSystem: snapshot.system,
+        starSystemSeed: snapshot.seed,
+        starSystemConfig: snapshot.config,
+        currentCelestialId: currentExists ? s.currentCelestialId : fallbackCelestialId,
+        selectedWarpDestinationId: selectedExists ? s.selectedWarpDestinationId : fallbackDestinationId,
+        warpSourceCelestialId: sourceExists ? s.warpSourceCelestialId : null,
+        warpTargetId: targetExists ? s.warpTargetId : null,
+      }
+    }),
   setCurrentCelestial: (id) => set({ currentCelestialId: id }),
   setDebugPivotEnabled: (enabled) => set({ debugPivotEnabled: enabled }),
   setOrientDebugEnabled: (enabled) => set({ orientDebugEnabled: enabled }),
@@ -128,8 +160,8 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   startWarp: (targetCelestialId) =>
     set((s) => {
       if (s.warpState !== 'idle' || !s.warpAligned) return {}
-      const sourceCelestial = getCelestialById(s.currentCelestialId)
-      const destinationCelestial = getCelestialById(targetCelestialId)
+      const sourceCelestial = getCelestialById(s.currentCelestialId, s.starSystem)
+      const destinationCelestial = getCelestialById(targetCelestialId, s.starSystem)
       if (!sourceCelestial || !destinationCelestial || sourceCelestial.id === destinationCelestial.id) {
         return {}
       }
@@ -140,7 +172,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
       const localShip = s.shipsById[localId] ?? s.ship
       const requiredCapacitor = getWarpCapacitorRequiredAmount(distanceWorldUnits, localShip.capacitorMax)
-      if (localShip.capacitor < requiredCapacitor) return {}
+      if (localShip.capacitor - requiredCapacitor < WARP_MIN_POST_CAPACITOR) return {}
 
       const updatedLocalShip = {
         ...localShip,

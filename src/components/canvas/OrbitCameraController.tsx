@@ -24,6 +24,8 @@ export function OrbitCameraController() {
   const dacForwardRef = useRef(new THREE.Vector3(0, 0, 1))
   const dacUpRef = useRef(new THREE.Vector3(0, 1, 0))
   const worldUpRef = useRef(new THREE.Vector3(0, 1, 0))
+  const warpCameraOffsetRef = useRef(new THREE.Vector3(0, 0, MAX_DISTANCE * 0.45))
+  const prevWarpActiveRef = useRef(false)
   const dacEulerRef = useRef(new THREE.Euler(0, 0, 0, 'YXZ'))
   const dacDesiredPositionRef = useRef(new THREE.Vector3())
   const dacLookTargetRef = useRef(new THREE.Vector3())
@@ -48,6 +50,7 @@ export function OrbitCameraController() {
       warpState === 'aligning' ||
       warpState === 'warping' ||
       warpState === 'landing'
+    const wasWarpActive = prevWarpActiveRef.current
 
     if (debugPivotEnabled) {
       // debugPivotPosition is local-space relative to the local ship.
@@ -93,6 +96,22 @@ export function OrbitCameraController() {
       }
     }
 
+    if (warpActive && !wasWarpActive && !dacActive && !debugPivotEnabled) {
+      // Capture offset from the *current orbit target* to preserve the
+      // exact player camera framing when warp begins.
+      warpCameraOffsetRef.current
+        .copy((camera as THREE.PerspectiveCamera).position)
+        .sub(controls.target)
+      if (warpCameraOffsetRef.current.lengthSq() < 0.000001) {
+        warpCameraOffsetRef.current
+          .copy((camera as THREE.PerspectiveCamera).position)
+          .sub(targetVecRef.current)
+      }
+      if (warpCameraOffsetRef.current.lengthSq() < 0.000001) {
+        warpCameraOffsetRef.current.set(0, 0, MAX_DISTANCE * 0.45)
+      }
+    }
+
     if (prevNavModeRef.current !== navAttitudeMode) {
       if (navAttitudeMode === 'DAC') {
         aaStoredOffsetRef.current.copy((camera as THREE.PerspectiveCamera).position).sub(targetVecRef.current)
@@ -116,12 +135,6 @@ export function OrbitCameraController() {
       targetDeltaRef.current.copy(targetVecRef.current).sub(prevTargetRef.current)
       const targetDeltaLen = targetDeltaRef.current.length()
 
-      // During warp phases, co-translate camera with the moving target so the
-      // user's orbit frame is preserved (no automatic side-pan drift).
-      if (warpActive && targetDeltaLen > 0.000001) {
-        ;(camera as THREE.PerspectiveCamera).position.add(targetDeltaRef.current)
-      }
-
       // Only compensate large discontinuities (grid re-anchors), not normal
       // per-frame target motion, to avoid introducing micro-jitter in warp.
       if (
@@ -135,6 +148,17 @@ export function OrbitCameraController() {
       prevTargetRef.current = new THREE.Vector3()
     }
     prevTargetRef.current.copy(targetVecRef.current)
+    prevWarpActiveRef.current = warpActive
+
+    if (!dacActive && warpActive && !debugPivotEnabled) {
+      ;(camera as THREE.PerspectiveCamera).position
+        .copy(targetVecRef.current)
+        .add(warpCameraOffsetRef.current)
+      ;(camera as THREE.PerspectiveCamera).up.copy(worldUpRef.current)
+      controls.target.copy(targetVecRef.current)
+      controls.enabled = false
+      return
+    }
 
     if (dacActive) {
       const liveShip = useGameStore.getState().ship

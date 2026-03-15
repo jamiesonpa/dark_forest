@@ -8,6 +8,7 @@ import {
   getDistanceScaledWarpDurationMs,
   getWorldShipPosition,
   isWarpAligned,
+  WARP_ALIGNMENT_TOLERANCE_DEG,
   vectorBetweenWorldPoints,
   vectorMagnitude,
   worldPositionForCelestial,
@@ -54,30 +55,81 @@ export function WarpDriver() {
     const nowMs = simNowMsRef.current
 
     const state = useGameStore.getState()
-    const currentCelestial = getCelestialById(state.currentCelestialId)
+    const currentCelestial = getCelestialById(state.currentCelestialId, state.starSystem)
     const selectedDestinationId = state.selectedWarpDestinationId
-    const selectedDestination = selectedDestinationId ? getCelestialById(selectedDestinationId) : undefined
+    const selectedDestination = selectedDestinationId
+      ? getCelestialById(selectedDestinationId, state.starSystem)
+      : undefined
 
-    if (currentCelestial && selectedDestination && selectedDestination.id !== currentCelestial.id) {
+    if (currentCelestial) {
       const currentCelestialWorldPosition = worldPositionForCelestial(currentCelestial)
-      const destinationWorldPosition = worldPositionForCelestial(selectedDestination)
-      const vectorToDestination = vectorBetweenWorldPoints(
-        currentCelestialWorldPosition,
-        destinationWorldPosition
+      const candidateAlignments = state.starSystem.celestials
+        .filter((c) => c.id !== currentCelestial.id && c.type !== 'star')
+        .map((destinationCelestial) => {
+          const destinationWorldPosition = worldPositionForCelestial(destinationCelestial)
+          const vectorToDestination = vectorBetweenWorldPoints(
+            currentCelestialWorldPosition,
+            destinationWorldPosition
+          )
+          const { bearing, inclination } = bearingInclinationFromVector(vectorToDestination)
+          const alignment = isWarpAligned(
+            state.ship.actualHeading,
+            state.ship.actualInclination,
+            bearing,
+            inclination
+          )
+          return {
+            id: destinationCelestial.id,
+            bearing,
+            inclination,
+            alignment,
+          }
+        })
+
+      const bestCandidate = candidateAlignments.reduce<(typeof candidateAlignments)[number] | null>(
+        (best, current) => {
+          if (!best) return current
+          return current.alignment.totalErrorDeg < best.alignment.totalErrorDeg ? current : best
+        },
+        null
       )
-      const { bearing, inclination } = bearingInclinationFromVector(vectorToDestination)
-      const alignment = isWarpAligned(
-        state.ship.actualHeading,
-        state.ship.actualInclination,
-        bearing,
-        inclination
-      )
-      state.setWarpAlignmentStatus({
-        requiredBearing: bearing,
-        requiredInclination: inclination,
-        totalErrorDeg: alignment.totalErrorDeg,
-        aligned: alignment.aligned,
-      })
+
+      // If the pilot lines up a different visible pip, follow that alignment target
+      // so G/WARP corresponds to what the pilot is currently aiming at.
+      if (
+        state.warpState === 'idle' &&
+        bestCandidate &&
+        bestCandidate.alignment.totalErrorDeg <= WARP_ALIGNMENT_TOLERANCE_DEG &&
+        bestCandidate.id !== selectedDestinationId
+      ) {
+        state.setSelectedWarpDestination(bestCandidate.id)
+      }
+
+      const activeTargetId =
+        (state.warpState === 'idle' &&
+          bestCandidate &&
+          bestCandidate.alignment.totalErrorDeg <= WARP_ALIGNMENT_TOLERANCE_DEG)
+          ? bestCandidate.id
+          : selectedDestination?.id
+      const activeAlignment = activeTargetId
+        ? candidateAlignments.find((c) => c.id === activeTargetId)
+        : undefined
+
+      if (activeAlignment) {
+        state.setWarpAlignmentStatus({
+          requiredBearing: activeAlignment.bearing,
+          requiredInclination: activeAlignment.inclination,
+          totalErrorDeg: activeAlignment.alignment.totalErrorDeg,
+          aligned: activeAlignment.alignment.aligned,
+        })
+      } else {
+        state.setWarpAlignmentStatus({
+          requiredBearing: state.ship.actualHeading,
+          requiredInclination: state.ship.actualInclination,
+          totalErrorDeg: Number.POSITIVE_INFINITY,
+          aligned: false,
+        })
+      }
     } else {
       state.setWarpAlignmentStatus({
         requiredBearing: state.ship.actualHeading,
@@ -97,8 +149,8 @@ export function WarpDriver() {
         }
         const stableMs = nowMs - aligningSinceMsRef.current
         if (stableMs >= ALIGN_STABLE_MS) {
-          const sourceCelestial = getCelestialById(state.currentCelestialId)
-          const destinationCelestial = getCelestialById(state.warpTargetId)
+          const sourceCelestial = getCelestialById(state.currentCelestialId, state.starSystem)
+          const destinationCelestial = getCelestialById(state.warpTargetId, state.starSystem)
           if (sourceCelestial && destinationCelestial && destinationCelestial.id !== sourceCelestial.id) {
             const sourceCelestialWorld = worldPositionForCelestial(sourceCelestial)
             const sourceWorld = getWorldShipPosition(state.ship.position, sourceCelestialWorld)
@@ -190,8 +242,8 @@ export function WarpDriver() {
         }
 
         if (linearProgress >= 1) {
-          const sourceCelestial = getCelestialById(session.sourceCelestialId)
-          const destinationCelestial = getCelestialById(session.destinationCelestialId)
+          const sourceCelestial = getCelestialById(session.sourceCelestialId, state.starSystem)
+          const destinationCelestial = getCelestialById(session.destinationCelestialId, state.starSystem)
           let arrivalOffsetAtDestination: [number, number, number] = [0, 0, 0]
           if (sourceCelestial && destinationCelestial) {
             const sourceWorld = worldPositionForCelestial(sourceCelestial)

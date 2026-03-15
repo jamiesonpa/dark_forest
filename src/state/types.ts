@@ -1,4 +1,11 @@
-import type { GridObject, RWRContact, WarpState } from '@/types/game'
+import type {
+  GridObject,
+  RWRContact,
+  StarSystemData,
+  StarSystemGenerationConfig,
+  StarSystemSnapshot,
+  WarpState,
+} from '@/types/game'
 import type { NetworkShipSnapshot } from '@/network/colyseusClient'
 
 export interface ShipState {
@@ -53,6 +60,9 @@ export interface EwJammerState {
 export type NavAttitudeMode = 'AA' | 'DAC'
 
 export interface GameStore {
+  starSystem: StarSystemData
+  starSystemSeed: number
+  starSystemConfig: StarSystemGenerationConfig
   currentCelestialId: string
   debugPivotEnabled: boolean
   orientDebugEnabled: boolean
@@ -92,6 +102,7 @@ export interface GameStore {
   setEwRadar: (partial: Partial<{ radarOn: boolean; radarMode: string; radarPower: number; radarFreq: number; radarPRF: string }>) => void
   setRwrContacts: (contacts: RWRContact[]) => void
   setEnemyState: (partial: Partial<EnemyState>) => void
+  setStarSystemSnapshot: (snapshot: StarSystemSnapshot) => void
   setCurrentCelestial: (id: string) => void
   setDebugPivotEnabled: (enabled: boolean) => void
   setOrientDebugEnabled: (enabled: boolean) => void

@@ -1,4 +1,9 @@
-import type { StarSystemData, Celestial } from '@/types/game'
+import type {
+  StarSystemData,
+  Celestial,
+  StarSystemGenerationConfig,
+  StarSystemSnapshot,
+} from '@/types/game'
 
 export const STAR_SYSTEM: StarSystemData = {
   id: 'df-1',
@@ -29,22 +34,6 @@ export const STAR_SYSTEM: StarSystemData = {
       radius: 350,
     },
     {
-      id: 'station',
-      name: 'Central Station',
-      type: 'station',
-      position: [5000, 5000, 3000],
-      gridRadius: 1500,
-      radius: 80,
-    },
-    {
-      id: 'gate',
-      name: 'Stargate Alpha',
-      type: 'stargate',
-      position: [-8000, -6000, 0],
-      gridRadius: 1000,
-      radius: 120,
-    },
-    {
       id: 'belt',
       name: 'Asteroid Belt',
       type: 'asteroid_belt',
@@ -55,8 +44,27 @@ export const STAR_SYSTEM: StarSystemData = {
   ],
 }
 
-export function getCelestialById(id: string): Celestial | undefined {
-  return STAR_SYSTEM.celestials.find((c) => c.id === id)
+export const DEFAULT_STAR_SYSTEM_CONFIG: StarSystemGenerationConfig = {
+  seed: 1337,
+  planetCount: 2,
+  moonCount: 0,
+  asteroidBeltCount: 1,
+  minOrbitAu: 60,
+  maxOrbitAu: 220,
+  minSeparationAu: 35,
+}
+
+export const DEFAULT_STAR_SYSTEM_SNAPSHOT: StarSystemSnapshot = {
+  system: STAR_SYSTEM,
+  seed: DEFAULT_STAR_SYSTEM_CONFIG.seed,
+  config: DEFAULT_STAR_SYSTEM_CONFIG,
+}
+
+export function getCelestialById(
+  id: string,
+  starSystem: StarSystemData = STAR_SYSTEM
+): Celestial | undefined {
+  return starSystem.celestials.find((c) => c.id === id)
 }
 
 export function getCelestialPosition(c: Celestial): [number, number, number] {

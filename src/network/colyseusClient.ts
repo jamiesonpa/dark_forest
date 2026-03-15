@@ -1,8 +1,10 @@
 import { Client, type Room } from 'colyseus.js'
+import type { StarSystemGenerationConfig, StarSystemSnapshot } from '@/types/game'
 
 export interface NetworkShipSnapshot {
   id: string
   name: string
+  currentCelestialId: string
   position: [number, number, number]
   targetSpeed: number
   mwdActive: boolean
@@ -39,11 +41,13 @@ type Handlers = {
   onStatusChange?: (status: MultiplayerStatus, detail?: string) => void
   onJoined?: (sessionId: string) => void
   onShipsUpdate?: (shipsById: Record<string, NetworkShipSnapshot>) => void
+  onStarSystemUpdate?: (snapshot: StarSystemSnapshot) => void
 }
 
 type ColyseusShip = {
   id: string
   name: string
+  currentCelestialId: string
   x: number
   y: number
   z: number
@@ -114,6 +118,9 @@ class ColyseusMultiplayerClient {
       room.onMessage('ships_snapshot', (snapshot: WireSnapshot) => {
         this.preferWireSnapshots = true
         this.handlers.onShipsUpdate?.(snapshot)
+      })
+      room.onMessage('star_system_snapshot', (snapshot: StarSystemSnapshot) => {
+        this.handlers.onStarSystemUpdate?.(snapshot)
       })
       room.onLeave((code) => {
         this.room = null
@@ -192,6 +199,11 @@ class ColyseusMultiplayerClient {
     this.room.send('warp', payload)
   }
 
+  sendRegenerateSystem(config: Partial<StarSystemGenerationConfig>) {
+    if (!this.room) return
+    this.room.send('star_system_regenerate', config)
+  }
+
   private updateStatus(status: MultiplayerStatus, detail?: string) {
     this.status = status
     this.handlers.onStatusChange?.(status, detail)
@@ -208,6 +220,7 @@ class ColyseusMultiplayerClient {
       next[key] = {
         id: ship.id,
         name: ship.name,
+        currentCelestialId: ship.currentCelestialId,
         position: [ship.x, ship.y, ship.z],
         targetSpeed: ship.targetSpeed,
         mwdActive: ship.mwdActive,

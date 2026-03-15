@@ -1,12 +1,20 @@
 import colyseus, { type Client } from 'colyseus'
 import { StarSystemRoomState, ShipState } from '../schema/GameState.js'
+import {
+  DEFAULT_STAR_SYSTEM_CONFIG,
+  generateStarSystemSnapshot,
+  getFarthestWarpablePair,
+} from '../systems/starSystemGenerator.js'
+import type { StarSystemGenerationConfig, StarSystemSnapshot } from '../types/starSystem.js'
 
 const SPAWN_RING_RADIUS = 1200
+const SPAWN_VERTICAL_JITTER = 150
 const { Room } = colyseus
 
 type ShipSnapshot = {
   id: string
   name: string
+  currentCelestialId: string
   position: [number, number, number]
   targetSpeed: number
   mwdActive: boolean
@@ -33,6 +41,67 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
   maxClients = 20
   private moveDebugLastLogMs = new Map<string, number>()
   private moveDebugLastPos = new Map<string, { x: number; y: number; z: number }>()
+  private starSystemSnapshot: StarSystemSnapshot = generateStarSystemSnapshot(DEFAULT_STAR_SYSTEM_CONFIG)
+  private spawnAnchorIds: [string, string] | null = null
+
+  private computeSpawnAnchorIds() {
+    const farthestPair = getFarthestWarpablePair(this.starSystemSnapshot.system)
+    if (farthestPair) {
+      this.spawnAnchorIds = [farthestPair[0].id, farthestPair[1].id]
+      return
+    }
+    const warpables = this.starSystemSnapshot.system.celestials.filter((c) => c.type !== 'star')
+    if (warpables.length >= 2) {
+      this.spawnAnchorIds = [warpables[0].id, warpables[1].id]
+      return
+    }
+    this.spawnAnchorIds = ['star', 'star']
+  }
+
+  private setStarSystemFromConfig(input: Partial<StarSystemGenerationConfig> | undefined) {
+    this.starSystemSnapshot = generateStarSystemSnapshot({
+      ...DEFAULT_STAR_SYSTEM_CONFIG,
+      ...(input ?? {}),
+    })
+    this.computeSpawnAnchorIds()
+  }
+
+  private broadcastStarSystemSnapshot(client?: Client) {
+    if (client) {
+      client.send('star_system_snapshot', this.starSystemSnapshot)
+      return
+    }
+    this.broadcast('star_system_snapshot', this.starSystemSnapshot)
+  }
+
+  private getSpawnForPlayer(playerIndex: number) {
+    const anchorId = this.spawnAnchorIds
+      ? this.spawnAnchorIds[playerIndex % 2]
+      : this.starSystemSnapshot.system.celestials.find((c) => c.type !== 'star')?.id ?? 'star'
+    const angle = (Math.PI * 2 * (playerIndex % Math.max(2, this.maxClients))) / Math.max(2, this.maxClients)
+    return {
+      celestialId: anchorId,
+      localPosition: [
+        Math.cos(angle) * SPAWN_RING_RADIUS,
+        Math.sin(angle * 2) * SPAWN_VERTICAL_JITTER,
+        Math.sin(angle) * SPAWN_RING_RADIUS,
+      ] as [number, number, number],
+    }
+  }
+
+  private respawnShipsByAnchorOrder() {
+    const ids = Array.from(this.state.ships.keys())
+    ids.forEach((sessionId, index) => {
+      const ship = this.state.ships.get(sessionId)
+      if (!ship) return
+      const spawn = this.getSpawnForPlayer(index)
+      ship.currentCelestialId = spawn.celestialId
+      ship.x = spawn.localPosition[0]
+      ship.y = spawn.localPosition[1]
+      ship.z = spawn.localPosition[2]
+    })
+    this.broadcastSnapshot()
+  }
 
   private buildSnapshot(): Record<string, ShipSnapshot> {
     const snapshot: Record<string, ShipSnapshot> = {}
@@ -40,6 +109,7 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
       snapshot[sessionId] = {
         id: ship.id,
         name: ship.name,
+        currentCelestialId: ship.currentCelestialId,
         position: [ship.x, ship.y, ship.z],
         targetSpeed: ship.targetSpeed,
         mwdActive: ship.mwdActive,
@@ -69,13 +139,21 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
     this.broadcast('ships_snapshot', this.buildSnapshot())
   }
 
-  onCreate(_options: Record<string, unknown>) {
+  onCreate(options: Record<string, unknown>) {
     this.setState(new StarSystemRoomState())
+    const initialConfig = (options.starSystemConfig as Partial<StarSystemGenerationConfig> | undefined)
+      ?? DEFAULT_STAR_SYSTEM_CONFIG
+    this.setStarSystemFromConfig(initialConfig)
     console.log(`[room:${this.roomId}] created`)
     // Room state is now synced to all clients
     this.onMessage('warp', (client, message: { celestialId: string }) => {
       const ship = this.state.ships.get(client.sessionId)
       if (ship) ship.currentCelestialId = message.celestialId
+    })
+    this.onMessage('star_system_regenerate', (_client, message: Partial<StarSystemGenerationConfig>) => {
+      this.setStarSystemFromConfig(message)
+      this.broadcastStarSystemSnapshot()
+      this.respawnShipsByAnchorOrder()
     })
     this.onMessage('move', (client, message: {
       x: number
@@ -136,11 +214,13 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
     ship.id = client.sessionId
     ship.name = 'Raven'
     const playerIndex = this.state.ships.size
-    const angle = (Math.PI * 2 * playerIndex) / Math.max(1, this.maxClients)
-    ship.x = Math.cos(angle) * SPAWN_RING_RADIUS
-    ship.y = 0
-    ship.z = Math.sin(angle) * SPAWN_RING_RADIUS
+    const spawn = this.getSpawnForPlayer(playerIndex)
+    ship.currentCelestialId = spawn.celestialId
+    ship.x = spawn.localPosition[0]
+    ship.y = spawn.localPosition[1]
+    ship.z = spawn.localPosition[2]
     this.state.ships.set(client.sessionId, ship)
+    this.broadcastStarSystemSnapshot(client)
     this.broadcastSnapshot()
     console.log(
       `[room:${this.roomId}] join session=${client.sessionId} players=${this.state.ships.size}`

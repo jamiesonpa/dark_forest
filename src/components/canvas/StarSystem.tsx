@@ -8,20 +8,21 @@ import { IRSTCameraDebugCone } from './IRSTCameraDebugCone'
 import { SunSystem } from './SunSystem'
 import { WarpTargetMarkers } from './WarpTargetMarkers'
 import { useGameStore } from '@/state/gameStore'
-import { STAR_SYSTEM, getCelestialById } from '@/utils/systemData'
+import { getCelestialById } from '@/utils/systemData'
 import { WarpDriver } from '@/systems/warp/WarpDriver'
 
 export function StarSystem() {
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
+  const starSystem = useGameStore((s) => s.starSystem)
   const currentCelestial = useMemo(
-    () => getCelestialById(currentCelestialId),
-    [currentCelestialId]
+    () => getCelestialById(currentCelestialId, starSystem),
+    [currentCelestialId, starSystem]
   )
 
   const distantCelestials = useMemo(() => {
     if (!currentCelestial) return []
     const [cx, cy, cz] = currentCelestial.position
-    return STAR_SYSTEM.celestials
+    return starSystem.celestials
       .filter((c) => c.id !== currentCelestialId)
       .map((c) => ({
         ...c,
@@ -31,7 +32,7 @@ export function StarSystem() {
           c.position[2] - cz,
         ] as [number, number, number],
       }))
-  }, [currentCelestial, currentCelestialId])
+  }, [currentCelestial, currentCelestialId, starSystem])
 
   return (
     <>

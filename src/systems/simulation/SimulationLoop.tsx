@@ -60,6 +60,7 @@ const CONTROL_KEYS: readonly SimControlKey[] = [
   'ControlRight',
 ]
 const MAX_SELECTED_SPEED = 215
+const WARP_MIN_POST_CAPACITOR = 1
 const CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC = 120
 const CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN = 0.6
 const CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN = 0.15
@@ -159,9 +160,9 @@ export function SimulationLoop() {
         e.preventDefault()
         if (e.repeat) return
         const state = useGameStore.getState()
-        const sourceCelestial = getCelestialById(state.currentCelestialId)
+        const sourceCelestial = getCelestialById(state.currentCelestialId, state.starSystem)
         const destinationCelestial = state.selectedWarpDestinationId
-          ? getCelestialById(state.selectedWarpDestinationId)
+          ? getCelestialById(state.selectedWarpDestinationId, state.starSystem)
           : undefined
         let hasWarpCapacitor = false
         if (sourceCelestial && destinationCelestial && sourceCelestial.id !== destinationCelestial.id) {
@@ -174,7 +175,7 @@ export function SimulationLoop() {
             distanceWorldUnits,
             state.ship.capacitorMax
           )
-          hasWarpCapacitor = state.ship.capacitor >= requiredCapacitor
+          hasWarpCapacitor = state.ship.capacitor - requiredCapacitor >= WARP_MIN_POST_CAPACITOR
         }
         const canWarp =
           state.warpState === 'idle' &&

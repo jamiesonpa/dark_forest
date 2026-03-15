@@ -15,10 +15,6 @@ function getColor(type: CelestialType): number {
       return 0x4488cc
     case 'moon':
       return 0x888888
-    case 'station':
-      return 0x00aaff
-    case 'stargate':
-      return 0xaa00ff
     case 'asteroid_belt':
       return 0x8b7355
     default:
@@ -43,15 +39,6 @@ export function CelestialBody({ celestial, isDistant }: CelestialBodyProps) {
   const geometry = useMemo(() => {
     if (celestial.type === 'star') {
       return new THREE.SphereGeometry(radius, 32, 32)
-    }
-    if (celestial.type === 'station') {
-      const g = new THREE.CylinderGeometry(radius * 0.5, radius * 0.6, radius * 2, 8)
-      return g
-    }
-    if (celestial.type === 'stargate') {
-      const g = new THREE.RingGeometry(radius * 0.8, radius, 64)
-      g.rotateX(-Math.PI / 2)
-      return g
     }
     return new THREE.SphereGeometry(radius, 32, 32)
   }, [celestial.type, radius])

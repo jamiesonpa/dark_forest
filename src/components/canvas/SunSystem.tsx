@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
-import { STAR_SYSTEM, getCelestialById } from '@/utils/systemData'
+import { getCelestialById } from '@/utils/systemData'
 import type { WarpState } from '@/types/game'
 
 const DEFAULT_SUN_DIRECTION = new THREE.Vector3(0.32, 0.18, 0.93).normalize()
@@ -221,11 +221,16 @@ export function SunSystem() {
     }
 
     const liveState = useGameStore.getState()
-    const currentCelestial = getCelestialById(liveState.currentCelestialId)
-    const starCelestial = STAR_SYSTEM.celestials.find((c) => c.id === 'star')
-    const sourceCelestial = getCelestialById(liveState.warpSourceCelestialId ?? liveState.currentCelestialId)
+    const currentCelestial = getCelestialById(liveState.currentCelestialId, liveState.starSystem)
+    const starCelestial = liveState.starSystem.celestials.find((c) => c.id === 'star')
+    const sourceCelestial = getCelestialById(
+      liveState.warpSourceCelestialId ?? liveState.currentCelestialId,
+      liveState.starSystem
+    )
     const warpTargetId = liveState.warpTargetId ?? liveState.selectedWarpDestinationId
-    const warpTargetCelestial = warpTargetId ? getCelestialById(warpTargetId) : undefined
+    const warpTargetCelestial = warpTargetId
+      ? getCelestialById(warpTargetId, liveState.starSystem)
+      : undefined
 
     let observerWorldPosition: [number, number, number] | undefined = currentCelestial?.position
     if (

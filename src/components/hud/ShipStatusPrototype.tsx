@@ -25,6 +25,7 @@ const CAPACITOR_SEGMENT_RING_GAP = 2
 const CAPACITOR_RING_INWARD_SHIFT = 1
 const CAPACITOR_START_DEG = -90
 const MWD_CAPACITOR_ACTIVATION_FRACTION = 0.2
+const WARP_MIN_POST_CAPACITOR = 1
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value))
@@ -70,6 +71,7 @@ export function ShipStatusPrototype() {
   const setDampenersActive = useGameStore((s) => s.setDampenersActive)
   const startWarp = useGameStore((s) => s.startWarp)
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
+  const starSystem = useGameStore((s) => s.starSystem)
   const selectedWarpDestinationId = useGameStore((s) => s.selectedWarpDestinationId)
   const warpAligned = useGameStore((s) => s.warpAligned)
   const warpState = useGameStore((s) => s.warpState)
@@ -130,8 +132,8 @@ export function ShipStatusPrototype() {
   const warpTransitActive = warpState === 'warping' || warpState === 'landing'
   const hasWarpCapacitor = useMemo(() => {
     if (!selectedWarpDestinationId) return false
-    const sourceCelestial = getCelestialById(currentCelestialId)
-    const destinationCelestial = getCelestialById(selectedWarpDestinationId)
+    const sourceCelestial = getCelestialById(currentCelestialId, starSystem)
+    const destinationCelestial = getCelestialById(selectedWarpDestinationId, starSystem)
     if (!sourceCelestial || !destinationCelestial || sourceCelestial.id === destinationCelestial.id) {
       return false
     }
@@ -139,8 +141,8 @@ export function ShipStatusPrototype() {
     const destinationWorld = worldPositionForCelestial(destinationCelestial)
     const distanceWorldUnits = vectorMagnitude(vectorBetweenWorldPoints(sourceWorld, destinationWorld))
     const requiredCapacitor = getWarpCapacitorRequiredAmount(distanceWorldUnits, ship.capacitorMax)
-    return ship.capacitor >= requiredCapacitor
-  }, [currentCelestialId, selectedWarpDestinationId, ship.capacitor, ship.capacitorMax])
+    return ship.capacitor - requiredCapacitor >= WARP_MIN_POST_CAPACITOR
+  }, [currentCelestialId, selectedWarpDestinationId, ship.capacitor, ship.capacitorMax, starSystem])
   const canWarp = !warpBusy && Boolean(selectedWarpDestinationId) && warpAligned && hasWarpCapacitor
 
   const pctFromPointer = (clientX: number, clientY: number, bounds: DOMRect) => {

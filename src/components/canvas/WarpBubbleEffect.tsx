@@ -4,21 +4,25 @@ import * as THREE from 'three'
 import type { ShipState } from '@/state/types'
 import { useGameStore } from '@/state/gameStore'
 
-const PARTICLE_COUNT = 900
+const PARTICLE_COUNT = 450
 const APEX_Z = 2600
 const BUBBLE_LENGTH = 11500
 const MAX_RADIUS = 2700
 const Y_SCALE = 0.82
 const BASE_FLOW = 1.5
 const SPEED_FLOW_MULT = 0.00035
-const MAX_SPEED_RATIO = 5
+const MAX_SPEED_RATIO = 1
 const MAX_SIZE_MULTIPLIER = 40
 const SPEED_SMOOTH_ACCEL = 2.5
-const SPEED_SMOOTH_DECEL = 5.5
+const SPEED_SMOOTH_DECEL = 2.1
 const TAIL_FADE_START_U = 0.62
 const TAIL_FADE_END_U = 0.9
 const TAIL_CUTOFF_U = 0.92
-const MIN_VISIBLE_FRACTION = 0.3
+const MIN_VISIBLE_FRACTION = 0.12
+const COASTING_EPSILON = 0.005
+const COAST_FLOW_EXPONENT = 2.8
+const COAST_VISIBLE_EXPONENT = 1.8
+const COAST_RESPAWN_EXPONENT = 2.4
 
 type ParticleState = {
   u: Float32Array
@@ -45,7 +49,7 @@ function createParticleState() {
     u[i] = Math.random()
     theta[i] = Math.random() * Math.PI * 2
     spin[i] = (Math.random() - 0.5) * 0.5
-    size[i] = 2.2 + Math.random() * 3.8
+    size[i] = 1.1 + Math.random() * 1.9
     alpha[i] = 0.25 + Math.random() * 0.55
     const paletteRoll = Math.random()
     if (paletteRoll < 0.34) {
@@ -140,7 +144,7 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
     const colors = colorsRef.current
     const sizes = sizesRef.current
 
-    const rawSpeedNorm = warpReferenceSpeed > 0
+    const rawSpeedNorm = active && warpReferenceSpeed > 0
       ? THREE.MathUtils.clamp(ship.actualSpeed / warpReferenceSpeed, 0, 1)
       : 0
     const smoothing =
@@ -148,26 +152,34 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
         ? SPEED_SMOOTH_DECEL
         : SPEED_SMOOTH_ACCEL
     speedNormRef.current = THREE.MathUtils.lerp(speedNormRef.current, rawSpeedNorm, dt * smoothing)
-    if (rawSpeedNorm < 0.02) {
+    if (active && rawSpeedNorm < 0.02) {
       // Prevent lingering trail when ship speed has effectively reached zero.
       speedNormRef.current = rawSpeedNorm
     }
     const smoothSpeedNorm = speedNormRef.current
+    const coasting = !active && smoothSpeedNorm > COASTING_EPSILON
     const sizeMultiplier = THREE.MathUtils.lerp(1, MAX_SIZE_MULTIPLIER, smoothSpeedNorm)
-    const speedRatio = Math.min(MAX_SPEED_RATIO, Math.max(0, ship.actualSpeed * SPEED_FLOW_MULT))
-    const flow = (BASE_FLOW + speedRatio * 1.05) * smoothSpeedNorm
-    const visibleFraction =
-      MIN_VISIBLE_FRACTION + (1 - MIN_VISIBLE_FRACTION) * Math.pow(smoothSpeedNorm, 0.65)
+    const syntheticCoastSpeed = warpReferenceSpeed * smoothSpeedNorm
+    const effectiveSpeed = active ? ship.actualSpeed : syntheticCoastSpeed
+    const speedRatio = Math.min(MAX_SPEED_RATIO, Math.max(0, effectiveSpeed * SPEED_FLOW_MULT))
+    const flowNorm = active ? smoothSpeedNorm : Math.pow(smoothSpeedNorm, COAST_FLOW_EXPONENT)
+    const flow = (BASE_FLOW + speedRatio * 1.05) * flowNorm
+    const visibleFraction = active
+      ? MIN_VISIBLE_FRACTION + (1 - MIN_VISIBLE_FRACTION) * Math.pow(smoothSpeedNorm, 0.65)
+      : Math.pow(smoothSpeedNorm, COAST_VISIBLE_EXPONENT)
+    const respawnChance = active ? 1 : Math.pow(smoothSpeedNorm, COAST_RESPAWN_EXPONENT)
     const visibleCount = Math.floor(PARTICLE_COUNT * visibleFraction)
 
-    if (!active) {
-      material.opacity = THREE.MathUtils.lerp(material.opacity, 0, dt * 4)
-      speedNormRef.current = THREE.MathUtils.lerp(speedNormRef.current, 0, dt * 7)
+    if (!active && !coasting) {
+      material.opacity = THREE.MathUtils.lerp(material.opacity, 0, dt * 8)
+      speedNormRef.current = 0
       return
     }
 
-    const targetOpacity = 0.04 + 0.72 * Math.pow(smoothSpeedNorm, 0.78)
-    material.opacity = THREE.MathUtils.lerp(material.opacity, targetOpacity, dt * 6)
+    const targetOpacity = active
+      ? 0.04 + 0.72 * Math.pow(smoothSpeedNorm, 0.78)
+      : 0.45 * Math.pow(smoothSpeedNorm, 1.65)
+    material.opacity = THREE.MathUtils.lerp(material.opacity, targetOpacity, dt * (active ? 6 : 3.8))
 
     for (let i = 0; i < PARTICLE_COUNT; i += 1) {
       const idx = i * 3
@@ -180,11 +192,21 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
       }
       let u = particle.u[i] + dt * flow * (0.75 + particle.alpha[i] * 0.45)
       if (u > 1) {
+        if (Math.random() > respawnChance) {
+          // Coast-down mode: gradually stop introducing fresh particles so
+          // trail density fades naturally before full shutdown.
+          particle.u[i] = TAIL_CUTOFF_U + (1 - TAIL_CUTOFF_U) * Math.random()
+          colors[idx] = 0
+          colors[idx + 1] = 0
+          colors[idx + 2] = 0
+          sizes[i] = 0
+          continue
+        }
         u -= 1
         particle.theta[i] = Math.random() * Math.PI * 2
         particle.spin[i] = (Math.random() - 0.5) * 0.5
         particle.alpha[i] = 0.25 + Math.random() * 0.55
-        particle.size[i] = 2.2 + Math.random() * 3.8
+        particle.size[i] = 1.1 + Math.random() * 1.9
         const paletteRoll = Math.random()
         if (paletteRoll < 0.34) {
           particle.tintR[i] = 1

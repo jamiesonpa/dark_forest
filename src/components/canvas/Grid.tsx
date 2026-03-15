@@ -9,11 +9,12 @@ const LOCAL_CELESTIAL_OFFSET: [number, number, number] = [0, 0, -2500]
 
 export function Grid() {
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
+  const starSystem = useGameStore((s) => s.starSystem)
   const shipsById = useGameStore((s) => s.shipsById)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
   const celestial = useMemo(
-    () => getCelestialById(currentCelestialId),
-    [currentCelestialId]
+    () => getCelestialById(currentCelestialId, starSystem),
+    [currentCelestialId, starSystem]
   )
   const ships = useMemo(
     () => Object.entries(shipsById),
