@@ -26,6 +26,13 @@ import {
 } from '@/systems/simulation/constants'
 import { clamp, lerp, shortestAngleDelta } from '@/systems/simulation/lib/math'
 import { multiplayerClient } from '@/network/colyseusClient'
+import { getCelestialById } from '@/utils/systemData'
+import {
+  getWarpCapacitorRequiredAmount,
+  vectorBetweenWorldPoints,
+  vectorMagnitude,
+  worldPositionForCelestial,
+} from '@/systems/warp/navigationMath'
 
 type SimControlKey =
   | 'KeyA'
@@ -147,6 +154,37 @@ export function SimulationLoop() {
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'KeyG') {
+        if (isEditableElement(e.target)) return
+        e.preventDefault()
+        if (e.repeat) return
+        const state = useGameStore.getState()
+        const sourceCelestial = getCelestialById(state.currentCelestialId)
+        const destinationCelestial = state.selectedWarpDestinationId
+          ? getCelestialById(state.selectedWarpDestinationId)
+          : undefined
+        let hasWarpCapacitor = false
+        if (sourceCelestial && destinationCelestial && sourceCelestial.id !== destinationCelestial.id) {
+          const sourceWorld = worldPositionForCelestial(sourceCelestial)
+          const destinationWorld = worldPositionForCelestial(destinationCelestial)
+          const distanceWorldUnits = vectorMagnitude(
+            vectorBetweenWorldPoints(sourceWorld, destinationWorld)
+          )
+          const requiredCapacitor = getWarpCapacitorRequiredAmount(
+            distanceWorldUnits,
+            state.ship.capacitorMax
+          )
+          hasWarpCapacitor = state.ship.capacitor >= requiredCapacitor
+        }
+        const canWarp =
+          state.warpState === 'idle' &&
+          Boolean(state.selectedWarpDestinationId) &&
+          state.warpAligned &&
+          hasWarpCapacitor
+        if (!canWarp || !state.selectedWarpDestinationId) return
+        state.startWarp(state.selectedWarpDestinationId)
+        return
+      }
       if (e.code === 'Space') {
         if (isEditableElement(e.target)) return
         e.preventDefault()
@@ -430,7 +468,6 @@ export function SimulationLoop() {
       }
 
       let newIncl = ship.actualInclination
-      let dacDisplayInclination = ship.inclination
       const maxPitchRate = orientDebugActive
         ? MAX_PITCH_RATE * ORIENT_DEBUG_TURN_RATE_MULTIPLIER
         : MAX_PITCH_RATE
@@ -463,7 +500,6 @@ export function SimulationLoop() {
           maxPitchStep
         )
         newIncl = newIncl + pitchRateRef.current * dt
-        dacDisplayInclination = ship.inclination + pitchRateRef.current * dt
       } else {
         const inclDelta = ship.inclination - newIncl
         const inclReady =
@@ -548,7 +584,6 @@ export function SimulationLoop() {
         }
         newIncl = (Math.atan2(thrustForward.y, Math.max(0.000001, horizontalMag)) * 180) / Math.PI
 
-        dacDisplayInclination = newIncl
         shipPatch.bearing = newHeading
         shipPatch.inclination = newIncl
         shipPatch.dacPitch = dacPitchRef.current

@@ -3,7 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
 import { STAR_SYSTEM, getCelestialById } from '@/utils/systemData'
-import { getWorldShipPosition } from '@/systems/warp/navigationMath'
+import type { WarpState } from '@/types/game'
 
 const DEFAULT_SUN_DIRECTION = new THREE.Vector3(0.32, 0.18, 0.93).normalize()
 const SUN_DISTANCE = 60000
@@ -12,6 +12,7 @@ const OCCLUSION_SAMPLE_INTERVAL = 4
 const OCCLUDER_REFRESH_INTERVAL = 120
 const OCCLUSION_MIN_DISTANCE = 350
 const OCCLUSION_DARKENING = 0.995
+const WARPING_STATES: WarpState[] = ['warping', 'landing']
 
 type FlareConfig = {
   offset: number
@@ -222,13 +223,34 @@ export function SunSystem() {
     const liveState = useGameStore.getState()
     const currentCelestial = getCelestialById(liveState.currentCelestialId)
     const starCelestial = STAR_SYSTEM.celestials.find((c) => c.id === 'star')
-    if (currentCelestial) {
-      const shipWorldPosition = getWorldShipPosition(liveState.ship.position, currentCelestial.position)
+    const sourceCelestial = getCelestialById(liveState.warpSourceCelestialId ?? liveState.currentCelestialId)
+    const warpTargetId = liveState.warpTargetId ?? liveState.selectedWarpDestinationId
+    const warpTargetCelestial = warpTargetId ? getCelestialById(warpTargetId) : undefined
+
+    let observerWorldPosition: [number, number, number] | undefined = currentCelestial?.position
+    if (
+      WARPING_STATES.includes(liveState.warpState) &&
+      sourceCelestial &&
+      warpTargetCelestial &&
+      sourceCelestial.id !== warpTargetCelestial.id
+    ) {
+      const t = THREE.MathUtils.clamp(liveState.warpTravelProgress, 0, 1)
+      observerWorldPosition = [
+        sourceCelestial.position[0] + (warpTargetCelestial.position[0] - sourceCelestial.position[0]) * t,
+        sourceCelestial.position[1] + (warpTargetCelestial.position[1] - sourceCelestial.position[1]) * t,
+        sourceCelestial.position[2] + (warpTargetCelestial.position[2] - sourceCelestial.position[2]) * t,
+      ]
+    } else if (sourceCelestial) {
+      // Keep sun bearing fixed while maneuvering within a grid; subwarp parallax is intentionally ignored.
+      observerWorldPosition = sourceCelestial.position
+    }
+
+    if (observerWorldPosition) {
       const starWorldPosition = starCelestial?.position ?? ([0, 0, 0] as [number, number, number])
       sunDirection.set(
-        starWorldPosition[0] - shipWorldPosition[0],
-        starWorldPosition[1] - shipWorldPosition[1],
-        starWorldPosition[2] - shipWorldPosition[2]
+        starWorldPosition[0] - observerWorldPosition[0],
+        starWorldPosition[1] - observerWorldPosition[1],
+        starWorldPosition[2] - observerWorldPosition[2]
       )
       if (sunDirection.lengthSq() < 0.0001) {
         sunDirection.copy(DEFAULT_SUN_DIRECTION)

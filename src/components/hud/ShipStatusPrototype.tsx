@@ -1,5 +1,12 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useGameStore } from '@/state/gameStore'
+import { getCelestialById } from '@/utils/systemData'
+import {
+  getWarpCapacitorRequiredAmount,
+  vectorBetweenWorldPoints,
+  vectorMagnitude,
+  worldPositionForCelestial,
+} from '@/systems/warp/navigationMath'
 
 const MAX_SUBWARP_MPS = 215
 const MWD_SPEED_MPS = 800
@@ -62,6 +69,7 @@ export function ShipStatusPrototype() {
   const setMwdActive = useGameStore((s) => s.setMwdActive)
   const setDampenersActive = useGameStore((s) => s.setDampenersActive)
   const startWarp = useGameStore((s) => s.startWarp)
+  const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const selectedWarpDestinationId = useGameStore((s) => s.selectedWarpDestinationId)
   const warpAligned = useGameStore((s) => s.warpAligned)
   const warpState = useGameStore((s) => s.warpState)
@@ -119,7 +127,21 @@ export function ShipStatusPrototype() {
     ship.capacitor >= ship.capacitorMax * MWD_CAPACITOR_ACTIVATION_FRACTION &&
     mwdCooldownRemaining <= 0
   const warpBusy = warpState !== 'idle'
-  const canWarp = !warpBusy && Boolean(selectedWarpDestinationId) && warpAligned
+  const warpTransitActive = warpState === 'warping' || warpState === 'landing'
+  const hasWarpCapacitor = useMemo(() => {
+    if (!selectedWarpDestinationId) return false
+    const sourceCelestial = getCelestialById(currentCelestialId)
+    const destinationCelestial = getCelestialById(selectedWarpDestinationId)
+    if (!sourceCelestial || !destinationCelestial || sourceCelestial.id === destinationCelestial.id) {
+      return false
+    }
+    const sourceWorld = worldPositionForCelestial(sourceCelestial)
+    const destinationWorld = worldPositionForCelestial(destinationCelestial)
+    const distanceWorldUnits = vectorMagnitude(vectorBetweenWorldPoints(sourceWorld, destinationWorld))
+    const requiredCapacitor = getWarpCapacitorRequiredAmount(distanceWorldUnits, ship.capacitorMax)
+    return ship.capacitor >= requiredCapacitor
+  }, [currentCelestialId, selectedWarpDestinationId, ship.capacitor, ship.capacitorMax])
+  const canWarp = !warpBusy && Boolean(selectedWarpDestinationId) && warpAligned && hasWarpCapacitor
 
   const pctFromPointer = (clientX: number, clientY: number, bounds: DOMRect) => {
     const localX = ((clientX - bounds.left) / bounds.width) * GAUGE_VIEWBOX_SIZE
@@ -350,7 +372,7 @@ export function ShipStatusPrototype() {
                     textAnchor={selectedLabelAnchor}
                     dominantBaseline="middle"
                   >
-                    {Math.round(setSpeedMps)} m/s
+                    {warpTransitActive ? 'WARP' : `${Math.round(setSpeedMps)} m/s`}
                   </text>
                 </>
               )}
@@ -367,16 +389,22 @@ export function ShipStatusPrototype() {
         </div>
         <div className="ship-status-v2-speed-row">
           <div className="speed-arc-fraction">
-            <span
-              className={`speed-arc-metric ${
-                isHoverPreviewing ? 'speed-arc-metric-preview' : 'speed-arc-metric-actual'
-              }`}
-            >
-              {displaySpeedNumerator}
-            </span>
-            <span className="speed-arc-separator"> / </span>
-            <span className="speed-arc-max">{maxSpeedMps}</span>
-            <span className="speed-arc-unit"> m/s</span>
+            {warpTransitActive ? (
+              <span className="speed-arc-metric speed-arc-metric-actual">WARP</span>
+            ) : (
+              <>
+                <span
+                  className={`speed-arc-metric ${
+                    isHoverPreviewing ? 'speed-arc-metric-preview' : 'speed-arc-metric-actual'
+                  }`}
+                >
+                  {displaySpeedNumerator}
+                </span>
+                <span className="speed-arc-separator"> / </span>
+                <span className="speed-arc-max">{maxSpeedMps}</span>
+                <span className="speed-arc-unit"> m/s</span>
+              </>
+            )}
           </div>
           <button
             type="button"

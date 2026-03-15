@@ -24,6 +24,7 @@ export function WarpTargetMarkers() {
   const markerRef = useRef<THREE.Group>(null)
   const [hovered, setHovered] = useState(false)
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
+  const shipPosition = useGameStore((s) => s.ship.position)
   const selectedWarpDestinationId = useGameStore((s) => s.selectedWarpDestinationId)
   const setSelectedWarpDestination = useGameStore((s) => s.setSelectedWarpDestination)
 
@@ -61,7 +62,6 @@ export function WarpTargetMarkers() {
       distanceMeters: directionDistance,
       bearing,
       inclination,
-      currentWorld,
       direction: new THREE.Vector3(
         toDestination[0] / directionDistance,
         toDestination[1] / directionDistance,
@@ -75,7 +75,7 @@ export function WarpTargetMarkers() {
   useFrame(() => {
     if (!markerRef.current || !markerData) return
     markerWorldPosRef
-      .set(markerData.currentWorld[0], markerData.currentWorld[1], markerData.currentWorld[2])
+      .set(shipPosition[0], shipPosition[1], shipPosition[2])
       .addScaledVector(markerData.direction, MARKER_DISTANCE)
     markerRef.current.position.copy(markerWorldPosRef)
   })

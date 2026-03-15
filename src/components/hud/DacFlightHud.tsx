@@ -82,6 +82,7 @@ function halfLineWidthPx(pitchDeg: number) {
 
 export function DacFlightHud() {
   const navAttitudeMode = useGameStore((s) => s.navAttitudeMode)
+  const warpState = useGameStore((s) => s.warpState)
   const dampenersActive = useGameStore((s) => s.ship.dampenersActive)
   const actualHeading = useGameStore((s) => s.ship.actualHeading)
   const actualInclination = useGameStore((s) => s.ship.actualInclination)
@@ -138,6 +139,7 @@ export function DacFlightHud() {
   const headingDirection = isInvertedFromInclination(actualInclination) ? -1 : 1
   const headingOffsetPx = headingFrac * HEADING_TICK_SPACING_PX
   const headingTapeHalfWidth = ((HEADING_TICK_RANGE * 2 + 1) * HEADING_TICK_SPACING_PX) / 2
+  const warpTransitActive = warpState === 'warping' || warpState === 'landing'
   const speed = Math.max(0, actualSpeed)
   const speedBase = Math.floor(speed / SPEED_STEP) * SPEED_STEP
   const speedMinTick = Math.max(0, speedBase - SPEED_TICK_RANGE * SPEED_STEP)
@@ -276,29 +278,33 @@ export function DacFlightHud() {
 
       <div className="dac-flight-hud-speed">
         <div className="dac-flight-hud-speed-readout">
-          <span className="dac-flight-hud-speed-readout-value">{formatSpeed(speed)}</span>
-          <span className="dac-flight-hud-speed-readout-unit">m/s</span>
+          <span className="dac-flight-hud-speed-readout-value">
+            {warpTransitActive ? 'WARP' : formatSpeed(speed)}
+          </span>
+          {!warpTransitActive && <span className="dac-flight-hud-speed-readout-unit">m/s</span>}
           <span className="dac-flight-hud-speed-link" aria-hidden="true" />
         </div>
-        <div className="dac-flight-hud-speed-window" aria-hidden="true">
-          <div className="dac-flight-hud-speed-tape">
-            {speedTicks.map((tickValue) => {
-              const topPx =
-                SPEED_WINDOW_HEIGHT_PX / 2 - (tickValue - speed) * (SPEED_TICK_SPACING_PX / SPEED_STEP)
-              const showLabel = tickValue % 50 === 0
-              return (
-                <div
-                  key={`spd-${tickValue}`}
-                  className="dac-flight-hud-speed-tick"
-                  style={{ top: `${topPx}px` }}
-                >
-                  {showLabel ? <div className="dac-flight-hud-speed-label">{formatSpeed(tickValue)}</div> : null}
-                  <div className={`dac-flight-hud-speed-mark ${showLabel ? 'major' : 'minor'}`} />
-                </div>
-              )
-            })}
+        {!warpTransitActive && (
+          <div className="dac-flight-hud-speed-window" aria-hidden="true">
+            <div className="dac-flight-hud-speed-tape">
+              {speedTicks.map((tickValue) => {
+                const topPx =
+                  SPEED_WINDOW_HEIGHT_PX / 2 - (tickValue - speed) * (SPEED_TICK_SPACING_PX / SPEED_STEP)
+                const showLabel = tickValue % 50 === 0
+                return (
+                  <div
+                    key={`spd-${tickValue}`}
+                    className="dac-flight-hud-speed-tick"
+                    style={{ top: `${topPx}px` }}
+                  >
+                    {showLabel ? <div className="dac-flight-hud-speed-label">{formatSpeed(tickValue)}</div> : null}
+                    <div className={`dac-flight-hud-speed-mark ${showLabel ? 'major' : 'minor'}`} />
+                  </div>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="dac-flight-hud-depth">

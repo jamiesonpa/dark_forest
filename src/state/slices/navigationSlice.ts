@@ -1,7 +1,15 @@
 import type { StateCreator } from 'zustand'
 import type { GameStore } from '@/state/types'
+import { getCelestialById } from '@/utils/systemData'
+import {
+  getWarpCapacitorRequiredAmount,
+  vectorBetweenWorldPoints,
+  vectorMagnitude,
+  worldPositionForCelestial,
+} from '@/systems/warp/navigationMath'
 
 const SHIP_CENTER_PIVOT: [number, number, number] = [0, 0, 0]
+const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 
 function sanitizePivot(position: [number, number, number]): [number, number, number] {
   const [x, y, z] = position
@@ -118,14 +126,41 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       asteroidBeltSpawnNonce: s.asteroidBeltSpawnNonce + 1,
     })),
   startWarp: (targetCelestialId) =>
-    set((s) => ({
-      warpState: 'aligning',
-      warpTargetId: targetCelestialId,
-      warpSourceCelestialId: s.currentCelestialId,
-      selectedWarpDestinationId: targetCelestialId,
-      warpTravelProgress: 0,
-      warpReferenceSpeed: 0,
-    })),
+    set((s) => {
+      if (s.warpState !== 'idle' || !s.warpAligned) return {}
+      const sourceCelestial = getCelestialById(s.currentCelestialId)
+      const destinationCelestial = getCelestialById(targetCelestialId)
+      if (!sourceCelestial || !destinationCelestial || sourceCelestial.id === destinationCelestial.id) {
+        return {}
+      }
+
+      const sourceWorld = worldPositionForCelestial(sourceCelestial)
+      const destinationWorld = worldPositionForCelestial(destinationCelestial)
+      const distanceWorldUnits = vectorMagnitude(vectorBetweenWorldPoints(sourceWorld, destinationWorld))
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      const localShip = s.shipsById[localId] ?? s.ship
+      const requiredCapacitor = getWarpCapacitorRequiredAmount(distanceWorldUnits, localShip.capacitorMax)
+      if (localShip.capacitor < requiredCapacitor) return {}
+
+      const updatedLocalShip = {
+        ...localShip,
+        capacitor: Math.max(0, localShip.capacitor - requiredCapacitor),
+      }
+
+      return {
+        warpState: 'aligning',
+        warpTargetId: targetCelestialId,
+        warpSourceCelestialId: s.currentCelestialId,
+        selectedWarpDestinationId: targetCelestialId,
+        warpTravelProgress: 0,
+        warpReferenceSpeed: 0,
+        ship: updatedLocalShip,
+        shipsById: {
+          ...s.shipsById,
+          [localId]: updatedLocalShip,
+        },
+      }
+    }),
   finishWarp: () =>
     set((s) => ({
       selectedWarpDestinationId: s.warpSourceCelestialId ?? s.selectedWarpDestinationId,

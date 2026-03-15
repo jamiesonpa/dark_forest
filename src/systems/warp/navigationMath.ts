@@ -4,6 +4,8 @@ import type { Celestial } from '@/types/game'
 // Tuned so current celestial separations are in the ~100+ AU range.
 export const WORLD_UNITS_PER_AU = 140
 export const WARP_ALIGNMENT_TOLERANCE_DEG = 2.5
+// Design target: a 100 AU warp requires 25% capacitor.
+export const WARP_CAPACITOR_FRACTION_PER_AU = 0.25 / 100
 
 export function normalizeBearingDeg(value: number) {
   return ((value % 360) + 360) % 360
@@ -91,6 +93,20 @@ export function getDistanceScaledWarpDurationMs(distanceWorldUnits: number) {
   const maxMs = 15000
   const normalized = Math.min(1, Math.max(0, Math.log10(1 + distanceAu) / 2.2))
   return Math.round(minMs + (maxMs - minMs) * normalized)
+}
+
+export function getWarpCapacitorRequiredFraction(distanceWorldUnits: number) {
+  if (distanceWorldUnits <= 0) return 0
+  const distanceAu = distanceWorldUnits / WORLD_UNITS_PER_AU
+  return Math.max(0, Math.min(1, distanceAu * WARP_CAPACITOR_FRACTION_PER_AU))
+}
+
+export function getWarpCapacitorRequiredAmount(
+  distanceWorldUnits: number,
+  capacitorMax: number
+) {
+  if (capacitorMax <= 0) return 0
+  return capacitorMax * getWarpCapacitorRequiredFraction(distanceWorldUnits)
 }
 
 export function getWorldShipPosition(
