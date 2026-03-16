@@ -25,7 +25,6 @@ import {
   TURN_RATE_GAIN,
 } from '@/systems/simulation/constants'
 import { clamp, lerp, shortestAngleDelta } from '@/systems/simulation/lib/math'
-import { multiplayerClient } from '@/network/colyseusClient'
 import { getCelestialById } from '@/utils/systemData'
 import {
   getWarpCapacitorRequiredAmount,
@@ -33,6 +32,10 @@ import {
   vectorMagnitude,
   worldPositionForCelestial,
 } from '@/systems/warp/navigationMath'
+import { getNextCapacitor, getThrustAuthority, normalizeSigned180 } from '@/systems/simulation/shipMath'
+import { sendMoveIfDue } from '@/systems/simulation/networkSync'
+import { updateEnemyAndElectronicWarfare } from '@/systems/simulation/enemySystems'
+import { isEditableTarget } from '@/utils/dom'
 
 type SimControlKey =
   | 'KeyA'
@@ -103,11 +106,6 @@ const EMPTY_HOLD_STATE: Record<HoldKey, number> = {
   KeyE: 0,
 }
 
-function normalizeSigned180(value: number) {
-  const wrapped = ((value % 360) + 360) % 360
-  return wrapped > 180 ? wrapped - 360 : wrapped
-}
-
 export function SimulationLoop() {
   const prevTime = useRef(performance.now())
   const turnRateRef = useRef(0)
@@ -143,20 +141,9 @@ export function SimulationLoop() {
     const velocityDelta = new THREE.Vector3(0, 0, 0)
     let inertialDriftInitialized = false
 
-    const isEditableElement = (target: EventTarget | null) => {
-      if (!(target instanceof HTMLElement)) return false
-      const tag = target.tagName
-      return (
-        target.isContentEditable ||
-        tag === 'INPUT' ||
-        tag === 'TEXTAREA' ||
-        tag === 'SELECT'
-      )
-    }
-
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'KeyG') {
-        if (isEditableElement(e.target)) return
+        if (isEditableTarget(e.target)) return
         e.preventDefault()
         if (e.repeat) return
         const state = useGameStore.getState()
@@ -187,7 +174,7 @@ export function SimulationLoop() {
         return
       }
       if (e.code === 'Space') {
-        if (isEditableElement(e.target)) return
+        if (isEditableTarget(e.target)) return
         e.preventDefault()
         if (e.repeat) return
         const { ship, setDampenersActive } = useGameStore.getState()
@@ -195,7 +182,7 @@ export function SimulationLoop() {
         return
       }
       if (!CONTROL_KEYS.includes(e.code as SimControlKey)) return
-      if (isEditableElement(e.target)) return
+      if (isEditableTarget(e.target)) return
       e.preventDefault()
       const key = e.code as SimControlKey
       if (
@@ -310,13 +297,10 @@ export function SimulationLoop() {
       }
 
       const hasCapacitorForThrust = ship.capacitor > THRUST_CAPACITOR_EPSILON
-      const capacitorFraction = ship.capacitorMax > 0
-        ? clamp(ship.capacitor / ship.capacitorMax, 0, 1)
-        : 0
-      const thrustAuthority = clamp(
-        capacitorFraction / THRUST_FULL_AUTHORITY_CAP_FRACTION,
-        0,
-        1
+      const { thrustAuthority } = getThrustAuthority(
+        ship.capacitor,
+        ship.capacitorMax,
+        THRUST_FULL_AUTHORITY_CAP_FRACTION
       )
       const speedInput =
         ((keyStateRef.current.ShiftLeft || keyStateRef.current.ShiftRight) ? 1 : 0) -
@@ -686,24 +670,21 @@ export function SimulationLoop() {
         ? 1
         : clamp(effectiveTargetSpeed / MAX_SELECTED_SPEED, 0, 1)
       const selectedSpeedRatio = hasCapacitorForThrust ? requestedThrustRatio : 0
-      const capacitorDrainPerSecondAtMaxSpeed = ship.capacitorMax / CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC
-      const gravScannerRechargeBonus = state.ewGravScannerOn ? 1 : 1.1
-      const capacitorRechargePerSecond =
-        capacitorDrainPerSecondAtMaxSpeed * CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN * gravScannerRechargeBonus
-      const capacitorDrain = capacitorDrainPerSecondAtMaxSpeed * selectedSpeedRatio
-      const dampenersDrainPerSecond = ship.dampenersActive
-        ? capacitorDrainPerSecondAtMaxSpeed * CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN
-        : 0
-      const dampenersReengageDrain = dampenersJustReengaged
-        ? clamp(
-            (Math.max(0, ship.actualSpeed - MAX_SELECTED_SPEED) * DAMPENERS_REENGAGE_CAP_DRAIN_PER_MPS) *
-              ship.capacitorMax,
-            0,
-            ship.capacitorMax
-          )
-        : 0
-      const capacitorDelta = (capacitorRechargePerSecond - capacitorDrain - dampenersDrainPerSecond) * dt
-      shipPatch.capacitor = clamp(ship.capacitor - dampenersReengageDrain + capacitorDelta, 0, ship.capacitorMax)
+      shipPatch.capacitor = getNextCapacitor({
+        capacitor: ship.capacitor,
+        capacitorMax: ship.capacitorMax,
+        selectedSpeedRatio,
+        ewGravScannerOn: state.ewGravScannerOn,
+        dampenersActive: ship.dampenersActive,
+        dampenersJustReengaged,
+        actualSpeed: ship.actualSpeed,
+        maxSelectedSpeed: MAX_SELECTED_SPEED,
+        drainTimeAtMaxSpeedSec: CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC,
+        rechargeFractionOfMaxDrain: CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN,
+        dampenersDrainFractionOfMaxDrain: CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN,
+        dampenersReengageCapDrainPerMps: DAMPENERS_REENGAGE_CAP_DRAIN_PER_MPS,
+        dt,
+      })
 
       if (ship.mwdCooldownRemaining > 0) {
         shipPatch.mwdCooldownRemaining = Math.max(0, ship.mwdCooldownRemaining - dt)
@@ -726,117 +707,23 @@ export function SimulationLoop() {
       }
 
       state.setShipState(shipPatch)
-      if (multiplayerClient.isConnected()) {
-        const nowMs = performance.now()
-        if (nowMs - lastMoveSendMsRef.current >= 66) {
-          multiplayerClient.sendMove({
-            position: newPos,
-            targetSpeed: shipPatch.targetSpeed ?? ship.targetSpeed,
-            mwdActive: shipPatch.mwdActive ?? ship.mwdActive,
-            mwdRemaining: shipPatch.mwdRemaining ?? ship.mwdRemaining,
-            mwdCooldownRemaining: shipPatch.mwdCooldownRemaining ?? ship.mwdCooldownRemaining,
-            dampenersActive: shipPatch.dampenersActive ?? ship.dampenersActive,
-            bearing: shipPatch.bearing ?? ship.bearing,
-            inclination: shipPatch.inclination ?? ship.inclination,
-            actualHeading: newHeading,
-            actualSpeed: newSpeed,
-            actualInclination: newIncl,
-            rollAngle: rollRef.current,
-          })
-          lastMoveSendMsRef.current = nowMs
-        }
-      }
+      sendMoveIfDue(lastMoveSendMsRef, {
+        position: newPos,
+        inWarpTransit: shipPatch.inWarpTransit ?? ship.inWarpTransit,
+        targetSpeed: shipPatch.targetSpeed ?? ship.targetSpeed,
+        mwdActive: shipPatch.mwdActive ?? ship.mwdActive,
+        mwdRemaining: shipPatch.mwdRemaining ?? ship.mwdRemaining,
+        mwdCooldownRemaining: shipPatch.mwdCooldownRemaining ?? ship.mwdCooldownRemaining,
+        dampenersActive: shipPatch.dampenersActive ?? ship.dampenersActive,
+        bearing: shipPatch.bearing ?? ship.bearing,
+        inclination: shipPatch.inclination ?? ship.inclination,
+        actualHeading: newHeading,
+        actualSpeed: newSpeed,
+        actualInclination: newIncl,
+        rollAngle: rollRef.current,
+      })
 
-      const enemy = state.enemy
-      let enemyX = enemy.position[0]
-      const enemyY = enemy.position[1]
-      let enemyZ = enemy.position[2]
-      if (enemy.speed > 0) {
-        const hRad = (enemy.heading * Math.PI) / 180
-        enemyX = enemy.position[0] + (-Math.sin(hRad) * enemy.speed * dt)
-        enemyZ = enemy.position[2] + (-Math.cos(hRad) * enemy.speed * dt)
-        state.setEnemyState({ position: [enemyX, enemyY, enemyZ] })
-      }
-
-      const rwrContacts = state.rwrContacts
-      if (rwrContacts.length > 0) {
-        const rdx = -(enemyX - nextX)
-        const rdz = enemyZ - nextZ
-        const enemyBearing = ((Math.atan2(rdx, rdz) * 180 / Math.PI) + 360) % 360
-        let changed = false
-        const updated = rwrContacts.map((c) => {
-          if (c.id === 'concord' || c.id === 'missile') {
-            if (Math.abs((c.bearing ?? 0) - enemyBearing) > 0.5) {
-              changed = true
-              return { ...c, bearing: enemyBearing }
-            }
-          }
-          return c
-        })
-        if (changed) state.setRwrContacts(updated)
-      }
-
-      const ewJammers = state.ewJammers
-      if (enemy.radarMode === 'stt' || enemy.radarMode === 'scan') {
-        const enemyFreq = enemy.radarMode === 'stt' ? 0.48 : 0.42
-        const rangeKm = Math.sqrt(
-          Math.pow(enemyX - nextX, 2) +
-          Math.pow(enemyZ - nextZ, 2)
-        ) / 1000
-
-        const playerRCS = 22
-        const rangeFactor = clamp(1 - rangeKm / 150, 0.05, 1)
-        const rcsFactor = Math.pow(playerRCS, 0.25) / 2.2
-        const modeFactor = enemy.radarMode === 'stt' ? 1.0 : 0.6
-        const lockStrength = rangeFactor * rcsFactor * modeFactor
-
-        let totalJamPower = 0
-        ewJammers.forEach((j) => {
-          if (!j.active || !j.mode) return
-          const freqDist = Math.abs(j.freq - enemyFreq)
-          if (freqDist > 0.06) return
-          const overlap = clamp(1 - freqDist / 0.04, 0, 1)
-
-          let effectiveness = 0
-          if (j.mode === 'NJ') effectiveness = overlap * 0.5
-          else if (j.mode === 'SJ') effectiveness = overlap * overlap * 0.8
-          else if (j.mode === 'DRFM') effectiveness = overlap * 0.7
-          else if (j.mode === 'RGPO') effectiveness = overlap * 0.4
-          totalJamPower += effectiveness
-        })
-
-        if (totalJamPower > lockStrength && enemy.radarMode === 'stt') {
-          state.setEnemyState({ radarMode: 'scan' })
-          const currentRwr = state.rwrContacts
-          if (currentRwr.length > 0) {
-            state.setRwrContacts(currentRwr.map((c) =>
-              c.id === 'concord' ? { ...c, sttLock: false, symbol: '2' as const, newContact: false } : c
-            ))
-          }
-        }
-      }
-
-      const lockState = state.ewLockState
-      if (Object.keys(lockState).length > 0) {
-        const rdx2 = -(enemyX - nextX)
-        const rdz2 = enemyZ - nextZ
-        const enemyBrg = ((Math.atan2(rdx2, rdz2) * 180 / Math.PI) + 360) % 360
-        const relBrg = ((enemyBrg - newHeading + 540) % 360) - 180
-        if (Math.abs(relBrg) > 90) {
-          const cleaned: Record<string, 'soft' | 'hard'> = {}
-          let anyRemoved = false
-          for (const [id, lock] of Object.entries(lockState)) {
-            if (id === 'Σ') {
-              anyRemoved = true
-            } else {
-              cleaned[id] = lock
-            }
-          }
-          if (anyRemoved) {
-            state.setEwLockState(() => cleaned)
-          }
-        }
-      }
+      updateEnemyAndElectronicWarfare(state, newPos, newHeading, dt)
 
       prevDampenersActiveRef.current = dampenersOnline
 

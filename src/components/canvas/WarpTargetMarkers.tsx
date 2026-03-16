@@ -32,6 +32,7 @@ export function WarpTargetMarkers() {
   const shipPosition = useGameStore((s) => s.ship.position)
   const selectedWarpDestinationId = useGameStore((s) => s.selectedWarpDestinationId)
   const warpTargetId = useGameStore((s) => s.warpTargetId)
+  const warpSourceCelestialId = useGameStore((s) => s.warpSourceCelestialId)
   const warpAligned = useGameStore((s) => s.warpAligned)
   const warpState = useGameStore((s) => s.warpState)
   const revealedCelestialIds = useGameStore((s) => s.ewRevealedCelestialIds)
@@ -59,6 +60,10 @@ export function WarpTargetMarkers() {
     () => (selectedWarpDestinationId ? getCelestialById(selectedWarpDestinationId, starSystem) : null),
     [selectedWarpDestinationId, starSystem]
   )
+  const warpSourceCelestial = useMemo(
+    () => (warpSourceCelestialId ? getCelestialById(warpSourceCelestialId, starSystem) : null),
+    [starSystem, warpSourceCelestialId]
+  )
   const currentCelestialWorldPosition = useMemo(
     () => (currentCelestial ? worldPositionForCelestial(currentCelestial) : null),
     [currentCelestial]
@@ -83,9 +88,17 @@ export function WarpTargetMarkers() {
           ? vectorBetweenWorldPoints(shipWorldPosition, destinationWorld)
           : toDestination
         const liveDistance = vectorMagnitude(liveShipToDestination)
+        const lockedWarpVector =
+          suppressNonTargetMarkers &&
+          destinationCelestial.id === activeWarpMarkerId &&
+          warpSourceCelestial
+            ? vectorBetweenWorldPoints(worldPositionForCelestial(warpSourceCelestial), destinationWorld)
+            : null
         const markerVector =
-          suppressNonTargetMarkers && destinationCelestial.id === activeWarpMarkerId && liveDistance >= 0.001
-            ? liveShipToDestination
+          lockedWarpVector && vectorMagnitude(lockedWarpVector) >= 0.001
+            ? lockedWarpVector
+            : suppressNonTargetMarkers && destinationCelestial.id === activeWarpMarkerId && liveDistance >= 0.001
+              ? liveShipToDestination
             : toDestination
         const markerVectorDistance = vectorMagnitude(markerVector)
         const { bearing, inclination } = bearingInclinationFromVector(markerVector)
@@ -103,7 +116,7 @@ export function WarpTargetMarkers() {
         }
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-  }, [activeWarpMarkerId, availableDestinationIds, currentCelestial, currentCelestialWorldPosition, shipWorldPosition, starSystem, suppressNonTargetMarkers])
+  }, [activeWarpMarkerId, availableDestinationIds, currentCelestial, currentCelestialWorldPosition, shipWorldPosition, starSystem, suppressNonTargetMarkers, warpSourceCelestial])
 
   useEffect(() => {
     if (!hoveredDestinationId) return

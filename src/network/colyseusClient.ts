@@ -1,39 +1,14 @@
 import { Client, type Room } from 'colyseus.js'
 import type { StarSystemGenerationConfig, StarSystemSnapshot } from '@/types/game'
+import type {
+  ShipMoveUpdate,
+  ShipsSnapshotMessage,
+  WarpIntentPayload,
+  WireShipSnapshot,
+} from '../../shared/contracts/multiplayer'
+import { toShipsSnapshot, type ColyseusRoomState } from '@/network/wireShipSnapshots'
 
-export interface NetworkShipSnapshot {
-  id: string
-  name: string
-  currentCelestialId: string
-  position: [number, number, number]
-  targetSpeed: number
-  mwdActive: boolean
-  mwdRemaining: number
-  mwdCooldownRemaining: number
-  dampenersActive: boolean
-  bearing: number
-  inclination: number
-  actualHeading: number
-  actualSpeed: number
-  actualInclination: number
-  rollAngle: number
-  shield: number
-  shieldMax: number
-  armor: number
-  armorMax: number
-  hull: number
-  hullMax: number
-  capacitor: number
-  capacitorMax: number
-}
-
-export interface WarpIntentPayload {
-  celestialId: string
-  requiredBearing: number
-  requiredInclination: number
-  alignmentErrorDeg: number
-  clientStartedAt: number
-}
+export type NetworkShipSnapshot = WireShipSnapshot
 
 export type MultiplayerStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
@@ -43,42 +18,6 @@ type Handlers = {
   onShipsUpdate?: (shipsById: Record<string, NetworkShipSnapshot>) => void
   onStarSystemUpdate?: (snapshot: StarSystemSnapshot) => void
 }
-
-type ColyseusShip = {
-  id: string
-  name: string
-  currentCelestialId: string
-  x: number
-  y: number
-  z: number
-  targetSpeed: number
-  mwdActive: boolean
-  mwdRemaining: number
-  mwdCooldownRemaining: number
-  dampenersActive: boolean
-  bearing: number
-  inclination: number
-  actualHeading: number
-  actualSpeed: number
-  actualInclination: number
-  rollAngle: number
-  shield: number
-  shieldMax: number
-  armor: number
-  armorMax: number
-  hull: number
-  hullMax: number
-  capacitor: number
-  capacitorMax: number
-}
-
-type ColyseusRoomState = {
-  ships?: Map<string, ColyseusShip> & {
-    forEach: (callback: (value: ColyseusShip, key: string) => void) => void
-  }
-}
-
-type WireSnapshot = Record<string, NetworkShipSnapshot>
 
 class ColyseusMultiplayerClient {
   private room: Room<ColyseusRoomState> | null = null
@@ -115,7 +54,7 @@ class ColyseusMultiplayerClient {
         if (this.preferWireSnapshots) return
         this.publishSnapshot(state)
       })
-      room.onMessage('ships_snapshot', (snapshot: WireSnapshot) => {
+      room.onMessage('ships_snapshot', (snapshot: ShipsSnapshotMessage) => {
         this.preferWireSnapshots = true
         this.handlers.onShipsUpdate?.(snapshot)
       })
@@ -156,25 +95,13 @@ class ColyseusMultiplayerClient {
     this.updateStatus('disconnected')
   }
 
-  sendMove(update: {
-    position: [number, number, number]
-    targetSpeed: number
-    mwdActive: boolean
-    mwdRemaining: number
-    mwdCooldownRemaining: number
-    dampenersActive: boolean
-    bearing: number
-    inclination: number
-    actualHeading: number
-    actualSpeed: number
-    actualInclination: number
-    rollAngle: number
-  }) {
+  sendMove(update: ShipMoveUpdate) {
     if (!this.room) return
     this.room.send('move', {
       x: update.position[0],
       y: update.position[1],
       z: update.position[2],
+      inWarpTransit: update.inWarpTransit,
       targetSpeed: update.targetSpeed,
       mwdActive: update.mwdActive,
       mwdRemaining: update.mwdRemaining,
@@ -210,40 +137,7 @@ class ColyseusMultiplayerClient {
   }
 
   private publishSnapshot(state: ColyseusRoomState | undefined | null) {
-    this.handlers.onShipsUpdate?.(this.toSnapshot(state))
-  }
-
-  private toSnapshot(state: ColyseusRoomState | undefined | null): Record<string, NetworkShipSnapshot> {
-    const next: Record<string, NetworkShipSnapshot> = {}
-    if (!state?.ships) return next
-    state.ships.forEach((ship, key) => {
-      next[key] = {
-        id: ship.id,
-        name: ship.name,
-        currentCelestialId: ship.currentCelestialId,
-        position: [ship.x, ship.y, ship.z],
-        targetSpeed: ship.targetSpeed,
-        mwdActive: ship.mwdActive,
-        mwdRemaining: ship.mwdRemaining,
-        mwdCooldownRemaining: ship.mwdCooldownRemaining,
-        dampenersActive: ship.dampenersActive,
-        bearing: ship.bearing,
-        inclination: ship.inclination,
-        actualHeading: ship.actualHeading,
-        actualSpeed: ship.actualSpeed,
-        actualInclination: ship.actualInclination,
-        rollAngle: ship.rollAngle,
-        shield: ship.shield,
-        shieldMax: ship.shieldMax,
-        armor: ship.armor,
-        armorMax: ship.armorMax,
-        hull: ship.hull,
-        hullMax: ship.hullMax,
-        capacitor: ship.capacitor,
-        capacitorMax: ship.capacitorMax,
-      }
-    })
-    return next
+    this.handlers.onShipsUpdate?.(toShipsSnapshot(state))
   }
 }
 

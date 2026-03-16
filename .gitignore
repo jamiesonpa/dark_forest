@@ -1,7 +1,10 @@
 node_modules/
 dist/
 server/node_modules/
+server/dist/
 *.tsbuildinfo
 .vite/
 .env
 starmap_2020_8k.exr
+.server-dev.log
+.server-dev.err.log

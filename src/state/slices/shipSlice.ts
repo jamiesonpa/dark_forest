@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand'
 import { defaultShipState } from '@/state/defaults'
 import type { GameStore } from '@/state/types'
-import type { NetworkShipSnapshot } from '@/network/colyseusClient'
+import type { WireShipSnapshot } from '../../../shared/contracts/multiplayer'
 
 const MWD_CAPACITOR_ACTIVATION_FRACTION = 0.2
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
@@ -30,9 +30,11 @@ function withLocalShipUpdate(
   }
 }
 
-function fromSnapshot(snapshot: NetworkShipSnapshot, existing: GameStore['ship']) {
+function fromSnapshot(snapshot: WireShipSnapshot, existing: GameStore['ship']) {
   return {
     ...existing,
+    currentCelestialId: snapshot.currentCelestialId,
+    inWarpTransit: snapshot.inWarpTransit,
     position: snapshot.position,
     targetSpeed: snapshot.targetSpeed,
     mwdActive: snapshot.mwdActive,

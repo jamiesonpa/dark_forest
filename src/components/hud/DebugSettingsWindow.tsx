@@ -8,7 +8,10 @@ export function DebugSettingsWindow() {
   const setOrientDebugEnabled = useGameStore((s) => s.setOrientDebugEnabled)
   const showIRSTCone = useGameStore((s) => s.showIRSTCone)
   const setShowIRSTCone = useGameStore((s) => s.setShowIRSTCone)
+  const showCelestialGridCenterMarker = useGameStore((s) => s.showCelestialGridCenterMarker)
+  const setShowCelestialGridCenterMarker = useGameStore((s) => s.setShowCelestialGridCenterMarker)
   const setShipState = useGameStore((s) => s.setShipState)
+  const starSystem = useGameStore((s) => s.starSystem)
   const capacitorMax = useGameStore((s) => s.ship.capacitorMax)
   const pivotPosition = useGameStore((s) => s.debugPivotPosition)
   const asteroidBeltThickness = useGameStore((s) => s.asteroidBeltThickness)
@@ -20,6 +23,8 @@ export function DebugSettingsWindow() {
   const asteroidBeltMaxSize = useGameStore((s) => s.asteroidBeltMaxSize)
   const setAsteroidBeltSettings = useGameStore((s) => s.setAsteroidBeltSettings)
   const spawnAsteroidBelt = useGameStore((s) => s.spawnAsteroidBelt)
+  const revealEwCelestial = useGameStore((s) => s.revealEwCelestial)
+  const cancelEwGravAnalysis = useGameStore((s) => s.cancelEwGravAnalysis)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
   const shipsById = useGameStore((s) => s.shipsById)
 
@@ -195,10 +200,31 @@ export function DebugSettingsWindow() {
       </button>
       <button
         type="button"
+        className={`hud-debug-toggle ${showCelestialGridCenterMarker ? 'active' : ''}`}
+        onClick={() => setShowCelestialGridCenterMarker(!showCelestialGridCenterMarker)}
+      >
+        SHOW GRID CENTER
+      </button>
+      <button
+        type="button"
         className="hud-debug-spawn-roids"
         onClick={spawnAsteroidBelt}
       >
         SPAWN ROIDS
+      </button>
+      <button
+        type="button"
+        className="hud-debug-spawn-roids"
+        onClick={() => {
+          cancelEwGravAnalysis()
+          starSystem.celestials.forEach((celestial) => {
+            if (celestial.type !== 'star') {
+              revealEwCelestial(celestial.id)
+            }
+          })
+        }}
+      >
+        REVEAL ALL CELESTIALS
       </button>
       <div className="hud-debug-slider-group">
         <label className="hud-debug-slider-label">

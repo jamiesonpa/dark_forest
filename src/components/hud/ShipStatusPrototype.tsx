@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { useGameStore } from '@/state/gameStore'
 import { getCelestialById } from '@/utils/systemData'
 import {
@@ -29,6 +29,11 @@ const WARP_MIN_POST_CAPACITOR = 1
 const STATUS_SPEED_EPSILON_MPS = 0.5
 const STATUS_SPEED_TRACK_EPSILON_MPS = 1
 const STATUS_ANGLE_EPSILON_DEG = 0.5
+const WARP_ARRIVAL_DISTANCE_OPTIONS_KM = [15, 20, 25, 30, 35, 40, 45, 50] as const
+const WARP_ARRIVAL_DISTANCE_DATALIST_ID = 'warp-arrival-distance-steps'
+const WARP_ARRIVAL_MIN_KM = WARP_ARRIVAL_DISTANCE_OPTIONS_KM[0]
+const WARP_ARRIVAL_MAX_KM =
+  WARP_ARRIVAL_DISTANCE_OPTIONS_KM[WARP_ARRIVAL_DISTANCE_OPTIONS_KM.length - 1]!
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value))
@@ -81,6 +86,8 @@ export function ShipStatusPrototype() {
   const navAttitudeMode = useGameStore((s) => s.navAttitudeMode)
   const starSystem = useGameStore((s) => s.starSystem)
   const selectedWarpDestinationId = useGameStore((s) => s.selectedWarpDestinationId)
+  const warpArrivalDistanceKm = useGameStore((s) => s.warpArrivalDistanceKm)
+  const setWarpArrivalDistanceKm = useGameStore((s) => s.setWarpArrivalDistanceKm)
   const warpAligned = useGameStore((s) => s.warpAligned)
   const warpRequiredBearing = useGameStore((s) => s.warpRequiredBearing)
   const warpRequiredInclination = useGameStore((s) => s.warpRequiredInclination)
@@ -159,6 +166,11 @@ export function ShipStatusPrototype() {
     () => (selectedWarpDestinationId ? getCelestialById(selectedWarpDestinationId, starSystem) : null),
     [selectedWarpDestinationId, starSystem]
   )
+  const warpArrivalProgress =
+    (warpArrivalDistanceKm - WARP_ARRIVAL_MIN_KM) /
+    (WARP_ARRIVAL_MAX_KM - WARP_ARRIVAL_MIN_KM)
+  const warpArrivalSliderValue =
+    WARP_ARRIVAL_MAX_KM - (warpArrivalDistanceKm - WARP_ARRIVAL_MIN_KM)
   const activeWarpTarget = useMemo(
     () => (warpTargetId ? getCelestialById(warpTargetId, starSystem) : null),
     [starSystem, warpTargetId]
@@ -486,17 +498,66 @@ export function ShipStatusPrototype() {
                 ? `CD ${mwdCooldownRemaining.toFixed(1)}s`
                 : 'MWD'}
           </button>
-          <button
-            type="button"
-            className={`warp-button ship-status-v2-warp-button ${canWarp ? 'ready' : ''} ${warpBusy ? 'active' : ''}`.trim()}
-            onClick={() => {
-              if (!selectedWarpDestinationId || !canWarp) return
-              startWarp(selectedWarpDestinationId)
-            }}
-            disabled={!canWarp}
-          >
-            {warpBusy ? `WARP ${(warpTravelProgress * 100).toFixed(0)}%` : 'WARP'}
-          </button>
+          <div className="ship-status-v2-warp-stack">
+            <div className="ship-status-v2-warp-distance-slider">
+              <span className="ship-status-v2-warp-distance-title">
+                <span>WARP AT</span>
+                <span>(KM)</span>
+              </span>
+              <div className="ship-status-v2-warp-distance-labels" aria-hidden="true">
+                {[...WARP_ARRIVAL_DISTANCE_OPTIONS_KM].reverse().map((distanceKm, index) => (
+                  <span key={distanceKm} style={{ '--warp-notch-index': index } as CSSProperties}>
+                    {distanceKm}
+                  </span>
+                ))}
+              </div>
+              <div className="ship-status-v2-warp-distance-input-wrap">
+                <div className="ship-status-v2-warp-notch-rail" aria-hidden="true">
+                  {[...WARP_ARRIVAL_DISTANCE_OPTIONS_KM].reverse().map((distanceKm, index) => (
+                    <span key={`notch-${distanceKm}`} style={{ '--warp-notch-index': index } as CSSProperties} />
+                  ))}
+                </div>
+                <input
+                  type="range"
+                  min={WARP_ARRIVAL_MIN_KM}
+                  max={WARP_ARRIVAL_MAX_KM}
+                  step={5}
+                  list={WARP_ARRIVAL_DISTANCE_DATALIST_ID}
+                  className="ship-status-v2-warp-distance-input"
+                  value={warpArrivalSliderValue}
+                  onChange={(event) => {
+                    const nextSliderValue = Number(event.target.value)
+                    const nextDistanceKm =
+                      WARP_ARRIVAL_MAX_KM - (nextSliderValue - WARP_ARRIVAL_MIN_KM)
+                    setWarpArrivalDistanceKm(nextDistanceKm)
+                  }}
+                  disabled={warpBusy}
+                  aria-label="Warp arrival distance from destination center"
+                />
+                <span
+                  className="ship-status-v2-warp-distance-dot"
+                  style={{ '--warp-thumb-progress': warpArrivalProgress } as CSSProperties}
+                  aria-hidden="true"
+                />
+              </div>
+              <datalist id={WARP_ARRIVAL_DISTANCE_DATALIST_ID}>
+                {WARP_ARRIVAL_DISTANCE_OPTIONS_KM.map((distanceKm) => (
+                  <option key={distanceKm} value={distanceKm} />
+                ))}
+              </datalist>
+            </div>
+            <button
+              type="button"
+              className={`warp-button ship-status-v2-warp-button ${canWarp ? 'ready' : ''} ${warpBusy ? 'active' : ''}`.trim()}
+              onClick={() => {
+                if (!selectedWarpDestinationId || !canWarp) return
+                startWarp(selectedWarpDestinationId)
+              }}
+              disabled={!canWarp}
+            >
+              {warpBusy ? `WARP ${(warpTravelProgress * 100).toFixed(0)}%` : 'WARP'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

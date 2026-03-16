@@ -7,6 +7,7 @@ export class ShipState extends Schema {
   @type('number') y = 0
   @type('number') z = 0
   @type('string') currentCelestialId = 'planet-1'
+  @type('boolean') inWarpTransit = false
   @type('number') targetSpeed = 0
   @type('boolean') mwdActive = false
   @type('number') mwdRemaining = 0

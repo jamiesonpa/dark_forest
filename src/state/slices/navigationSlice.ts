@@ -11,6 +11,9 @@ import {
 const SHIP_CENTER_PIVOT: [number, number, number] = [0, 0, 0]
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 const WARP_MIN_POST_CAPACITOR = 1
+const WARP_ARRIVAL_MIN_DISTANCE_KM = 15
+const WARP_ARRIVAL_MAX_DISTANCE_KM = 50
+const WARP_ARRIVAL_STEP_KM = 5
 
 function mergeKnownCelestialId(existingIds: string[], celestialId: string, starSystem = DEFAULT_STAR_SYSTEM_SNAPSHOT.system) {
   const celestial = getCelestialById(celestialId, starSystem)
@@ -29,6 +32,17 @@ function sanitizePivot(position: [number, number, number]): [number, number, num
   ]
 }
 
+function sanitizeWarpArrivalDistanceKm(distanceKm: number) {
+  if (!Number.isFinite(distanceKm)) {
+    return WARP_ARRIVAL_MIN_DISTANCE_KM
+  }
+  const clamped = Math.max(
+    WARP_ARRIVAL_MIN_DISTANCE_KM,
+    Math.min(WARP_ARRIVAL_MAX_DISTANCE_KM, distanceKm)
+  )
+  return Math.round(clamped / WARP_ARRIVAL_STEP_KM) * WARP_ARRIVAL_STEP_KM
+}
+
 export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<GameStore>> = (set) => ({
   starSystem: DEFAULT_STAR_SYSTEM_SNAPSHOT.system,
   starSystemSeed: DEFAULT_STAR_SYSTEM_SNAPSHOT.seed,
@@ -37,6 +51,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   debugPivotEnabled: false,
   orientDebugEnabled: false,
   showIRSTCone: false,
+  showCelestialGridCenterMarker: false,
   debugPivotPosition: SHIP_CENTER_PIVOT,
   debugPivotDragging: false,
   debugPivotResetCount: 0,
@@ -44,6 +59,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   warpTargetId: null,
   selectedTargetId: null,
   selectedWarpDestinationId: null,
+  warpArrivalDistanceKm: WARP_ARRIVAL_MIN_DISTANCE_KM,
   warpSourceCelestialId: null,
   warpTravelProgress: 0,
   warpReferenceSpeed: 0,
@@ -78,30 +94,57 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       const targetExists = s.warpTargetId
         ? snapshot.system.celestials.some((c) => c.id === s.warpTargetId)
         : false
+      const nextCurrentCelestialId = currentExists ? s.currentCelestialId : fallbackCelestialId
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      const localShip = s.shipsById[localId] ?? s.ship
+      const updatedLocalShip = {
+        ...localShip,
+        currentCelestialId: nextCurrentCelestialId,
+      }
 
       return {
         starSystem: snapshot.system,
         starSystemSeed: snapshot.seed,
         starSystemConfig: snapshot.config,
-        currentCelestialId: currentExists ? s.currentCelestialId : fallbackCelestialId,
+        currentCelestialId: nextCurrentCelestialId,
         ewRevealedCelestialIds: mergeKnownCelestialId(
           s.ewRevealedCelestialIds,
-          currentExists ? s.currentCelestialId : fallbackCelestialId,
+          nextCurrentCelestialId,
           snapshot.system
         ),
         selectedWarpDestinationId: selectedExists ? s.selectedWarpDestinationId : fallbackDestinationId,
         warpSourceCelestialId: sourceExists ? s.warpSourceCelestialId : null,
         warpTargetId: targetExists ? s.warpTargetId : null,
+        ship: updatedLocalShip,
+        shipsById: {
+          ...s.shipsById,
+          [localId]: updatedLocalShip,
+        },
       }
     }),
   setCurrentCelestial: (id) =>
-    set((s) => ({
-      currentCelestialId: id,
-      ewRevealedCelestialIds: mergeKnownCelestialId(s.ewRevealedCelestialIds, id, s.starSystem),
-    })),
+    set((s) => {
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      const localShip = s.shipsById[localId] ?? s.ship
+      const updatedLocalShip = {
+        ...localShip,
+        currentCelestialId: id,
+      }
+
+      return {
+        currentCelestialId: id,
+        ewRevealedCelestialIds: mergeKnownCelestialId(s.ewRevealedCelestialIds, id, s.starSystem),
+        ship: updatedLocalShip,
+        shipsById: {
+          ...s.shipsById,
+          [localId]: updatedLocalShip,
+        },
+      }
+    }),
   setDebugPivotEnabled: (enabled) => set({ debugPivotEnabled: enabled }),
   setOrientDebugEnabled: (enabled) => set({ orientDebugEnabled: enabled }),
   setShowIRSTCone: (enabled) => set({ showIRSTCone: enabled }),
+  setShowCelestialGridCenterMarker: (enabled) => set({ showCelestialGridCenterMarker: enabled }),
   setDebugPivotPosition: (position) => set({ debugPivotPosition: sanitizePivot(position) }),
   setDebugPivotDragging: (dragging) => set({ debugPivotDragging: dragging }),
   resetDebugPivot: () =>
@@ -118,6 +161,8 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
     })),
   setSelectedTarget: (id) => set({ selectedTargetId: id }),
   setSelectedWarpDestination: (id) => set({ selectedWarpDestinationId: id }),
+  setWarpArrivalDistanceKm: (distanceKm) =>
+    set({ warpArrivalDistanceKm: sanitizeWarpArrivalDistanceKm(distanceKm) }),
   setWarpAlignmentStatus: (payload) =>
     set({
       warpRequiredBearing: payload.requiredBearing,
@@ -213,6 +258,12 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   finishWarp: () =>
     set((s) => {
       const nextCurrentCelestialId = s.warpTargetId ?? s.currentCelestialId
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      const localShip = s.shipsById[localId] ?? s.ship
+      const updatedLocalShip = {
+        ...localShip,
+        currentCelestialId: nextCurrentCelestialId,
+      }
       return {
         selectedWarpDestinationId: s.warpSourceCelestialId ?? s.selectedWarpDestinationId,
         currentCelestialId: nextCurrentCelestialId,
@@ -222,6 +273,11 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
         warpTravelProgress: 0,
         warpReferenceSpeed: 0,
         warpTargetId: null,
+        ship: updatedLocalShip,
+        shipsById: {
+          ...s.shipsById,
+          [localId]: updatedLocalShip,
+        },
       }
     }),
 })

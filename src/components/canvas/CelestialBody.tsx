@@ -28,11 +28,6 @@ export function CelestialBody({ celestial, isDistant }: CelestialBodyProps) {
     celestial.type === 'planet' ||
     celestial.type === 'moon' ||
     celestial.type === 'asteroid_belt'
-
-  if (isSphericalCelestial) {
-    return null
-  }
-
   const radius = celestial.radius ?? 100
   const color = getColor(celestial.type)
 
@@ -64,6 +59,10 @@ export function CelestialBody({ celestial, isDistant }: CelestialBodyProps) {
       roughness: 0.7,
     })
   }, [celestial.type, color, isDistant])
+
+  if (isSphericalCelestial) {
+    return null
+  }
 
   if (isDistant) {
     return (

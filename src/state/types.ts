@@ -6,9 +6,11 @@ import type {
   StarSystemSnapshot,
   WarpState,
 } from '@/types/game'
-import type { NetworkShipSnapshot } from '@/network/colyseusClient'
+import type { WireShipSnapshot } from '../../shared/contracts/multiplayer'
 
 export interface ShipState {
+  currentCelestialId: string
+  inWarpTransit: boolean
   position: [number, number, number]
   shield: number
   shieldMax: number
@@ -82,6 +84,7 @@ export interface GameStore {
   debugPivotEnabled: boolean
   orientDebugEnabled: boolean
   showIRSTCone: boolean
+  showCelestialGridCenterMarker: boolean
   debugPivotPosition: [number, number, number]
   debugPivotDragging: boolean
   debugPivotResetCount: number
@@ -93,6 +96,7 @@ export interface GameStore {
   warpTargetId: string | null
   selectedTargetId: string | null
   selectedWarpDestinationId: string | null
+  warpArrivalDistanceKm: number
   warpSourceCelestialId: string | null
   warpTravelProgress: number
   warpReferenceSpeed: number
@@ -131,12 +135,14 @@ export interface GameStore {
   setDebugPivotEnabled: (enabled: boolean) => void
   setOrientDebugEnabled: (enabled: boolean) => void
   setShowIRSTCone: (enabled: boolean) => void
+  setShowCelestialGridCenterMarker: (enabled: boolean) => void
   setDebugPivotPosition: (position: [number, number, number]) => void
   setDebugPivotDragging: (dragging: boolean) => void
   resetDebugPivot: () => void
   setWarpState: (state: WarpState, targetId?: string | null) => void
   setSelectedTarget: (id: string | null) => void
   setSelectedWarpDestination: (id: string | null) => void
+  setWarpArrivalDistanceKm: (distanceKm: number) => void
   setWarpAlignmentStatus: (payload: {
     requiredBearing: number
     requiredInclination: number
@@ -167,7 +173,7 @@ export interface GameStore {
   spawnAsteroidBelt: () => void
   setLocalPlayerId: (id: string) => void
   setLocalShipState: (partial: Partial<ShipState>) => void
-  upsertRemoteShips: (snapshot: Record<string, NetworkShipSnapshot>) => void
+  upsertRemoteShips: (snapshot: Record<string, WireShipSnapshot>) => void
   setShipState: (partial: Partial<ShipState>) => void
   setTargetSpeed: (mps: number) => void
   setMwdActive: (active: boolean) => void

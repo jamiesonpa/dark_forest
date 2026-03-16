@@ -1,6 +1,8 @@
 import type { EnemyState, ShipState } from '@/state/types'
 
 export const defaultShipState: ShipState = {
+  currentCelestialId: 'planet-1',
+  inWarpTransit: false,
   position: [0, 0, 0],
   shield: 5000,
   shieldMax: 5000,

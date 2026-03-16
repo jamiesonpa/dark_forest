@@ -141,8 +141,8 @@ function featherHorizontalSeam(
       const rightWeight = t
 
       for (let c = 0; c < 4; c += 1) {
-        const left = rgbaData[leftIdx + c]
-        const right = rgbaData[rightIdx + c]
+        const left = rgbaData[leftIdx + c] ?? 0
+        const right = rgbaData[rightIdx + c] ?? 0
         const blended = Math.round(left * leftWeight + right * rightWeight)
         rgbaData[leftIdx + c] = blended
         rgbaData[rightIdx + c] = blended
@@ -252,10 +252,10 @@ function createStarDotsTexture(textureSize: number) {
 
 interface WarpBubbleEffectProps {
   ship: ShipState
-  active: boolean
+  phase: 'inactive' | 'transit' | 'arrival'
 }
 
-export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
+export function WarpBubbleEffect({ ship, phase }: WarpBubbleEffectProps) {
   const warpReferenceSpeed = useGameStore((s) => s.warpReferenceSpeed)
   const warpTravelProgress = useGameStore((s) => s.warpTravelProgress)
   const shellMaterialRef = useRef<THREE.MeshBasicMaterial>(null)
@@ -263,6 +263,7 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
   const starShellMaterialRef = useRef<THREE.MeshBasicMaterial>(null)
   const speedNormRef = useRef(0)
   const shellPanSpeedRef = useRef(0)
+  const visibilityRef = useRef(0)
 
   const shellProfile = useMemo(() => {
     const samples = 48
@@ -318,7 +319,18 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
     const starShellMaterial = starShellMaterialRef.current
     if (!shellMaterial || !secondaryShellMaterial || !starShellMaterial) return
 
-    const rawSpeedNorm = active && warpReferenceSpeed > 0
+    const transitActive = phase === 'transit'
+    const arrivalActive = phase === 'arrival'
+    const phaseActive = transitActive || arrivalActive
+    const targetVisibility = transitActive ? 1 : 0
+    const visibilityLerp = transitActive ? 4.8 : 3.6
+    visibilityRef.current = THREE.MathUtils.lerp(
+      visibilityRef.current,
+      targetVisibility,
+      dt * visibilityLerp
+    )
+
+    const rawSpeedNorm = phaseActive && warpReferenceSpeed > 0
       ? THREE.MathUtils.clamp(ship.actualSpeed / warpReferenceSpeed, 0, 1)
       : 0
     const smoothing =
@@ -327,17 +339,17 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
         : SPEED_SMOOTH_ACCEL
     speedNormRef.current = THREE.MathUtils.lerp(speedNormRef.current, rawSpeedNorm, dt * smoothing)
     const smoothSpeedNorm = speedNormRef.current
-    const coasting = !active && smoothSpeedNorm > COASTING_EPSILON
+    const coasting = !phaseActive && smoothSpeedNorm > COASTING_EPSILON
     const clampedProgress = THREE.MathUtils.clamp(warpTravelProgress, 0, 1)
     const bellCurve = 4 * clampedProgress * (1 - clampedProgress)
     const easedSpeedNorm = easeInOutCubic(smoothSpeedNorm)
-    const shellTargetOpacity = active
+    const shellTargetOpacity = phaseActive
       ? SHELL_MIN_OPACITY + (SHELL_MAX_OPACITY - SHELL_MIN_OPACITY) * easedSpeedNorm
       : SHELL_COAST_OPACITY * easeInOutCubic(Math.pow(smoothSpeedNorm, 0.85))
     if (shellTextures) {
       const panNorm = Math.pow(THREE.MathUtils.clamp(smoothSpeedNorm, 0, 1), 1.12)
-      const warpPanBoost = active ? 1 + WARP_MID_PAN_BOOST * bellCurve : 1
-      const targetPanSpeed = (active || coasting) ? panNorm * SHELL_TEX_PAN_MAX * warpPanBoost : 0
+      const warpPanBoost = phaseActive ? 1 + WARP_MID_PAN_BOOST * bellCurve : 1
+      const targetPanSpeed = (phaseActive || coasting) ? panNorm * SHELL_TEX_PAN_MAX * warpPanBoost : 0
       const panSmoothing = targetPanSpeed < shellPanSpeedRef.current
         ? SHELL_TEX_PAN_DECEL_SMOOTH
         : SHELL_TEX_PAN_ACCEL_SMOOTH
@@ -364,7 +376,7 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
       const stretchY = THREE.MathUtils.lerp(1, 0.05, bellCurve)
       starDotsTexture.repeat.set(1, stretchY)
     }
-    if (!active && !coasting) {
+    if (!phaseActive && !coasting && visibilityRef.current <= 0.001) {
       shellMaterial.opacity = THREE.MathUtils.lerp(shellMaterial.opacity, 0, dt * 8)
       secondaryShellMaterial.opacity = THREE.MathUtils.lerp(secondaryShellMaterial.opacity, 0, dt * 8)
       starShellMaterial.opacity = THREE.MathUtils.lerp(starShellMaterial.opacity, 0, dt * 8)
@@ -375,18 +387,18 @@ export function WarpBubbleEffect({ ship, active }: WarpBubbleEffectProps) {
 
     shellMaterial.opacity = THREE.MathUtils.lerp(
       shellMaterial.opacity,
-      THREE.MathUtils.clamp(shellTargetOpacity * 1.1, 0, 1),
-      dt * (active ? SHELL_OPACITY_LERP_ACTIVE : SHELL_OPACITY_LERP_COAST)
+      THREE.MathUtils.clamp(shellTargetOpacity * 1.1 * visibilityRef.current, 0, 1),
+      dt * (phaseActive ? SHELL_OPACITY_LERP_ACTIVE : SHELL_OPACITY_LERP_COAST)
     )
     secondaryShellMaterial.opacity = THREE.MathUtils.lerp(
       secondaryShellMaterial.opacity,
-      THREE.MathUtils.clamp(shellTargetOpacity * 1.1, 0, 1),
-      dt * (active ? SHELL_OPACITY_LERP_ACTIVE : SHELL_OPACITY_LERP_COAST)
+      THREE.MathUtils.clamp(shellTargetOpacity * 1.1 * visibilityRef.current, 0, 1),
+      dt * (phaseActive ? SHELL_OPACITY_LERP_ACTIVE : SHELL_OPACITY_LERP_COAST)
     )
     starShellMaterial.opacity = THREE.MathUtils.lerp(
       starShellMaterial.opacity,
-      THREE.MathUtils.clamp(shellTargetOpacity * 1.35, 0, 1),
-      dt * (active ? SHELL_OPACITY_LERP_ACTIVE : SHELL_OPACITY_LERP_COAST)
+      THREE.MathUtils.clamp(shellTargetOpacity * 1.35 * visibilityRef.current, 0, 1),
+      dt * (phaseActive ? SHELL_OPACITY_LERP_ACTIVE : SHELL_OPACITY_LERP_COAST)
     )
   })
 

@@ -1,0 +1,16 @@
+export const AMBER = "#ffb000";
+export const AMBER_DIM = "#7a5500";
+export const AMBER_GLOW = "#ffcc44";
+export const BG_DARK = "#0a0a08";
+export const BG_PANEL = "#111110";
+export const BG_SCREEN = "#080808";
+export const GRID_COLOR = "rgba(255,176,0,0.07)";
+export const GRID_COLOR_BRIGHT = "rgba(255,176,0,0.15)";
+export const RED_ALERT = "#ff3333";
+export const GREEN_DIM = "#00ff6644";
+export const GRAV_ANOMALY_BASE_MAX_RANGE_AU = 300;
+export const GRAV_CONTROL_COLUMN_WIDTH = 42;
+export const GRAV_CONTROL_RACK_WIDTH = GRAV_CONTROL_COLUMN_WIDTH * 2;
+export const GRAV_ANALYSIS_MIN_MS = 2000;
+export const GRAV_ANALYSIS_MAX_MS = 30000;
+export const GRAV_RESULT_BANNER_MS = 1200;

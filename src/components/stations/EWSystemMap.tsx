@@ -60,6 +60,7 @@ type HoveredMarker = {
 }
 
 const DISPLAY_RADIUS = 5.25
+const SHIP_MARKER_HEIGHT_OFFSET = 0.26
 
 function normalizePoint(
   point: readonly [number, number, number],
@@ -321,23 +322,24 @@ function ShipMarker({
   selected: boolean
   time: number
 }) {
-  const glowRef = useRef<THREE.Mesh>(null)
   const markerRef = useRef<THREE.Mesh>(null)
   const highlighted = hovered || selected
+  const markerPosition = useMemo<DisplayPoint>(
+    () => [position[0], position[1] + SHIP_MARKER_HEIGHT_OFFSET, position[2]],
+    [position]
+  )
 
   useFrame(() => {
-    const pulse = 1 + Math.sin(time * 2.1) * (highlighted ? 0.15 : 0.08)
-    if (glowRef.current) {
-      glowRef.current.scale.setScalar(pulse)
-    }
     if (markerRef.current) {
+      const pulse = 1 + Math.sin(time * 2.1) * 0.25
+      markerRef.current.scale.setScalar(pulse)
       markerRef.current.rotation.y += 0.015
     }
   })
 
   return (
     <group
-      position={position}
+      position={markerPosition}
       onPointerOut={() => onHoverChange(null)}
       onPointerOver={(event) => {
         event.stopPropagation()
@@ -350,17 +352,9 @@ function ShipMarker({
         })
       }}
     >
-      <mesh ref={glowRef}>
-        <sphereGeometry args={[0.14, 18, 18]} />
-        <meshBasicMaterial
-          color={highlighted ? SELECT_BLUE : '#4cd9ff'}
-          transparent
-          opacity={highlighted ? 0.6 : 0.35}
-        />
-      </mesh>
-      <mesh ref={markerRef}>
-        <octahedronGeometry args={[0.075, 0]} />
-        <meshBasicMaterial color={highlighted ? '#d8ecff' : '#9cf6ff'} />
+      <mesh ref={markerRef} rotation={[Math.PI, 0, 0]}>
+        <coneGeometry args={[0.09, 0.24, 18]} />
+        <meshBasicMaterial color={highlighted ? '#9fd4ff' : '#2f8fff'} />
       </mesh>
       <mesh
         onPointerOut={() => onHoverChange(null)}

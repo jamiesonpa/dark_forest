@@ -14,10 +14,12 @@ import { WarpDriver } from '@/systems/warp/WarpDriver'
 export function StarSystem() {
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const starSystem = useGameStore((s) => s.starSystem)
+  const localShipInWarpTransit = useGameStore((s) => s.ship.inWarpTransit)
   const currentCelestial = useMemo(
     () => getCelestialById(currentCelestialId, starSystem),
     [currentCelestialId, starSystem]
   )
+  const offGridWarpActive = localShipInWarpTransit
 
   const distantCelestials = useMemo(() => {
     if (!currentCelestial) return []
@@ -40,8 +42,8 @@ export function StarSystem() {
       <ambientLight intensity={0.08} />
       <SunSystem />
       <WarpDriver />
-      <WarpTargetMarkers />
-      {distantCelestials.map((c) => (
+      {!offGridWarpActive && <WarpTargetMarkers />}
+      {!offGridWarpActive && distantCelestials.map((c) => (
         <CelestialBody key={c.id} celestial={c} isDistant />
       ))}
       <Grid />

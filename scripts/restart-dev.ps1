@@ -1,6 +1,10 @@
 param(
   [switch]$NoServer,
-  [switch]$NoClient
+  [switch]$NoClient,
+  [int]$Seed = -1,
+  [int]$PlanetCount = -1,
+  [int]$MoonCount = -1,
+  [int]$BeltCount = -1
 )
 $ErrorActionPreference = "Stop"
 
@@ -8,10 +12,19 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $serverDir = Join-Path $root "server"
 $serverLogPath = Join-Path $root ".server-dev.log"
 $serverErrLogPath = Join-Path $root ".server-dev.err.log"
-$randomSeed = Get-Random -Minimum 0 -Maximum 10000
-$randomPlanetCount = Get-Random -Minimum 0 -Maximum 4
-$randomMoonCount = Get-Random -Minimum 0 -Maximum 4
-$randomBeltCount = Get-Random -Minimum 0 -Maximum 4
+
+function Resolve-StarSystemValue([int]$explicitValue, [int]$randomMinInclusive, [int]$randomMaxExclusive) {
+  if ($explicitValue -ge 0) {
+    return $explicitValue
+  }
+
+  return Get-Random -Minimum $randomMinInclusive -Maximum $randomMaxExclusive
+}
+
+$randomSeed = Resolve-StarSystemValue -explicitValue $Seed -randomMinInclusive 0 -randomMaxExclusive 10000
+$randomPlanetCount = Resolve-StarSystemValue -explicitValue $PlanetCount -randomMinInclusive 0 -randomMaxExclusive 4
+$randomMoonCount = Resolve-StarSystemValue -explicitValue $MoonCount -randomMinInclusive 0 -randomMaxExclusive 4
+$randomBeltCount = Resolve-StarSystemValue -explicitValue $BeltCount -randomMinInclusive 0 -randomMaxExclusive 4
 
 function Stop-ByPort([int[]]$ports) {
   $procIds = @()
@@ -89,7 +102,8 @@ if (-not (Wait-PortFree -ports @(2567, 5173, 5174, 5175))) {
   Write-Host "Warning: one or more dev ports are still in use. Server may fail to start."
 }
 
-Write-Host ("Randomized star system config: seed={0} planets={1} moons={2} belts={3}" -f $randomSeed, $randomPlanetCount, $randomMoonCount, $randomBeltCount)
+Write-Host ("Star system config: seed={0} planets={1} moons={2} belts={3}" -f $randomSeed, $randomPlanetCount, $randomMoonCount, $randomBeltCount)
+Write-Host "Reuse the same values with -Seed/-PlanetCount/-MoonCount/-BeltCount for a reproducible restart."
 
 if (-not $NoServer) {
   Write-Host "Starting server in background (no pop-out)..."

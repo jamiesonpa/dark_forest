@@ -8,9 +8,12 @@
     "dev:restart": "powershell -ExecutionPolicy Bypass -File ./scripts/restart-dev.ps1",
     "dev:client": "powershell -ExecutionPolicy Bypass -File ./scripts/restart-dev.ps1 -NoServer",
     "dev:stop": "powershell -ExecutionPolicy Bypass -File ./scripts/stop-dev.ps1",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "test": "vitest run",
+    "lint": "eslint . --max-warnings=0",
+    "test:client": "vitest run",
+    "test:server": "npm --prefix server run test",
+    "test": "npm run test:client && npm run test:server",
     "preview": "vite preview"
   },
   "dependencies": {

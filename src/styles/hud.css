@@ -1172,15 +1172,186 @@ body {
   font-size: 10px;
 }
 
-.ship-status-v2-warp-button {
+.ship-status-v2-warp-stack {
   position: absolute;
   right: -6px;
-  top: 50%;
-  transform: translateY(-50%);
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.ship-status-v2-warp-button {
   margin-top: 0;
   width: 56px;
   padding: 3px 0;
   font-size: 10px;
+}
+
+.ship-status-v2-warp-distance-slider {
+  --warp-distance-line-length: 136px;
+  --warp-slider-end-inset: 3px;
+  --warp-notch-count: 7;
+  --warp-usable-line-length: calc(
+    var(--warp-distance-line-length) - (var(--warp-slider-end-inset) * 2)
+  );
+  --warp-notch-step: calc(var(--warp-usable-line-length) / var(--warp-notch-count));
+  position: relative;
+  width: 14px;
+  height: var(--warp-distance-line-length);
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  margin-top: 20px;
+  margin-bottom: 12px;
+}
+
+.ship-status-v2-warp-distance-title {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 13px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  white-space: nowrap;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 8.8px;
+  letter-spacing: 0.06em;
+  color: var(--hud-text-dim);
+}
+
+.ship-status-v2-warp-distance-labels {
+  position: absolute;
+  right: calc(100% + 4px);
+  top: 0;
+  width: 42px;
+  height: var(--warp-distance-line-length);
+  text-align: right;
+}
+
+.ship-status-v2-warp-distance-labels span {
+  position: absolute;
+  right: 0;
+  top: calc(var(--warp-slider-end-inset) + (var(--warp-notch-index) * var(--warp-notch-step)));
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  color: var(--hud-text-dim);
+}
+
+.ship-status-v2-warp-distance-input-wrap {
+  position: relative;
+  width: 14px;
+  height: var(--warp-distance-line-length);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ship-status-v2-warp-notch-rail {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ship-status-v2-warp-notch-rail::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: var(--warp-slider-end-inset);
+  bottom: var(--warp-slider-end-inset);
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(185, 196, 210, 0.9);
+}
+
+.ship-status-v2-warp-notch-rail span {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--warp-slider-end-inset) + (var(--warp-notch-index) * var(--warp-notch-step)));
+  width: 7px;
+  height: 1px;
+  transform: translate(-50%, -50%);
+  background: rgba(230, 237, 245, 0.8);
+}
+
+.ship-status-v2-warp-distance-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--warp-distance-line-length);
+  height: 14px;
+  margin: 0;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ship-status-v2-warp-distance-input::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.ship-status-v2-warp-distance-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -5px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ship-status-v2-warp-distance-input::-moz-range-track {
+  height: 2px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.ship-status-v2-warp-distance-input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ship-status-v2-warp-distance-input::-moz-range-progress {
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(185, 196, 210, 0.9);
+}
+
+.ship-status-v2-warp-distance-input:disabled {
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+.ship-status-v2-warp-distance-dot {
+  position: absolute;
+  left: 50%;
+  top: calc(
+    var(--warp-slider-end-inset) +
+      (var(--warp-thumb-progress) * var(--warp-usable-line-length))
+  );
+  width: 6px;
+  height: 6px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 3px rgba(255, 255, 255, 0.35);
+  pointer-events: none;
 }
 
 .ship-status-v2-dmp-button {

@@ -2,11 +2,11 @@ import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { useGameStore } from '@/state/gameStore'
 import { multiplayerClient } from '@/network/colyseusClient'
+import { sendMoveIfDue } from '@/systems/simulation/networkSync'
 import { getCelestialById } from '@/utils/systemData'
 import {
   bearingInclinationFromVector,
   getDistanceScaledWarpDurationMs,
-  getWorldShipPosition,
   isWarpAligned,
   WARP_ALIGNMENT_TOLERANCE_DEG,
   vectorBetweenWorldPoints,
@@ -15,31 +15,63 @@ import {
 } from '@/systems/warp/navigationMath'
 
 const ALIGN_STABLE_MS = 250
-const LANDING_DURATION_MS = 1800
-const ARRIVAL_OFFSET_DISTANCE = 100_000
+const SOURCE_GRID_EXIT_DURATION_MS = 1500
+const SOURCE_GRID_EXIT_DISTANCE = 120_000
+const SOURCE_GRID_PROGRESS_END = 0.12
+const OFF_GRID_CRUISE_MIN_MS = 5000
+const LANDING_DURATION_MS = 4200
+const ARRIVAL_PROGRESS_START = 0.88
+const ARRIVAL_START_DISTANCE = 260_000
+const WARP_ARRIVAL_MIN_DISTANCE_M = 15_000
+const WARP_ARRIVAL_MAX_DISTANCE_M = 50_000
+
+function clampWarpArrivalDistanceMeters(distanceKm: number) {
+  const rawMeters = distanceKm * 1000
+  if (!Number.isFinite(rawMeters)) return WARP_ARRIVAL_MIN_DISTANCE_M
+  return Math.max(
+    WARP_ARRIVAL_MIN_DISTANCE_M,
+    Math.min(WARP_ARRIVAL_MAX_DISTANCE_M, rawMeters)
+  )
+}
 
 type WarpSession = {
   startMs: number
-  durationMs: number
-  averageSpeed: number
+  cruiseStartMs: number | null
+  cruiseDurationMs: number
+  startSpeed: number
   peakSpeed: number
   sourceCelestialId: string
   destinationCelestialId: string
-  sourceWorldPosition: [number, number, number]
-  sourceCelestialWorldPosition: [number, number, number]
-  travelVector: [number, number, number]
+  departureDirection: [number, number, number]
+  sourceStartLocalPosition: [number, number, number]
+  arrivalStartOffsetAtDestination: [number, number, number]
+  arrivalRestOffsetAtDestination: [number, number, number]
 }
 
 type LandingSession = {
   startMs: number
   startSpeed: number
   fromPosition: [number, number, number]
-  arrivalOffsetAtDestination: [number, number, number]
+  restPosition: [number, number, number]
+  approachBearing: number
+  approachInclination: number
 }
 
-function smooth01(t: number) {
+function easeInCubic(t: number) {
   const x = Math.max(0, Math.min(1, t))
-  return x * x * (3 - 2 * x)
+  return x * x * x * x * x
+}
+
+function easeOutCubic(t: number) {
+  const x = Math.max(0, Math.min(1, t))
+  return 1 - (1 - x) ** 3
+}
+
+function scaleVector(
+  vector: readonly [number, number, number],
+  scalar: number
+): [number, number, number] {
+  return [vector[0] * scalar, vector[1] * scalar, vector[2] * scalar]
 }
 
 export function WarpDriver() {
@@ -155,35 +187,50 @@ export function WarpDriver() {
           const sourceCelestial = getCelestialById(state.currentCelestialId, state.starSystem)
           const destinationCelestial = getCelestialById(state.warpTargetId, state.starSystem)
           if (sourceCelestial && destinationCelestial && destinationCelestial.id !== sourceCelestial.id) {
-            const sourceCelestialWorld = worldPositionForCelestial(sourceCelestial)
-            const sourceWorld = getWorldShipPosition(state.ship.position, sourceCelestialWorld)
+            const sourceWorld = worldPositionForCelestial(sourceCelestial)
             const destinationWorld = worldPositionForCelestial(destinationCelestial)
             const travelVector = vectorBetweenWorldPoints(sourceWorld, destinationWorld)
             const travelDistance = vectorMagnitude(travelVector)
-            const durationMs = getDistanceScaledWarpDurationMs(travelDistance)
-            const averageSpeed = travelDistance / Math.max(0.001, durationMs / 1000)
-            const peakSpeed = averageSpeed * 1.5
+            const cruiseDurationMs = Math.max(
+              OFF_GRID_CRUISE_MIN_MS,
+              getDistanceScaledWarpDurationMs(travelDistance)
+            )
+            const averageSpeed =
+              travelDistance / Math.max(0.001, cruiseDurationMs / 1000)
+            const travelMagnitude = Math.max(0.0001, vectorMagnitude(travelVector))
+            const departureDirection: [number, number, number] = [
+              travelVector[0] / travelMagnitude,
+              travelVector[1] / travelMagnitude,
+              travelVector[2] / travelMagnitude,
+            ]
+            const arrivalApproachDirection = scaleVector(departureDirection, -1)
+            const arrivalRestDistance = clampWarpArrivalDistanceMeters(state.warpArrivalDistanceKm)
+            const peakSpeed = Math.max(
+              averageSpeed * 1.5,
+              SOURCE_GRID_EXIT_DISTANCE / Math.max(0.001, SOURCE_GRID_EXIT_DURATION_MS / 1000)
+            )
             warpSessionRef.current = {
               startMs: nowMs,
-              durationMs,
-              averageSpeed,
+              cruiseStartMs: null,
+              cruiseDurationMs,
+              startSpeed: Math.max(state.ship.actualSpeed, state.ship.targetSpeed, 0),
               peakSpeed,
               sourceCelestialId: sourceCelestial.id,
               destinationCelestialId: destinationCelestial.id,
-              sourceWorldPosition: sourceWorld,
-              sourceCelestialWorldPosition: sourceCelestialWorld,
-              travelVector,
+              departureDirection,
+              sourceStartLocalPosition: [...state.ship.position],
+              arrivalStartOffsetAtDestination: scaleVector(
+                arrivalApproachDirection,
+                ARRIVAL_START_DISTANCE
+              ),
+              arrivalRestOffsetAtDestination: scaleVector(
+                arrivalApproachDirection,
+                arrivalRestDistance
+              ),
             }
             state.setWarpTravelProgress(0)
             state.setWarpReferenceSpeed(peakSpeed)
             state.setWarpState('warping', destinationCelestial.id)
-            multiplayerClient.sendWarpIntent({
-              celestialId: destinationCelestial.id,
-              requiredBearing: state.warpRequiredBearing,
-              requiredInclination: state.warpRequiredInclination,
-              alignmentErrorDeg: state.warpAlignmentErrorDeg,
-              clientStartedAt: Date.now(),
-            })
           } else {
             state.setWarpState('idle', null)
           }
@@ -195,39 +242,47 @@ export function WarpDriver() {
 
     if (state.warpState === 'warping') {
       const session = warpSessionRef.current
-      if (!session || !currentCelestial || currentCelestial.id !== session.sourceCelestialId) {
+      if (!session) {
         state.setWarpState('idle', null)
         warpSessionRef.current = null
         state.setWarpTravelProgress(0)
       } else {
-        const linearProgress = Math.min(1, Math.max(0, (nowMs - session.startMs) / session.durationMs))
-        const easedProgress = smooth01(linearProgress)
-        const speedProgress = Math.min(0.97, linearProgress)
-        const bellCurve = 6 * speedProgress * (1 - speedProgress)
-        const speedProfile = 0.22 + 0.78 * bellCurve
-        const worldX = session.sourceWorldPosition[0] + session.travelVector[0] * easedProgress
-        const worldY = session.sourceWorldPosition[1] + session.travelVector[1] * easedProgress
-        const worldZ = session.sourceWorldPosition[2] + session.travelVector[2] * easedProgress
-        const localX = worldX - session.sourceCelestialWorldPosition[0]
-        const localY = worldY - session.sourceCelestialWorldPosition[1]
-        const localZ = worldZ - session.sourceCelestialWorldPosition[2]
-        const nextLocal: [number, number, number] = [localX, localY, localZ]
-
-        const warpSpeed = session.peakSpeed * speedProfile
-        state.setShipState({
-          position: nextLocal,
-          actualSpeed: warpSpeed,
-          targetSpeed: 0,
-          mwdActive: false,
-          mwdRemaining: 0,
-        })
-        state.setWarpTravelProgress(linearProgress)
-
-        if (multiplayerClient.isConnected()) {
-          const nowMoveMs = performance.now()
-          if (nowMoveMs - lastMoveSendMsRef.current >= 66) {
-            multiplayerClient.sendMove({
+        if (session.cruiseStartMs === null) {
+          if (!currentCelestial || currentCelestial.id !== session.sourceCelestialId) {
+            state.setWarpState('idle', null)
+            warpSessionRef.current = null
+            state.setWarpTravelProgress(0)
+            state.setShipState({ inWarpTransit: false })
+          } else {
+            const phaseProgress = Math.min(
+              1,
+              Math.max(0, (nowMs - session.startMs) / SOURCE_GRID_EXIT_DURATION_MS)
+            )
+            const departureEase = easeInCubic(phaseProgress)
+            const departureOffset = scaleVector(
+              session.departureDirection,
+              SOURCE_GRID_EXIT_DISTANCE * departureEase
+            )
+            const nextLocal: [number, number, number] = [
+              session.sourceStartLocalPosition[0] + departureOffset[0],
+              session.sourceStartLocalPosition[1] + departureOffset[1],
+              session.sourceStartLocalPosition[2] + departureOffset[2],
+            ]
+            const warpSpeed =
+              session.startSpeed + (session.peakSpeed - session.startSpeed) * departureEase
+            state.setShipState({
               position: nextLocal,
+              actualSpeed: warpSpeed,
+              targetSpeed: 0,
+              mwdActive: false,
+              mwdRemaining: 0,
+              inWarpTransit: false,
+            })
+            state.setWarpTravelProgress(SOURCE_GRID_PROGRESS_END * phaseProgress)
+
+            sendMoveIfDue(lastMoveSendMsRef, {
+              position: nextLocal,
+              inWarpTransit: false,
               targetSpeed: 0,
               mwdActive: false,
               mwdRemaining: 0,
@@ -240,84 +295,203 @@ export function WarpDriver() {
               actualInclination: state.ship.actualInclination,
               rollAngle: state.ship.rollAngle,
             })
-            lastMoveSendMsRef.current = nowMoveMs
-          }
-        }
 
-        if (linearProgress >= 1) {
-          const sourceCelestial = getCelestialById(session.sourceCelestialId, state.starSystem)
-          const destinationCelestial = getCelestialById(session.destinationCelestialId, state.starSystem)
-          let arrivalOffsetAtDestination: [number, number, number] = [0, 0, 0]
-          if (sourceCelestial && destinationCelestial) {
-            const sourceWorld = worldPositionForCelestial(sourceCelestial)
-            const destinationWorld = worldPositionForCelestial(destinationCelestial)
-            const fromDestinationToSource = vectorBetweenWorldPoints(destinationWorld, sourceWorld)
-            const mag = vectorMagnitude(fromDestinationToSource)
-            if (mag > 0.0001) {
-              const nx = fromDestinationToSource[0] / mag
-              const ny = fromDestinationToSource[1] / mag
-              const nz = fromDestinationToSource[2] / mag
-              arrivalOffsetAtDestination = [
-                nx * ARRIVAL_OFFSET_DISTANCE,
-                ny * ARRIVAL_OFFSET_DISTANCE,
-                nz * ARRIVAL_OFFSET_DISTANCE,
-              ]
+            if (phaseProgress >= 1) {
+              session.cruiseStartMs = nowMs
+              state.setCurrentCelestial(session.destinationCelestialId)
+              state.setShipState({
+                position: [0, 0, 0],
+                actualSpeed: session.peakSpeed,
+                targetSpeed: 0,
+                mwdActive: false,
+                mwdRemaining: 0,
+                inWarpTransit: true,
+              })
+              state.setWarpTravelProgress(SOURCE_GRID_PROGRESS_END)
+              multiplayerClient.sendWarpIntent({
+                celestialId: session.destinationCelestialId,
+                requiredBearing: state.warpRequiredBearing,
+                requiredInclination: state.warpRequiredInclination,
+                alignmentErrorDeg: state.warpAlignmentErrorDeg,
+                clientStartedAt: Date.now(),
+              })
+              multiplayerClient.sendMove({
+                position: [0, 0, 0],
+                inWarpTransit: true,
+                targetSpeed: 0,
+                mwdActive: false,
+                mwdRemaining: 0,
+                mwdCooldownRemaining: state.ship.mwdCooldownRemaining,
+                dampenersActive: state.ship.dampenersActive,
+                bearing: state.ship.bearing,
+                inclination: state.ship.inclination,
+                actualHeading: state.ship.actualHeading,
+                actualSpeed: session.peakSpeed,
+                actualInclination: state.ship.actualInclination,
+                rollAngle: state.ship.rollAngle,
+              })
             }
           }
-          landingSessionRef.current = {
-            startMs: nowMs,
-            startSpeed: Math.max(warpSpeed, session.peakSpeed * 0.18),
-            fromPosition: nextLocal,
-            arrivalOffsetAtDestination,
+        } else {
+          const cruiseProgress = Math.min(
+            1,
+            Math.max(0, (nowMs - session.cruiseStartMs) / session.cruiseDurationMs)
+          )
+          state.setShipState({
+            position: [0, 0, 0],
+            actualSpeed: session.peakSpeed,
+            targetSpeed: 0,
+            mwdActive: false,
+            mwdRemaining: 0,
+            inWarpTransit: true,
+          })
+          state.setWarpTravelProgress(
+            SOURCE_GRID_PROGRESS_END +
+              (ARRIVAL_PROGRESS_START - SOURCE_GRID_PROGRESS_END) * cruiseProgress
+          )
+
+          sendMoveIfDue(lastMoveSendMsRef, {
+            position: [0, 0, 0],
+            inWarpTransit: true,
+            targetSpeed: 0,
+            mwdActive: false,
+            mwdRemaining: 0,
+            mwdCooldownRemaining: state.ship.mwdCooldownRemaining,
+            dampenersActive: state.ship.dampenersActive,
+            bearing: state.ship.bearing,
+            inclination: state.ship.inclination,
+            actualHeading: state.ship.actualHeading,
+            actualSpeed: session.peakSpeed,
+            actualInclination: state.ship.actualInclination,
+            rollAngle: state.ship.rollAngle,
+          })
+
+          if (cruiseProgress >= 1) {
+            const arrivalSpeed = Math.max(session.peakSpeed * 0.72, session.startSpeed)
+            const arrivalVector = vectorBetweenWorldPoints(
+              session.arrivalStartOffsetAtDestination,
+              session.arrivalRestOffsetAtDestination
+            )
+            const { bearing: arrivalBearing, inclination: arrivalInclination } =
+              bearingInclinationFromVector(arrivalVector)
+            landingSessionRef.current = {
+              startMs: nowMs,
+              startSpeed: arrivalSpeed,
+              fromPosition: session.arrivalStartOffsetAtDestination,
+              restPosition: session.arrivalRestOffsetAtDestination,
+              approachBearing: arrivalBearing,
+              approachInclination: arrivalInclination,
+            }
+            state.setShipState({
+              position: session.arrivalStartOffsetAtDestination,
+              actualSpeed: arrivalSpeed,
+              targetSpeed: 0,
+              mwdActive: false,
+              mwdRemaining: 0,
+              inWarpTransit: false,
+              bearing: arrivalBearing,
+              inclination: arrivalInclination,
+              actualHeading: arrivalBearing,
+              actualInclination: arrivalInclination,
+            })
+            state.setWarpTravelProgress(ARRIVAL_PROGRESS_START)
+            state.setWarpState('landing', session.destinationCelestialId)
+            multiplayerClient.sendMove({
+              position: session.arrivalStartOffsetAtDestination,
+              inWarpTransit: false,
+              targetSpeed: 0,
+              mwdActive: false,
+              mwdRemaining: 0,
+              mwdCooldownRemaining: state.ship.mwdCooldownRemaining,
+              dampenersActive: state.ship.dampenersActive,
+              bearing: arrivalBearing,
+              inclination: arrivalInclination,
+              actualHeading: arrivalBearing,
+              actualSpeed: arrivalSpeed,
+              actualInclination: arrivalInclination,
+              rollAngle: state.ship.rollAngle,
+            })
+            warpSessionRef.current = null
           }
-          state.setWarpState('landing', session.destinationCelestialId)
-          warpSessionRef.current = null
         }
       }
     }
 
-    if (state.warpState === 'landing') {
+    const liveWarpState = useGameStore.getState().warpState
+
+    if (liveWarpState === 'landing') {
       const landing = landingSessionRef.current
       if (!landing) {
         state.finishWarp()
         state.setShipState({
-          position: [0, 0, ARRIVAL_OFFSET_DISTANCE],
+          position: [0, 0, WARP_ARRIVAL_MIN_DISTANCE_M],
+          inWarpTransit: false,
           actualSpeed: 0,
-          targetSpeed: 0,
-        })
-        state.setWarpTravelProgress(1)
-        state.setWarpReferenceSpeed(0)
-      } else {
-        const p = Math.min(1, Math.max(0, (nowMs - landing.startMs) / LANDING_DURATION_MS))
-        const eased = smooth01(p)
-        const nextLocal: [number, number, number] = [
-          landing.fromPosition[0],
-          landing.fromPosition[1],
-          landing.fromPosition[2],
-        ]
-        state.setShipState({
-          position: nextLocal,
-          actualSpeed: Math.max(0, landing.startSpeed * (1 - eased)),
           targetSpeed: 0,
           mwdActive: false,
           mwdRemaining: 0,
         })
+        state.setWarpReferenceSpeed(0)
+      } else {
+        const p = Math.min(1, Math.max(0, (nowMs - landing.startMs) / LANDING_DURATION_MS))
+        const eased = easeOutCubic(p)
+        const nextLocal: [number, number, number] = [
+          landing.fromPosition[0] + (landing.restPosition[0] - landing.fromPosition[0]) * eased,
+          landing.fromPosition[1] + (landing.restPosition[1] - landing.fromPosition[1]) * eased,
+          landing.fromPosition[2] + (landing.restPosition[2] - landing.fromPosition[2]) * eased,
+        ]
+        state.setShipState({
+          position: nextLocal,
+          inWarpTransit: false,
+          actualSpeed: Math.max(0, landing.startSpeed * (1 - eased)),
+          targetSpeed: 0,
+          mwdActive: false,
+          mwdRemaining: 0,
+          bearing: landing.approachBearing,
+          inclination: landing.approachInclination,
+          actualHeading: landing.approachBearing,
+          actualInclination: landing.approachInclination,
+        })
+        state.setWarpTravelProgress(
+          ARRIVAL_PROGRESS_START + (1 - ARRIVAL_PROGRESS_START) * p
+        )
+        sendMoveIfDue(lastMoveSendMsRef, {
+          position: nextLocal,
+          inWarpTransit: false,
+          targetSpeed: 0,
+          mwdActive: false,
+          mwdRemaining: 0,
+          mwdCooldownRemaining: state.ship.mwdCooldownRemaining,
+          dampenersActive: state.ship.dampenersActive,
+          bearing: landing.approachBearing,
+          inclination: landing.approachInclination,
+          actualHeading: landing.approachBearing,
+          actualSpeed: Math.max(0, landing.startSpeed * (1 - eased)),
+          actualInclination: landing.approachInclination,
+          rollAngle: state.ship.rollAngle,
+        })
         if (p >= 1) {
           state.finishWarp()
           state.setShipState({
-            position: landing.arrivalOffsetAtDestination,
+            position: landing.restPosition,
+            inWarpTransit: false,
             actualSpeed: 0,
             targetSpeed: 0,
+            mwdActive: false,
+            mwdRemaining: 0,
+            bearing: landing.approachBearing,
+            inclination: landing.approachInclination,
+            actualHeading: landing.approachBearing,
+            actualInclination: landing.approachInclination,
           })
-          state.setWarpTravelProgress(1)
           state.setWarpReferenceSpeed(0)
           landingSessionRef.current = null
         }
       }
-    } else {
+    } else if (liveWarpState !== 'warping') {
       landingSessionRef.current = null
     }
-  })
+  }, -2)
 
   return null
 }

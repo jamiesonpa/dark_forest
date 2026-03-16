@@ -608,12 +608,19 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   }, [centeredObj, configuredHullTexture])
 
   if (!centeredObj) return null
-  const warpBubbleActive = isLocal && (warpState === 'warping' || warpState === 'landing')
+  const warpBubblePhase =
+    isLocal
+      ? ship.inWarpTransit
+        ? 'transit'
+        : warpState === 'landing'
+          ? 'arrival'
+          : 'inactive'
+      : 'inactive'
 
   return (
     <group ref={groupRef}>
       <group name={isLocal ? getPlayerPivotAnchorName(playerId) : undefined} position={[0, 0, 0]} />
-      {isLocal && <WarpBubbleEffect ship={ship} active={warpBubbleActive} />}
+      {isLocal && <WarpBubbleEffect ship={ship} phase={warpBubblePhase} />}
       <group position={visualOriginCorrection}>
         <primitive object={centeredObj} scale={1} />
         {thrusterEmitters.map((_, index) => {
