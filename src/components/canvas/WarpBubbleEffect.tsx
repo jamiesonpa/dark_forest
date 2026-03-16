@@ -270,7 +270,10 @@ export function WarpBubbleEffect({ ship, phase }: WarpBubbleEffectProps) {
     const points: THREE.Vector2[] = []
     for (let i = 0; i <= samples; i += 1) {
       const t = i / samples
-      const radius = MAX_RADIUS * SHELL_RADIUS_MULTIPLIER * Math.sqrt(t)
+      // Mirror the same parabolic arc around the midpoint so the bubble closes
+      // cleanly at both the nose and tail (radius = 0 at t=0 and t=1).
+      const mirroredParabolaT = t <= 0.5 ? t * 2 : (1 - t) * 2
+      const radius = MAX_RADIUS * SHELL_RADIUS_MULTIPLIER * Math.sqrt(mirroredParabolaT)
       const axis = APEX_Z - t * BUBBLE_LENGTH
       points.push(new THREE.Vector2(radius, axis))
     }
