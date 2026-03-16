@@ -687,8 +687,9 @@ export function SimulationLoop() {
         : clamp(effectiveTargetSpeed / MAX_SELECTED_SPEED, 0, 1)
       const selectedSpeedRatio = hasCapacitorForThrust ? requestedThrustRatio : 0
       const capacitorDrainPerSecondAtMaxSpeed = ship.capacitorMax / CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC
+      const gravScannerRechargeBonus = state.ewGravScannerOn ? 1 : 1.1
       const capacitorRechargePerSecond =
-        capacitorDrainPerSecondAtMaxSpeed * CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN
+        capacitorDrainPerSecondAtMaxSpeed * CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN * gravScannerRechargeBonus
       const capacitorDrain = capacitorDrainPerSecondAtMaxSpeed * selectedSpeedRatio
       const dampenersDrainPerSecond = ship.dampenersActive
         ? capacitorDrainPerSecondAtMaxSpeed * CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN

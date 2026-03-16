@@ -12,6 +12,14 @@ const SHIP_CENTER_PIVOT: [number, number, number] = [0, 0, 0]
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 const WARP_MIN_POST_CAPACITOR = 1
 
+function mergeKnownCelestialId(existingIds: string[], celestialId: string, starSystem = DEFAULT_STAR_SYSTEM_SNAPSHOT.system) {
+  const celestial = getCelestialById(celestialId, starSystem)
+  if (!celestial || celestial.type === 'star' || existingIds.includes(celestialId)) {
+    return existingIds
+  }
+  return [...existingIds, celestialId]
+}
+
 function sanitizePivot(position: [number, number, number]): [number, number, number] {
   const [x, y, z] = position
   return [
@@ -76,12 +84,21 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
         starSystemSeed: snapshot.seed,
         starSystemConfig: snapshot.config,
         currentCelestialId: currentExists ? s.currentCelestialId : fallbackCelestialId,
+        ewRevealedCelestialIds: mergeKnownCelestialId(
+          s.ewRevealedCelestialIds,
+          currentExists ? s.currentCelestialId : fallbackCelestialId,
+          snapshot.system
+        ),
         selectedWarpDestinationId: selectedExists ? s.selectedWarpDestinationId : fallbackDestinationId,
         warpSourceCelestialId: sourceExists ? s.warpSourceCelestialId : null,
         warpTargetId: targetExists ? s.warpTargetId : null,
       }
     }),
-  setCurrentCelestial: (id) => set({ currentCelestialId: id }),
+  setCurrentCelestial: (id) =>
+    set((s) => ({
+      currentCelestialId: id,
+      ewRevealedCelestialIds: mergeKnownCelestialId(s.ewRevealedCelestialIds, id, s.starSystem),
+    })),
   setDebugPivotEnabled: (enabled) => set({ debugPivotEnabled: enabled }),
   setOrientDebugEnabled: (enabled) => set({ orientDebugEnabled: enabled }),
   setShowIRSTCone: (enabled) => set({ showIRSTCone: enabled }),
@@ -194,13 +211,17 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       }
     }),
   finishWarp: () =>
-    set((s) => ({
-      selectedWarpDestinationId: s.warpSourceCelestialId ?? s.selectedWarpDestinationId,
-      currentCelestialId: s.warpTargetId ?? s.currentCelestialId,
-      warpState: 'idle',
-      warpSourceCelestialId: null,
-      warpTravelProgress: 0,
-      warpReferenceSpeed: 0,
-      warpTargetId: null,
-    })),
+    set((s) => {
+      const nextCurrentCelestialId = s.warpTargetId ?? s.currentCelestialId
+      return {
+        selectedWarpDestinationId: s.warpSourceCelestialId ?? s.selectedWarpDestinationId,
+        currentCelestialId: nextCurrentCelestialId,
+        ewRevealedCelestialIds: mergeKnownCelestialId(s.ewRevealedCelestialIds, nextCurrentCelestialId, s.starSystem),
+        warpState: 'idle',
+        warpSourceCelestialId: null,
+        warpTravelProgress: 0,
+        warpReferenceSpeed: 0,
+        warpTargetId: null,
+      }
+    }),
 })

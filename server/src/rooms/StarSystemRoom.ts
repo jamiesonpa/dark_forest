@@ -11,6 +11,22 @@ const SPAWN_RING_RADIUS = 1200
 const SPAWN_VERTICAL_JITTER = 150
 const { Room } = colyseus
 
+function parseEnvInt(value: string | undefined, fallback: number, min: number, max: number) {
+  const parsed = Number.parseInt(value ?? '', 10)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(min, Math.min(max, parsed))
+}
+
+function getStartupStarSystemConfig(): StarSystemGenerationConfig {
+  return {
+    ...DEFAULT_STAR_SYSTEM_CONFIG,
+    seed: parseEnvInt(process.env.DF_STAR_SYSTEM_SEED, DEFAULT_STAR_SYSTEM_CONFIG.seed, 0, 9999),
+    planetCount: parseEnvInt(process.env.DF_STAR_SYSTEM_PLANETS, DEFAULT_STAR_SYSTEM_CONFIG.planetCount, 0, 3),
+    moonCount: parseEnvInt(process.env.DF_STAR_SYSTEM_MOONS, DEFAULT_STAR_SYSTEM_CONFIG.moonCount, 0, 3),
+    asteroidBeltCount: parseEnvInt(process.env.DF_STAR_SYSTEM_BELTS, DEFAULT_STAR_SYSTEM_CONFIG.asteroidBeltCount, 0, 3),
+  }
+}
+
 type ShipSnapshot = {
   id: string
   name: string
@@ -41,7 +57,7 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
   maxClients = 20
   private moveDebugLastLogMs = new Map<string, number>()
   private moveDebugLastPos = new Map<string, { x: number; y: number; z: number }>()
-  private starSystemSnapshot: StarSystemSnapshot = generateStarSystemSnapshot(DEFAULT_STAR_SYSTEM_CONFIG)
+  private starSystemSnapshot: StarSystemSnapshot = generateStarSystemSnapshot(getStartupStarSystemConfig())
   private spawnAnchorIds: [string, string] | null = null
 
   private computeSpawnAnchorIds() {
@@ -142,7 +158,7 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
   onCreate(options: Record<string, unknown>) {
     this.setState(new StarSystemRoomState())
     const initialConfig = (options.starSystemConfig as Partial<StarSystemGenerationConfig> | undefined)
-      ?? DEFAULT_STAR_SYSTEM_CONFIG
+      ?? getStartupStarSystemConfig()
     this.setStarSystemFromConfig(initialConfig)
     console.log(`[room:${this.roomId}] created`)
     // Room state is now synced to all clients

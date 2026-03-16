@@ -165,7 +165,7 @@ export function SunSystem() {
   const refreshOccluders = () => {
     const next: THREE.Object3D[] = []
     scene.traverse((obj) => {
-      if (!obj.visible || obj.userData?.sunVisual) return
+      if (!obj.visible || obj.userData?.sunVisual || obj.userData?.ignoreSunOcclusion) return
       if ((obj as THREE.Mesh).isMesh || (obj as THREE.InstancedMesh).isInstancedMesh) {
         next.push(obj)
       }

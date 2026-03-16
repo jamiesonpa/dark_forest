@@ -67,10 +67,12 @@ export const createShipSlice: StateCreator<GameStore, [], [], Partial<GameStore>
       const nextShips = { ...s.shipsById }
       const previousLocalId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
 
-      // When switching from offline placeholder to a real network session,
-      // remove the placeholder ship to avoid duplicate local ships.
+      // Remove the previous local identity when the client switches between
+      // offline and network-controlled ships so it cannot linger as a remote render.
       if (previousLocalId === OFFLINE_LOCAL_PLAYER_ID && id !== OFFLINE_LOCAL_PLAYER_ID) {
         delete nextShips[OFFLINE_LOCAL_PLAYER_ID]
+      } else if (previousLocalId !== OFFLINE_LOCAL_PLAYER_ID && id === OFFLINE_LOCAL_PLAYER_ID) {
+        delete nextShips[previousLocalId]
       }
 
       if (!nextShips[id]) {

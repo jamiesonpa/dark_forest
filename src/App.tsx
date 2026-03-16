@@ -5,6 +5,9 @@ import { StationSelector, type StationId } from '@/ui/stations/StationSelector'
 import { SimulationLoop } from '@/systems/simulation/SimulationLoop'
 import { multiplayerClient, type MultiplayerStatus } from '@/network/colyseusClient'
 import { useGameStore } from '@/state/gameStore'
+import { DebugSettingsWindow } from '@/components/hud/DebugSettingsWindow'
+
+const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 
 function toWsUrl(input: string) {
   const trimmed = input.trim()
@@ -22,6 +25,7 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [serverWindowOpen, setServerWindowOpen] = useState(false)
   const [starSystemWindowOpen, setStarSystemWindowOpen] = useState(false)
+  const [debugWindowOpen, setDebugWindowOpen] = useState(false)
   const setLocalPlayerId = useGameStore((s) => s.setLocalPlayerId)
   const upsertRemoteShips = useGameStore((s) => s.upsertRemoteShips)
   const setCurrentCelestial = useGameStore((s) => s.setCurrentCelestial)
@@ -38,6 +42,14 @@ export default function App() {
   const [cfgMinAu, setCfgMinAu] = useState(starSystemConfig.minOrbitAu)
   const [cfgMaxAu, setCfgMaxAu] = useState(starSystemConfig.maxOrbitAu)
   const [cfgSepAu, setCfgSepAu] = useState(starSystemConfig.minSeparationAu)
+
+  const stationLayerStyle = (stationId: StationId) => ({
+    position: 'absolute' as const,
+    inset: 0,
+    visibility: station === stationId ? 'visible' as const : 'hidden' as const,
+    pointerEvents: station === stationId ? 'auto' as const : 'none' as const,
+    zIndex: station === stationId ? 1 : 0,
+  })
 
   const handleKey = useCallback((e: KeyboardEvent) => {
     const isEditableElement = (target: EventTarget | null) => {
@@ -100,6 +112,10 @@ export default function App() {
       onStatusChange: (nextStatus, detail) => {
         setStatus(nextStatus)
         setStatusDetail(detail ?? '')
+        if (nextStatus !== 'connected') {
+          setLocalPlayerId(OFFLINE_LOCAL_PLAYER_ID)
+          upsertRemoteShips({})
+        }
       },
       onJoined: (sessionId) => {
         setLocalPlayerId(sessionId)
@@ -128,8 +144,12 @@ export default function App() {
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
       <SimulationLoop />
-      {station === 'pilot' && <PilotStation />}
-      {station === 'ew' && <EWConsole />}
+      <div style={stationLayerStyle('pilot')}>
+        <PilotStation />
+      </div>
+      <div style={stationLayerStyle('ew')}>
+        <EWConsole />
+      </div>
       <StationSelector current={station} onSwitch={setStation} />
       <button
         onClick={() => setMenuOpen((open) => !open)}
@@ -209,6 +229,26 @@ export default function App() {
         >
           <span>✦</span>
           <span>Star System Config</span>
+        </button>
+        <button
+          onClick={() => setDebugWindowOpen(true)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            width: '100%',
+            padding: '8px 10px',
+            borderRadius: 6,
+            border: '1px solid rgba(160, 170, 200, 0.45)',
+            background: 'rgba(10, 10, 12, 0.85)',
+            color: '#d6dbf5',
+            cursor: 'pointer',
+            fontFamily: 'system-ui, sans-serif',
+            fontSize: 12,
+          }}
+        >
+          <span>🧪</span>
+          <span>Debug Settings</span>
         </button>
         <span style={{ color: '#d6dbf5', fontFamily: 'system-ui, sans-serif', fontSize: 12 }}>
           Status: {status}
@@ -375,6 +415,53 @@ export default function App() {
               Regenerate
             </button>
           </div>
+        </div>
+      )}
+      {debugWindowOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 90,
+            left: 860,
+            zIndex: 10000,
+            width: 340,
+            maxHeight: '80vh',
+            overflowY: 'auto',
+            borderRadius: 10,
+            background: 'rgba(8, 10, 16, 0.95)',
+            border: '1px solid rgba(160, 170, 200, 0.5)',
+            color: '#d6dbf5',
+            fontFamily: 'system-ui, sans-serif',
+            fontSize: 12,
+            boxShadow: '0 10px 24px rgba(0,0,0,0.45)',
+            padding: 12,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 10,
+            }}
+          >
+            <strong>Debug Settings</strong>
+            <button
+              onClick={() => setDebugWindowOpen(false)}
+              style={{
+                borderRadius: 4,
+                border: '1px solid rgba(200, 210, 255, 0.35)',
+                background: 'rgba(20, 20, 24, 0.9)',
+                color: '#f3f4ff',
+                cursor: 'pointer',
+                width: 24,
+                height: 24,
+              }}
+            >
+              x
+            </button>
+          </div>
+          <DebugSettingsWindow />
         </div>
       )}
     </div>

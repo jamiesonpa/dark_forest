@@ -57,6 +57,9 @@ export function WarpDriver() {
     const state = useGameStore.getState()
     const currentCelestial = getCelestialById(state.currentCelestialId, state.starSystem)
     const selectedDestinationId = state.selectedWarpDestinationId
+    const revealedDestinationIds = new Set(
+      state.ewRevealedCelestialIds.filter((id) => id !== state.currentCelestialId)
+    )
     const selectedDestination = selectedDestinationId
       ? getCelestialById(selectedDestinationId, state.starSystem)
       : undefined
@@ -64,7 +67,7 @@ export function WarpDriver() {
     if (currentCelestial) {
       const currentCelestialWorldPosition = worldPositionForCelestial(currentCelestial)
       const candidateAlignments = state.starSystem.celestials
-        .filter((c) => c.id !== currentCelestial.id && c.type !== 'star')
+        .filter((c) => revealedDestinationIds.has(c.id) && c.id !== currentCelestial.id && c.type !== 'star')
         .map((destinationCelestial) => {
           const destinationWorldPosition = worldPositionForCelestial(destinationCelestial)
           const vectorToDestination = vectorBetweenWorldPoints(

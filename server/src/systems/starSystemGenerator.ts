@@ -36,6 +36,8 @@ const RADIUS_BY_TYPE: Record<Exclude<CelestialType, 'star'>, number> = {
   asteroid_belt: 220,
 }
 
+const MAX_SHARED_ORBIT_PLANE_TILT_DEG = 10
+
 function clampInt(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Math.round(value)))
 }
@@ -128,6 +130,24 @@ function sampleSeparatedOrbits(
   return sorted
 }
 
+function projectOrbitPointToSharedPlane(
+  orbitUnits: number,
+  azimuth: number,
+  ascendingNode: number,
+  inclinationRad: number
+): [number, number, number] {
+  const cosAz = Math.cos(azimuth)
+  const sinAz = Math.sin(azimuth)
+  const cosNode = Math.cos(ascendingNode)
+  const sinNode = Math.sin(ascendingNode)
+  const cosIncl = Math.cos(inclinationRad)
+  const sinIncl = Math.sin(inclinationRad)
+  const x = orbitUnits * (cosNode * cosAz - sinNode * sinAz * cosIncl)
+  const y = orbitUnits * (sinAz * sinIncl)
+  const z = orbitUnits * (sinNode * cosAz + cosNode * sinAz * cosIncl)
+  return [x, y, z]
+}
+
 export function generateStarSystemSnapshot(
   partialConfig: Partial<StarSystemGenerationConfig> | undefined
 ): StarSystemSnapshot {
@@ -142,6 +162,9 @@ export function generateStarSystemSnapshot(
 
   const minOrbit = Math.min(normalized.minOrbitAu, normalized.maxOrbitAu)
   const maxOrbit = Math.max(normalized.minOrbitAu, normalized.maxOrbitAu)
+  const ascendingNode = randomRange(rand, 0, Math.PI * 2)
+  const maxTiltRad = (MAX_SHARED_ORBIT_PLANE_TILT_DEG * Math.PI) / 180
+  const sharedInclinationRad = randomRange(rand, -maxTiltRad, maxTiltRad)
   const orbitsAu = sampleSeparatedOrbits(
     warpableTypes.length,
     minOrbit,
@@ -170,12 +193,13 @@ export function generateStarSystemSnapshot(
     counters[type] += 1
     const orbitAu = orbitsAu[index] ?? (minOrbit + maxOrbit) / 2
     const azimuth = randomRange(rand, 0, Math.PI * 2)
-    const elevation = randomRange(rand, -0.18, 0.18)
     const orbitUnits = orbitAu * WORLD_UNITS_PER_AU
-    const horizontal = orbitUnits * Math.cos(elevation)
-    const x = Math.cos(azimuth) * horizontal
-    const y = Math.sin(elevation) * orbitUnits
-    const z = Math.sin(azimuth) * horizontal
+    const [x, y, z] = projectOrbitPointToSharedPlane(
+      orbitUnits,
+      azimuth,
+      ascendingNode,
+      sharedInclinationRad
+    )
     const typePrefix = type === 'asteroid_belt' ? 'belt' : type
     const id = `${typePrefix}-${counters[type]}`
     celestials.push({

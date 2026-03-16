@@ -57,6 +57,21 @@ export interface EwJammerState {
   freq: number
 }
 
+export interface EwGravAnalysisSession {
+  celestialId: string
+  anomalyId: string
+  startedAt: number
+  durationMs: number
+  clarity: number
+}
+
+export interface EwGravAnalysisResult {
+  celestialId: string
+  completedAt: number
+  durationMs: number
+  clarity: number
+}
+
 export type NavAttitudeMode = 'AA' | 'DAC'
 
 export interface GameStore {
@@ -95,8 +110,17 @@ export interface GameStore {
   ewRadarPower: number
   ewRadarFreq: number
   ewRadarPRF: string
+  ewGravScannerOn: boolean
   ewJammers: EwJammerState[]
+  ewActiveGravAnalysis: EwGravAnalysisSession | null
+  ewLastGravAnalysisResult: EwGravAnalysisResult | null
+  ewRevealedCelestialIds: string[]
   setEwJammers: (jammers: EwJammerState[]) => void
+  setEwGravScannerOn: (on: boolean) => void
+  startEwGravAnalysis: (session: EwGravAnalysisSession) => void
+  completeEwGravAnalysis: () => void
+  cancelEwGravAnalysis: () => void
+  revealEwCelestial: (celestialId: string) => void
   setEwLockState: (updater: (prev: Record<string, 'soft' | 'hard'>) => Record<string, 'soft' | 'hard'>) => void
   setEwIffState: (updater: (prev: Record<string, string>) => Record<string, string>) => void
   setEwRadar: (partial: Partial<{ radarOn: boolean; radarMode: string; radarPower: number; radarFreq: number; radarPRF: string }>) => void

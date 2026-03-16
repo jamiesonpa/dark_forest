@@ -26,6 +26,9 @@ const CAPACITOR_RING_INWARD_SHIFT = 1
 const CAPACITOR_START_DEG = -90
 const MWD_CAPACITOR_ACTIVATION_FRACTION = 0.2
 const WARP_MIN_POST_CAPACITOR = 1
+const STATUS_SPEED_EPSILON_MPS = 0.5
+const STATUS_SPEED_TRACK_EPSILON_MPS = 1
+const STATUS_ANGLE_EPSILON_DEG = 0.5
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value))
@@ -33,6 +36,10 @@ function clamp01(value: number) {
 
 function formatHudValue(value: number) {
   return Math.round(value).toLocaleString()
+}
+
+function shortestAngleDeltaDeg(fromDeg: number, toDeg: number) {
+  return ((toDeg - fromDeg + 540) % 360) - 180
 }
 
 function getArcMetrics(radius: number, sweepDeg: number, pct: number) {
@@ -71,10 +78,14 @@ export function ShipStatusPrototype() {
   const setDampenersActive = useGameStore((s) => s.setDampenersActive)
   const startWarp = useGameStore((s) => s.startWarp)
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
+  const navAttitudeMode = useGameStore((s) => s.navAttitudeMode)
   const starSystem = useGameStore((s) => s.starSystem)
   const selectedWarpDestinationId = useGameStore((s) => s.selectedWarpDestinationId)
   const warpAligned = useGameStore((s) => s.warpAligned)
+  const warpRequiredBearing = useGameStore((s) => s.warpRequiredBearing)
+  const warpRequiredInclination = useGameStore((s) => s.warpRequiredInclination)
   const warpState = useGameStore((s) => s.warpState)
+  const warpTargetId = useGameStore((s) => s.warpTargetId)
   const warpTravelProgress = useGameStore((s) => s.warpTravelProgress)
   const [hoverPct, setHoverPct] = useState<number | null>(null)
 
@@ -144,6 +155,53 @@ export function ShipStatusPrototype() {
     return ship.capacitor - requiredCapacitor >= WARP_MIN_POST_CAPACITOR
   }, [currentCelestialId, selectedWarpDestinationId, ship.capacitor, ship.capacitorMax, starSystem])
   const canWarp = !warpBusy && Boolean(selectedWarpDestinationId) && warpAligned && hasWarpCapacitor
+  const selectedWarpDestination = useMemo(
+    () => (selectedWarpDestinationId ? getCelestialById(selectedWarpDestinationId, starSystem) : null),
+    [selectedWarpDestinationId, starSystem]
+  )
+  const activeWarpTarget = useMemo(
+    () => (warpTargetId ? getCelestialById(warpTargetId, starSystem) : null),
+    [starSystem, warpTargetId]
+  )
+  const autoAlignBearingDelta = Math.abs(shortestAngleDeltaDeg(ship.bearing, warpRequiredBearing))
+  const autoAlignInclinationDelta = Math.abs(ship.inclination - warpRequiredInclination)
+  const autoAligningToSelectedWarpTarget =
+    selectedWarpDestination &&
+    navAttitudeMode === 'AA' &&
+    ship.dampenersActive &&
+    !warpAligned &&
+    warpState === 'idle' &&
+    autoAlignBearingDelta <= 0.5 &&
+    autoAlignInclinationDelta <= 0.5
+  const attitudeCorrectionBearingDelta = Math.abs(shortestAngleDeltaDeg(ship.actualHeading, ship.bearing))
+  const attitudeCorrectionInclinationDelta = Math.abs(ship.actualInclination - ship.inclination)
+  const attitudeManeuvering =
+    ship.dampenersActive &&
+    (attitudeCorrectionBearingDelta > STATUS_ANGLE_EPSILON_DEG ||
+      attitudeCorrectionInclinationDelta > STATUS_ANGLE_EPSILON_DEG)
+  const thrustManeuvering =
+    ship.mwdActive ||
+    Math.abs(actualSpeedMps - setSpeedMps) > STATUS_SPEED_TRACK_EPSILON_MPS ||
+    (!ship.dampenersActive && setSpeedMps > STATUS_SPEED_EPSILON_MPS)
+  const activelyManeuvering = thrustManeuvering || attitudeManeuvering
+  const shipStatusTitle = (() => {
+    if ((warpState === 'warping' || warpState === 'landing') && activeWarpTarget) {
+      return `SHIP STATUS: WARPING TO ${activeWarpTarget.name.toUpperCase()}`
+    }
+    if (warpState === 'idle' && warpAligned && selectedWarpDestination) {
+      return `SHIP STATUS: ALIGNED TO ${selectedWarpDestination.name.toUpperCase()}`
+    }
+    if (autoAligningToSelectedWarpTarget) {
+      return `SHIP STATUS: ALIGNING TO ${selectedWarpDestination.name.toUpperCase()}`
+    }
+    if (activelyManeuvering) {
+      return 'SHIP STATUS: MANEUVERING'
+    }
+    if (actualSpeedMps <= STATUS_SPEED_EPSILON_MPS) {
+      return 'SHIP STATUS: STATIC'
+    }
+    return 'SHIP STATUS: NOMINAL'
+  })()
 
   const pctFromPointer = (clientX: number, clientY: number, bounds: DOMRect) => {
     const localX = ((clientX - bounds.left) / bounds.width) * GAUGE_VIEWBOX_SIZE
@@ -187,7 +245,7 @@ export function ShipStatusPrototype() {
 
   return (
     <div className="hud-panel ship-status-panel ship-status-v2-panel">
-      <div className="hud-panel-title">Ship Status</div>
+      <div className="hud-panel-title">{shipStatusTitle}</div>
       <div className="ship-status-v2-body">
         <div
           className="speed-arc-wrap"

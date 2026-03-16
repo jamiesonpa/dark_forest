@@ -1286,6 +1286,25 @@ body {
   box-shadow: 0 0 10px rgba(117, 215, 255, 0.75);
 }
 
+.warp-marker-screen-ring {
+  display: block;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 1px dashed rgba(117, 215, 255, 0.98);
+  box-shadow: 0 0 8px rgba(117, 215, 255, 0.72);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.warp-marker-screen-ring.is-visible {
+  opacity: 1;
+}
+
 .warp-marker-screen-button:hover .warp-marker-screen-dot {
   background: rgba(117, 215, 255, 0.8);
 }

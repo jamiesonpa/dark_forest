@@ -308,9 +308,15 @@ export function DacFlightHud() {
       </div>
 
       <div className="dac-flight-hud-depth">
-        <div className="dac-flight-hud-depth-value">{formatSigned(depthFromSystemPlane)}</div>
-        <div className="dac-flight-hud-depth-metric">m</div>
-        <div className="dac-flight-hud-depth-unit">DEPTH</div>
+        {warpTransitActive ? (
+          <div className="dac-flight-hud-depth-value">WARP</div>
+        ) : (
+          <>
+            <div className="dac-flight-hud-depth-value">{formatSigned(depthFromSystemPlane)}</div>
+            <div className="dac-flight-hud-depth-metric">m</div>
+            <div className="dac-flight-hud-depth-unit">DEPTH</div>
+          </>
+        )}
       </div>
     </div>
   )

@@ -8,6 +8,10 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $serverDir = Join-Path $root "server"
 $serverLogPath = Join-Path $root ".server-dev.log"
 $serverErrLogPath = Join-Path $root ".server-dev.err.log"
+$randomSeed = Get-Random -Minimum 0 -Maximum 10000
+$randomPlanetCount = Get-Random -Minimum 0 -Maximum 4
+$randomMoonCount = Get-Random -Minimum 0 -Maximum 4
+$randomBeltCount = Get-Random -Minimum 0 -Maximum 4
 
 function Stop-ByPort([int[]]$ports) {
   $procIds = @()
@@ -85,11 +89,13 @@ if (-not (Wait-PortFree -ports @(2567, 5173, 5174, 5175))) {
   Write-Host "Warning: one or more dev ports are still in use. Server may fail to start."
 }
 
+Write-Host ("Randomized star system config: seed={0} planets={1} moons={2} belts={3}" -f $randomSeed, $randomPlanetCount, $randomMoonCount, $randomBeltCount)
+
 if (-not $NoServer) {
   Write-Host "Starting server in background (no pop-out)..."
   Set-Content -Path $serverLogPath -Value "" -Encoding Unicode
   Set-Content -Path $serverErrLogPath -Value "" -Encoding Unicode
-  $serverCommand = "/c cd /d ""$serverDir"" && .\node_modules\.bin\tsx.cmd src/index.ts"
+  $serverCommand = "/c cd /d ""$serverDir"" && set DF_STAR_SYSTEM_SEED=$randomSeed && set DF_STAR_SYSTEM_PLANETS=$randomPlanetCount && set DF_STAR_SYSTEM_MOONS=$randomMoonCount && set DF_STAR_SYSTEM_BELTS=$randomBeltCount && .\node_modules\.bin\tsx.cmd src/index.ts"
   $serverProc = Start-Process `
     -FilePath "cmd.exe" `
     -ArgumentList $serverCommand `

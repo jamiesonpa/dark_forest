@@ -76,4 +76,42 @@ describe('starSystemGenerator', () => {
     }
     expect(pairDistSq).toBe(maxDistSq)
   })
+
+  it('keeps warpables on a shared orbital plane within 10 degree tilt', () => {
+    const generated = generateStarSystemSnapshot({
+      ...DEFAULT_STAR_SYSTEM_CONFIG,
+      seed: 501,
+      planetCount: 6,
+      moonCount: 4,
+      asteroidBeltCount: 2,
+    })
+    const warpables = getWarpableCelestials(generated.system)
+    expect(warpables.length).toBeGreaterThanOrEqual(2)
+
+    const a = warpables[0].position
+    const b = warpables[1].position
+    const normal = [
+      a[1] * b[2] - a[2] * b[1],
+      a[2] * b[0] - a[0] * b[2],
+      a[0] * b[1] - a[1] * b[0],
+    ] as const
+    const normalLen = Math.hypot(normal[0], normal[1], normal[2])
+    expect(normalLen).toBeGreaterThan(0)
+    if (normalLen <= 0) return
+
+    const unitNormal = [normal[0] / normalLen, normal[1] / normalLen, normal[2] / normalLen] as const
+    for (const warpable of warpables) {
+      const p = warpable.position
+      const pLen = Math.hypot(p[0], p[1], p[2])
+      expect(pLen).toBeGreaterThan(0)
+      if (pLen <= 0) continue
+      const signedPlaneDistance = (unitNormal[0] * p[0] + unitNormal[1] * p[1] + unitNormal[2] * p[2]) / pLen
+      // Integer rounding during generation introduces a tiny plane error tolerance.
+      expect(Math.abs(signedPlaneDistance)).toBeLessThan(0.01)
+    }
+
+    const planeTiltRad = Math.acos(Math.abs(unitNormal[1]))
+    const planeTiltDeg = (planeTiltRad * 180) / Math.PI
+    expect(planeTiltDeg).toBeLessThanOrEqual(10.1)
+  })
 })

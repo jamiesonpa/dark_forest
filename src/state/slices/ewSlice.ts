@@ -10,6 +10,10 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
   ewRadarPower: 50,
   ewRadarFreq: 0.5,
   ewRadarPRF: 'MED',
+  ewGravScannerOn: true,
+  ewActiveGravAnalysis: null,
+  ewLastGravAnalysisResult: null,
+  ewRevealedCelestialIds: [],
   ewJammers: [
     { mode: null, active: false, freq: 0.2 },
     { mode: null, active: false, freq: 0.4 },
@@ -17,6 +21,39 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
     { mode: null, active: false, freq: 0.8 },
   ],
   setEwJammers: (jammers) => set({ ewJammers: jammers }),
+  setEwGravScannerOn: (on) => set({ ewGravScannerOn: on }),
+  startEwGravAnalysis: (session) =>
+    set({
+      ewActiveGravAnalysis: session,
+      ewLastGravAnalysisResult: null,
+    }),
+  completeEwGravAnalysis: () =>
+    set((s) => {
+      const session = s.ewActiveGravAnalysis
+      if (!session) {
+        return {}
+      }
+
+      return {
+        ewActiveGravAnalysis: null,
+        ewLastGravAnalysisResult: {
+          celestialId: session.celestialId,
+          completedAt: Date.now(),
+          durationMs: session.durationMs,
+          clarity: session.clarity,
+        },
+        ewRevealedCelestialIds: s.ewRevealedCelestialIds.includes(session.celestialId)
+          ? s.ewRevealedCelestialIds
+          : [...s.ewRevealedCelestialIds, session.celestialId],
+      }
+    }),
+  cancelEwGravAnalysis: () => set({ ewActiveGravAnalysis: null }),
+  revealEwCelestial: (celestialId) =>
+    set((s) => ({
+      ewRevealedCelestialIds: s.ewRevealedCelestialIds.includes(celestialId)
+        ? s.ewRevealedCelestialIds
+        : [...s.ewRevealedCelestialIds, celestialId],
+    })),
   setEwLockState: (updater) =>
     set((s) => ({ ewLockState: updater(s.ewLockState) })),
   setEwIffState: (updater) =>

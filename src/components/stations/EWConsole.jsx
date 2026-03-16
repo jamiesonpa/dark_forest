@@ -1,5 +1,14 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useGameStore } from "@/state/gameStore";
+import { getCelestialById } from "@/utils/systemData";
+import { EWSystemMap } from "@/components/stations/EWSystemMap";
+import {
+  WORLD_UNITS_PER_AU,
+  bearingInclinationFromVector,
+  vectorBetweenWorldPoints,
+  vectorMagnitude,
+  worldPositionForCelestial,
+} from "@/systems/warp/navigationMath";
 
 const AMBER = "#ffb000";
 const AMBER_DIM = "#7a5500";
@@ -11,6 +20,59 @@ const GRID_COLOR = "rgba(255,176,0,0.07)";
 const GRID_COLOR_BRIGHT = "rgba(255,176,0,0.15)";
 const RED_ALERT = "#ff3333";
 const GREEN_DIM = "#00ff6644";
+const GRAV_ANOMALY_BASE_MAX_RANGE_AU = 300;
+const GRAV_CONTROL_COLUMN_WIDTH = 42;
+const GRAV_CONTROL_RACK_WIDTH = GRAV_CONTROL_COLUMN_WIDTH * 2;
+const GRAV_ANALYSIS_MIN_MS = 2000;
+const GRAV_ANALYSIS_MAX_MS = 30000;
+const GRAV_RESULT_BANNER_MS = 1200;
+
+function gravMassForCelestialType(type) {
+  if (type === "planet") return 1.25;
+  if (type === "moon") return 0.8;
+  if (type === "asteroid_belt") return 0.55;
+  return 0.3;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function highPassFade(value, fullAt, goneAt) {
+  if (value >= fullAt) return 1;
+  if (value <= goneAt) return 0;
+  return (value - goneAt) / (fullAt - goneAt);
+}
+
+function gravHighPassAttenuation(type, highPassPct = 100) {
+  const hp = clamp(highPassPct, 0, 100);
+  if (type === "planet") return highPassFade(hp, 100, 70);
+  if (type === "moon") return highPassFade(hp, 70, 40);
+  if (type === "asteroid_belt") return highPassFade(hp, 60, 30);
+  return 1;
+}
+
+function gravNoiseFloorScale(highPassPct = 100) {
+  const hpNorm = clamp(highPassPct, 0, 100) / 100;
+  return 0.18 + Math.pow(hpNorm, 1.35) * 0.82;
+}
+
+function gravRelativeIntensityBoost(type, highPassPct = 100) {
+  const planetSuppression = 1 - gravHighPassAttenuation("planet", highPassPct);
+  const moonSuppression = 1 - gravHighPassAttenuation("moon", highPassPct);
+
+  if (type === "planet") return 1;
+  if (type === "moon") return 1 + planetSuppression * 0.85;
+  if (type === "asteroid_belt") return 1 + planetSuppression * 0.75 + moonSuppression * 0.95;
+  return 1;
+}
+
+function deriveGravAnalysisDurationMs(clarity) {
+  const normalizedClarity = clamp(clarity, 0, 1);
+  return Math.round(
+    GRAV_ANALYSIS_MAX_MS - normalizedClarity * (GRAV_ANALYSIS_MAX_MS - GRAV_ANALYSIS_MIN_MS)
+  );
+}
 
 function rcsFromType(type) {
   if (type === "battleship") return 22;
@@ -129,6 +191,41 @@ function buildContactsFromGame(enemy) {
   return contacts;
 }
 
+function buildGravAnomaliesFromEnvironment(starSystem, currentCelestialId, gain = 1) {
+  if (!starSystem?.celestials?.length) return [];
+  const currentCelestial = getCelestialById(currentCelestialId, starSystem);
+  if (!currentCelestial) return [];
+  const currentCelestialWorld = worldPositionForCelestial(currentCelestial);
+  const effectiveGain = Math.max(0.5, gain);
+  const maxRangeAu = GRAV_ANOMALY_BASE_MAX_RANGE_AU * effectiveGain;
+  const maxRangeWorld = maxRangeAu * WORLD_UNITS_PER_AU;
+  return starSystem.celestials
+    .filter((c) => c.type !== "star" && c.id !== currentCelestialId)
+    .map((c) => {
+      const targetWorld = worldPositionForCelestial(c);
+      // Match the warp-pip/navigation frame: current celestial center -> destination.
+      const toTarget = vectorBetweenWorldPoints(currentCelestialWorld, targetWorld);
+      const rangeWorld = vectorMagnitude(toTarget);
+      if (rangeWorld <= 0 || rangeWorld > maxRangeWorld) return null;
+      const { bearing } = bearingInclinationFromVector(toTarget);
+      return {
+        id: `G-${c.id}`,
+        celestialId: c.id,
+        celestialName: c.name,
+        bearing,
+        range: rangeWorld,
+        speed: 0,
+        type: c.type,
+        gravProfile: "celestial",
+        gravMass: gravMassForCelestialType(c.type),
+        active: true,
+        emStrength: 0,
+        thermal: 0,
+      };
+    })
+    .filter((entry) => entry !== null);
+}
+
 // Noise generator
 const noise = (x, t) => {
   const s = Math.sin(x * 12.9898 + t * 78.233) * 43758.5453;
@@ -136,7 +233,7 @@ const noise = (x, t) => {
 };
 
 // Panel frame component
-const Panel = ({ title, children, style, className = "" }) => (
+const Panel = ({ title, children, style, className = "", headerRight = null, dimmed = false }) => (
   <div style={{
     background: BG_PANEL,
     border: `1px solid ${AMBER_DIM}`,
@@ -151,7 +248,7 @@ const Panel = ({ title, children, style, className = "" }) => (
       borderBottom: `1px solid ${AMBER_DIM}`,
       padding: "4px 10px",
       fontSize: 10,
-      fontFamily: "'Share Tech Mono', monospace",
+      fontFamily: "'Consolas', 'Monaco', monospace",
       color: AMBER,
       letterSpacing: 3,
       textTransform: "uppercase",
@@ -160,9 +257,17 @@ const Panel = ({ title, children, style, className = "" }) => (
       alignItems: "center",
     }}>
       <span>{title}</span>
-      <span style={{ color: AMBER_DIM, fontSize: 8 }}>■ ACTIVE</span>
+      {headerRight ?? <span style={{ color: AMBER_DIM, fontSize: 8 }}>■ ACTIVE</span>}
     </div>
-    <div style={{ flex: 1, position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+    <div style={{
+      flex: 1,
+      position: "relative",
+      overflow: "hidden",
+      display: "flex",
+      flexDirection: "column",
+      opacity: dimmed ? 0.55 : 1,
+      filter: dimmed ? "grayscale(1)" : "none",
+    }}>
       {children}
     </div>
   </div>
@@ -230,7 +335,7 @@ const WaterfallDisplay = ({ contacts, time, shipHeading }) => {
     // Bearing labels — heading-relative
     ctx.fillStyle = "rgba(0,0,0,0.7)";
     ctx.fillRect(0, 0, W, 22);
-    ctx.font = "16px 'Share Tech Mono', monospace";
+    ctx.font = "16px Consolas, Monaco, monospace";
     ctx.fillStyle = AMBER_DIM;
     const labelSteps = [-180, -135, -90, -45, 0, 45, 90, 135, 180];
     labelSteps.forEach(offset => {
@@ -257,19 +362,31 @@ function useGate() {
   const [gateL, setGateL] = useState(0);
   const [gateR, setGateR] = useState(1);
   const [cursor, setCursor] = useState(0.5);
-  const [analyzeResult, setAnalyzeResult] = useState(null);
+  const [bearingOffsetDeg, setBearingOffsetDeg] = useState(0);
   const [ctxMenu, setCtxMenu] = useState(null);
   const dragging = useRef(null);
+  const lastDragX = useRef(0);
 
   const onMouseDown = useCallback((e) => {
     setCtxMenu(null);
     const rect = e.currentTarget.getBoundingClientRect();
     const mx = (e.clientX - rect.left) / rect.width;
+    lastDragX.current = mx;
+    if (e.button === 2) {
+      // Right-click drag pans the bearing tape.
+      dragging.current = "PAN";
+      return;
+    }
+    if (e.button !== 0) {
+      dragging.current = null;
+      return;
+    }
     const distL = Math.abs(mx - gateL);
     const distR = Math.abs(mx - gateR);
     const distC = Math.abs(mx - cursor);
     const minDist = Math.min(distL, distR, distC);
     if (minDist > 0.05) {
+      // Left-click places and drags the bearing selector line.
       dragging.current = "C";
       setCursor(mx);
     } else if (distC <= minDist) dragging.current = "C";
@@ -284,30 +401,58 @@ function useGate() {
     if (dragging.current === "L") setGateL(Math.min(mx, gateR - MIN_GATE_WIDTH));
     else if (dragging.current === "R") setGateR(Math.max(mx, gateL + MIN_GATE_WIDTH));
     else if (dragging.current === "C") setCursor(mx);
+    else if (dragging.current === "PAN") {
+      const delta = mx - lastDragX.current;
+      const width = gateR - gateL;
+      if (width >= 0.999) {
+        setBearingOffsetDeg((prev) => prev - delta * 360);
+      } else {
+        let newL = gateL + delta;
+        let newR = gateR + delta;
+        if (newL < 0) {
+          newR -= newL;
+          newL = 0;
+        }
+        if (newR > 1) {
+          newL -= (newR - 1);
+          newR = 1;
+        }
+        const clampedL = Math.max(0, newL);
+        const clampedR = Math.min(1, newR);
+        setGateL(clampedL);
+        setGateR(clampedR);
+        setCursor((prev) => Math.max(clampedL, Math.min(clampedR, prev + delta)));
+      }
+      lastDragX.current = mx;
+    }
   }, [gateL, gateR, MIN_GATE_WIDTH]);
 
   const onMouseUp = useCallback(() => { dragging.current = null; }, []);
 
   const onWheel = useCallback((e) => {
     e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) / rect.width;
     const zoomFactor = e.deltaY < 0 ? 0.85 : 1.18;
     const width = gateR - gateL;
     const newWidth = Math.max(MIN_GATE_WIDTH, Math.min(1, width * zoomFactor));
-    const center = gateL + mx * width;
-    let newL = center - newWidth / 2;
-    let newR = center + newWidth / 2;
-    if (newL < 0) { newR -= newL; newL = 0; }
-    if (newR > 1) { newL -= (newR - 1); newR = 1; }
+    // Always zoom around the bearing selector cursor.
+    const center = gateL + cursor * width;
+    let newL = center - cursor * newWidth;
+    let newR = newL + newWidth;
+    if (newL < 0) {
+      newR -= newL;
+      newL = 0;
+    }
+    if (newR > 1) {
+      newL -= (newR - 1);
+      newR = 1;
+    }
     setGateL(Math.max(0, newL));
     setGateR(Math.min(1, newR));
-  }, [gateL, gateR, MIN_GATE_WIDTH]);
+  }, [gateL, gateR, cursor, MIN_GATE_WIDTH]);
 
   const onContextMenu = useCallback((e) => {
+    // Disable graph context menu interactions.
     e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
-    setCtxMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top });
   }, []);
 
   const gateAroundCursor = useCallback(() => {
@@ -317,52 +462,20 @@ function useGate() {
     setCtxMenu(null);
   }, [cursor]);
 
-  const analyze = useCallback((contacts, gateWidth) => {
-    const enemy = useGameStore.getState().enemy;
-    const playerPos = useGameStore.getState().ship.position;
-    const dx = -(enemy.position[0] - playerPos[0]);
-    const dz = enemy.position[2] - playerPos[2];
-    const range = (Math.sqrt(dx * dx + dz * dz) / 1000).toFixed(1);
-    const bearing = (((Math.atan2(dx, dz) * 180 / Math.PI) + 360) % 360).toFixed(1);
-
-    const gateZoom = 1 / Math.max(0.02, gateWidth);
-    const baseConf = Math.min(95, 40 + gateZoom * 8);
-    const confidence = Math.round(baseConf + Math.random() * 5);
-    const snr = (6 + gateZoom * 2 + Math.random() * 4).toFixed(1);
-
-    let type = "UNKNOWN — INSUFFICIENT DATA";
-    const c = contacts[0];
-    if (c) {
-      if (c.emStrength > 0.6) type = "RADAR — PULSE DOPPLER TRACK";
-      else if (c.emStrength > 0.3) type = "RADAR — SEARCH SCAN";
-      else if (c.emStrength > 0.1) type = "COMMS — LOW POWER BURST";
-      else if (c.jamming) type = "EW — NOISE JAMMER";
-      else if (c.thermal > 0.4) type = "DRIVE — FUSION EXHAUST";
-      else if (c.thermal > 0.15) type = "THERMAL — REACTOR SIGNATURE";
-      else if (c.thermal > 0.05) type = "THERMAL — RESIDUAL HEAT";
-      else type = "UNKNOWN — WEAK ANOMALY";
-
-      if (confidence > 70 && c.emStrength > 0.3) {
-        type += " [BATTLESHIP CLASS]";
-      }
-    }
-
-    setAnalyzeResult({ type, confidence: String(confidence), snr, bearing, range, time: Date.now() });
-    setCtxMenu(null);
-  }, []);
-
-  const reset = useCallback(() => { setGateL(0); setGateR(1); setCursor(0.5); setAnalyzeResult(null); }, []);
+  const reset = useCallback(() => { setGateL(0); setGateR(1); setCursor(0.5); }, []);
 
   const gateWidth = gateR - gateL;
   const isGated = gateWidth < 0.5;
 
-  return { gateL, gateR, cursor, analyzeResult, ctxMenu, isGated, gateWidth, onMouseDown, onMouseMove, onMouseUp, onWheel, onContextMenu, gateAroundCursor, analyze, reset, setCtxMenu };
+  return { gateL, gateR, cursor, bearingOffsetDeg, ctxMenu, isGated, gateWidth, onMouseDown, onMouseMove, onMouseUp, onWheel, onContextMenu, gateAroundCursor, reset, setCtxMenu };
 }
 
-function drawGates(ctx, W, H, gateL, gateR, color, dimColor) {
-  if (gateL <= 0.001 && gateR >= 0.999) return;
-  const lx = gateL * W;
-  const rx = gateR * W;
+function drawGates(ctx, W, H, cursorPos, gateWidth, color, dimColor) {
+  if (gateWidth >= 0.999) return;
+  const cx = cursorPos * W;
+  const halfWidthPx = (gateWidth * W) / 2;
+  const lx = Math.max(0, cx - halfWidthPx);
+  const rx = Math.min(W, cx + halfWidthPx);
 
   ctx.fillStyle = "rgba(0,0,0,0.4)";
   ctx.fillRect(0, 0, lx, H);
@@ -379,14 +492,17 @@ function drawGates(ctx, W, H, gateL, gateR, color, dimColor) {
   ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx + 6, 0); ctx.lineTo(lx, 8); ctx.closePath(); ctx.fill();
   ctx.beginPath(); ctx.moveTo(rx, 0); ctx.lineTo(rx - 6, 0); ctx.lineTo(rx, 8); ctx.closePath(); ctx.fill();
 
-  const zoom = (1 / (gateR - gateL)).toFixed(1);
-  ctx.font = "18px 'Share Tech Mono', monospace";
+  const zoom = (1 / gateWidth).toFixed(1);
+  ctx.font = "18px Consolas, Monaco, monospace";
   ctx.fillStyle = dimColor;
   ctx.fillText(`${zoom}x`, (lx + rx) / 2 - 16, 18);
 }
 
 function drawCursor(ctx, W, H, cursorPos, color, brightColor, label) {
   const cx = cursorPos * W;
+  const boxY = 8;
+  const boxPaddingX = 6;
+  const boxHeight = 18;
 
   ctx.strokeStyle = brightColor;
   ctx.lineWidth = 1.5;
@@ -395,23 +511,28 @@ function drawCursor(ctx, W, H, cursorPos, color, brightColor, label) {
   ctx.lineTo(cx, H);
   ctx.stroke();
 
+  ctx.font = "14px Consolas, Monaco, monospace";
+  const textWidth = Math.ceil(ctx.measureText(label).width);
+  const boxWidth = textWidth + boxPaddingX * 2;
+  const boxX = cx - boxWidth / 2;
+
   ctx.fillStyle = "rgba(0,0,0,0.8)";
-  ctx.fillRect(cx - 50, H - 28, 100, 24);
+  ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
   ctx.strokeStyle = brightColor;
   ctx.lineWidth = 0.5;
-  ctx.strokeRect(cx - 50, H - 28, 100, 24);
+  ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
 
-  ctx.font = "20px 'Share Tech Mono', monospace";
   ctx.fillStyle = brightColor;
   ctx.textAlign = "center";
-  ctx.fillText(label, cx, H - 10);
+  ctx.fillText(label, cx, boxY + 13);
   ctx.textAlign = "start";
 
   ctx.fillStyle = brightColor;
   ctx.beginPath();
-  ctx.moveTo(cx, 0);
-  ctx.lineTo(cx - 5, -6);
-  ctx.lineTo(cx + 5, -6);
+  // Pointer at the bottom of the selector line, aimed at the X-axis
+  ctx.moveTo(cx, H - 1);
+  ctx.lineTo(cx - 5, H - 7);
+  ctx.lineTo(cx + 5, H - 7);
   ctx.closePath();
   ctx.fill();
 }
@@ -444,36 +565,70 @@ function spectrumLockState(contacts, selectedBearing, gateL, gateR) {
   return { state: "none", canAnalyze: false };
 }
 
-function gravLockState(contacts, gateL, gateR) {
+function gravLockState(contacts, gateL, gateR, bearingOffsetDeg = 0, gain = 1, highPassPct = 100) {
   const shipHdg = useGameStore.getState().ship.actualHeading;
+  const effectiveGain = Math.max(0.5, gain);
+  const maxRangeAu = GRAV_ANOMALY_BASE_MAX_RANGE_AU * effectiveGain;
   const candidates = contacts
     .map(c => {
       const relBrg = ((c.bearing - shipHdg + 540) % 360) - 180;
-      const wellNorm = 0.5 + relBrg / 360;
-      const rangeKm = c.range / 1000;
-      const baseMass = c.type === "battleship" ? 0.8 : 0.4;
-      const speedBonus = (c.speed || 0) > 300 ? 0.6 : (c.speed || 0) > 1 ? 0.15 : 0;
-      const rangePenalty = rangeKm <= 10 ? 1 : rangeKm <= 20 ? 0.4 : 0.08;
-      const score = (baseMass + speedBonus) * rangePenalty;
-      return { ...c, wellNorm, score };
+      const wellNormRaw = 0.5 + (relBrg - bearingOffsetDeg) / 360;
+      const wellNorm = ((wellNormRaw % 1) + 1) % 1;
+      const isCelestial = c.gravProfile === "celestial";
+      let score = 0;
+      if (isCelestial) {
+        const rangeAu = c.range / WORLD_UNITS_PER_AU;
+        if (rangeAu <= maxRangeAu) {
+          const rangeFactor = Math.pow(Math.max(0, 1 - rangeAu / maxRangeAu), 1.35);
+          const filterAttenuation = gravHighPassAttenuation(c.type, highPassPct);
+          const relativeBoost = gravRelativeIntensityBoost(c.type, highPassPct);
+          score = (c.gravMass || 0.7) * rangeFactor * 1.6 * filterAttenuation * relativeBoost;
+        }
+      }
+      return {
+        ...c,
+        wellNorm,
+        score,
+        rangeAu: c.range / WORLD_UNITS_PER_AU,
+      };
     })
-    .filter(c => c.wellNorm >= 0 && c.wellNorm <= 1 && c.score > 0.05)
+    .filter(c => c.gravProfile === "celestial" && c.score > 0.05)
     .sort((a, b) => b.score - a.score);
 
   const target = candidates[0];
-  if (!target) return { state: "none", canAnalyze: false };
+  if (!target) {
+    return {
+      state: "none",
+      canAnalyze: false,
+      target: null,
+      celestialId: null,
+      clarity: 0,
+      durationMs: GRAV_ANALYSIS_MAX_MS,
+      centerError: 1,
+    };
+  }
 
   const width = gateR - gateL;
   const center = (gateL + gateR) / 2;
   const centerErr = Math.abs(target.wellNorm - center);
   const inGate = target.wellNorm >= gateL && target.wellNorm <= gateR;
-  if (!inGate) return { state: "none", canAnalyze: false };
-
+  const signalFactor = clamp(target.score / 1.2, 0, 1);
+  const zoomFactor = clamp((0.22 - width) / 0.16, 0, 1);
+  const centeringFactor = clamp(1 - centerErr / Math.max(0.025, width * 0.5), 0, 1);
+  const clarity = clamp(signalFactor * 0.45 + zoomFactor * 0.25 + centeringFactor * 0.3, 0, 1);
+  const durationMs = deriveGravAnalysisDurationMs(clarity);
   const closeLock = width <= 0.25 && centerErr <= Math.max(0.02, width * 0.25);
   const hardLock = width <= 0.14 && centerErr <= 0.018;
-  if (hardLock) return { state: "locked", canAnalyze: true };
-  if (closeLock) return { state: "close", canAnalyze: false };
-  return { state: "none", canAnalyze: false };
+  const state = !inGate ? "none" : hardLock ? "locked" : closeLock ? "close" : "none";
+  return {
+    state,
+    canAnalyze: inGate && hardLock,
+    target,
+    celestialId: target.celestialId ?? null,
+    clarity,
+    durationMs,
+    centerError: centerErr,
+  };
 }
 
 // Spectrum Analyzer — full band, no zoom, with jammer cursors
@@ -648,18 +803,18 @@ const SpectrumAnalyzer = ({ contacts, time, selectedBearing, onLockQualityChange
     ctx.shadowBlur = 0;
 
     // Frequency labels along bottom
-    ctx.font = "20px 'Share Tech Mono', monospace";
+    ctx.font = "20px Consolas, Monaco, monospace";
     ctx.fillStyle = AMBER_DIM;
     ctx.fillText(`2.0–20.0 GHz  |  dBm  |  BRG: ${selectedBearing}°`, 6, H - 8);
 
     // Bearing — top left
-    ctx.font = "20px 'Share Tech Mono', monospace";
+    ctx.font = "20px Consolas, Monaco, monospace";
     ctx.fillStyle = hasSignalUI ? "#44ff66" : nearSignalUI ? "#ffd24a" : AMBER;
     ctx.fillText(`BRG ${String(Math.round(selectedBearing)).padStart(3, "0")}`, 8, 22);
 
     // Lock indicator top right
     if (hasSignalUI || nearSignalUI) {
-      ctx.font = "20px 'Share Tech Mono', monospace";
+      ctx.font = "20px Consolas, Monaco, monospace";
       ctx.fillStyle = hasSignalUI ? "#44ff66" : "#ffd24a";
       ctx.textAlign = "right";
       ctx.fillText(hasSignalUI ? "■ SIGNAL LOCKED" : "■ SIGNAL CLOSE", W - 10, 22);
@@ -673,7 +828,7 @@ const SpectrumAnalyzer = ({ contacts, time, selectedBearing, onLockQualityChange
       if (bDist > 30) return;
       const px = c.freq * W;
       const label = c.sigType === "stt" ? "STT" : c.sigType === "scan" ? "SCAN" : c.sigType === "missile" ? "MSL" : c.sigType === "deception" ? "ECM" : "UNK";
-      ctx.font = "14px 'Share Tech Mono', monospace";
+      ctx.font = "14px Consolas, Monaco, monospace";
       ctx.fillStyle = hasSignalUI ? "#44ff66" : AMBER;
       ctx.textAlign = "center";
       ctx.fillText(label, px, 38);
@@ -783,12 +938,12 @@ const SpectrumAnalyzer = ({ contacts, time, selectedBearing, onLockQualityChange
         ctx.setLineDash([]);
 
         // Jammer number label
-        ctx.font = "bold 16px 'Share Tech Mono', monospace";
+        ctx.font = "bold 16px Consolas, Monaco, monospace";
         ctx.fillStyle = color;
         ctx.textAlign = "center";
         ctx.fillText(`J${i + 1}`, cx, H - 28);
         if (j.mode) {
-          ctx.font = "10px 'Share Tech Mono', monospace";
+          ctx.font = "10px Consolas, Monaco, monospace";
           ctx.fillText(j.mode, cx, H - 40);
         }
         ctx.textAlign = "start";
@@ -818,40 +973,108 @@ const GRAV_CYAN = "#00ccaa";
 const GRAV_CYAN_DIM = "#005544";
 const GRAV_CYAN_GLOW = "#44ffcc";
 
-const GRAV_COOLDOWN_SEC = 180;
-
-const GravAnalyzer = ({ contacts, time, selectedBearing, onBearingChange }) => {
+const GravAnalyzer = ({
+  contacts,
+  time,
+  selectedBearing,
+  onBearingChange,
+  resetToken = 0,
+  scannerOn = true,
+}) => {
   const canvasRef = useRef(null);
   const gate = useGate();
   const prevCursor = useRef(gate.cursor);
-  const gravQuality = gravLockState(contacts, gate.gateL, gate.gateR);
+  const [gain, setGain] = useState(1.0);
+  const [highPassPct, setHighPassPct] = useState(100);
+  const starSystem = useGameStore((s) => s.starSystem);
+  const currentCelestialId = useGameStore((s) => s.currentCelestialId);
+  const revealedCelestialIds = useGameStore((s) => s.ewRevealedCelestialIds);
+  const warpState = useGameStore((s) => s.warpState);
+  const activeGravAnalysis = useGameStore((s) => s.ewActiveGravAnalysis);
+  const lastGravAnalysisResult = useGameStore((s) => s.ewLastGravAnalysisResult);
+  const startEwGravAnalysis = useGameStore((s) => s.startEwGravAnalysis);
+  const completeEwGravAnalysis = useGameStore((s) => s.completeEwGravAnalysis);
+  const cancelEwGravAnalysis = useGameStore((s) => s.cancelEwGravAnalysis);
+  const warpInterference = warpState === "warping" || warpState === "landing";
+  const scannerUsable = scannerOn && !warpInterference;
+  const gravAnomalies = useMemo(
+    () => buildGravAnomaliesFromEnvironment(starSystem, currentCelestialId, gain),
+    [starSystem, currentCelestialId, gain]
+  );
+  const gravContacts = useMemo(
+    () => [...contacts, ...gravAnomalies],
+    [contacts, gravAnomalies]
+  );
+  const gravQuality = gravLockState(gravContacts, gate.gateL, gate.gateR, gate.bearingOffsetDeg, gain, highPassPct);
+  const targetAlreadyRevealed = !!(
+    gravQuality.state !== "none"
+    && gravQuality.celestialId
+    && revealedCelestialIds.includes(gravQuality.celestialId)
+  );
   const hasWellInGateUI = gravQuality.canAnalyze;
   const nearWellUI = gravQuality.state === "close";
-  const [cooldownEnd, setCooldownEnd] = useState(0);
-  const cooldownRemaining = Math.max(0, cooldownEnd - Date.now());
-  const isOnCooldown = cooldownRemaining > 0;
-  const cooldownPct = isOnCooldown ? 1 - cooldownRemaining / (GRAV_COOLDOWN_SEC * 1000) : 0;
+  const nowMs = Date.now();
+  const activeAnalysisRemaining = activeGravAnalysis
+    ? Math.max(0, activeGravAnalysis.startedAt + activeGravAnalysis.durationMs - nowMs)
+    : 0;
+  const activeAnalysisProgress = activeGravAnalysis
+    ? clamp(1 - activeAnalysisRemaining / activeGravAnalysis.durationMs, 0, 1)
+    : 0;
+  const recentAnalysisResult = lastGravAnalysisResult
+    && nowMs - lastGravAnalysisResult.completedAt <= GRAV_RESULT_BANNER_MS
+    ? lastGravAnalysisResult
+    : null;
+  const canStartAnalysis = scannerUsable && hasWellInGateUI && !targetAlreadyRevealed && !activeGravAnalysis;
+  const displayedResultCelestial = recentAnalysisResult
+    ? getCelestialById(recentAnalysisResult.celestialId, starSystem)
+    : null;
+  const displayedResultLabel = displayedResultCelestial?.name ?? recentAnalysisResult?.celestialId ?? null;
+  const activeAnalysisCelestial = activeGravAnalysis
+    ? getCelestialById(activeGravAnalysis.celestialId, starSystem)
+    : null;
 
   useEffect(() => {
+    if (!scannerUsable) return;
     if (gate.cursor !== prevCursor.current && onBearingChange) {
       const viewL = gate.gateL;
       const viewW = gate.gateR - gate.gateL;
       const cursorT = viewL + gate.cursor * viewW;
       const shipHdg = useGameStore.getState().ship.actualHeading;
-      const newBearing = Math.round(shipHdg - 180 + cursorT * 360);
+      const newBearing = Math.round(shipHdg - 180 + cursorT * 360 + gate.bearingOffsetDeg);
       onBearingChange(((newBearing % 360) + 360) % 360);
     }
     prevCursor.current = gate.cursor;
-  }, [gate.cursor]);
+  }, [gate.cursor, onBearingChange, gate.gateL, gate.gateR, gate.bearingOffsetDeg, scannerUsable]);
+
+  useEffect(() => {
+    if (!activeGravAnalysis) return;
+    if (Date.now() >= activeGravAnalysis.startedAt + activeGravAnalysis.durationMs) {
+      completeEwGravAnalysis();
+    }
+  }, [activeGravAnalysis, time, completeEwGravAnalysis]);
+
+  useEffect(() => {
+    if (!scannerUsable && activeGravAnalysis) {
+      cancelEwGravAnalysis();
+    }
+  }, [scannerUsable, activeGravAnalysis, cancelEwGravAnalysis]);
+
+  useEffect(() => {
+    gate.reset();
+  }, [resetToken]);
 
   function computeDisplacement(t, contacts, selectedBearing, H, time) {
+    const noiseFloorScale = gravNoiseFloorScale(highPassPct);
+    const noiseGainMultiplier = gain <= 1
+      ? gain * gain
+      : 1 + (gain - 1) * 1.35;
     // Heavy baseline noise — makes the signal hard to pick out
     let displacement =
-      Math.sin(t * 6 + time * 0.6) * 7 +
-      Math.sin(t * 14 + time * 1.1) * 4 +
-      Math.sin(t * 23 + time * 0.4) * 3 +
-      noise(t * 30, time * 0.7) * 12 - 6 +
-      noise(t * 80, time * 0.3) * 5;
+      (Math.sin(t * 6 + time * 0.6) * 7 +
+        Math.sin(t * 14 + time * 1.1) * 4 +
+        Math.sin(t * 23 + time * 0.4) * 3 +
+        noise(t * 30, time * 0.7) * 12 - 6 +
+        noise(t * 80, time * 0.3) * 5) * noiseGainMultiplier * noiseFloorScale;
 
     const shipHdg = useGameStore.getState().ship.actualHeading;
     contacts.forEach(c => {
@@ -859,44 +1082,111 @@ const GravAnalyzer = ({ contacts, time, selectedBearing, onBearingChange }) => {
       const bDist = Math.abs(relBrg);
       if (bDist > 180) return;
 
-      const rangeKm = c.range / 1000;
-      const baseMass = (c.type === "battleship" ? 0.5 : c.type === "destroyer" ? 0.3 : 0.15);
-
-      // Gravitational signature: mass + speed only, no EM/radar involvement
-      let gravStrength = baseMass;
-
-      const speed = c.speed || 0;
-      if (speed > 300) {
-        gravStrength += (speed / 1200) * 1.2;
-      } else if (speed > 1) {
-        gravStrength += (speed / 215) * 0.08;
-      }
-
-      // Steep range falloff — very hard to see beyond 10km
-      let rangeFactor;
-      if (rangeKm <= 3) {
-        rangeFactor = 1.0;
-      } else if (rangeKm <= 8) {
-        rangeFactor = 0.3 + 0.7 * (1 - (rangeKm - 3) / 5);
-      } else if (rangeKm <= 15) {
-        rangeFactor = 0.05 + 0.25 * (1 - (rangeKm - 8) / 7);
+      const isCelestial = c.gravProfile === "celestial";
+      let totalMass = 0;
+      if (isCelestial) {
+        const rangeAu = c.range / WORLD_UNITS_PER_AU;
+        const effectiveRangeAu = rangeAu / Math.max(0.35, gain);
+        if (effectiveRangeAu > GRAV_ANOMALY_BASE_MAX_RANGE_AU) return;
+        const rangeFactor = Math.pow(
+          Math.max(0, 1 - effectiveRangeAu / GRAV_ANOMALY_BASE_MAX_RANGE_AU),
+          1.4
+        );
+        const filterAttenuation = gravHighPassAttenuation(c.type, highPassPct);
+        const relativeBoost = gravRelativeIntensityBoost(c.type, highPassPct);
+        totalMass = (c.gravMass || 0.7) * rangeFactor * 1.7 * filterAttenuation * relativeBoost;
       } else {
-        rangeFactor = 0.05 * Math.exp(-(rangeKm - 15) / 20);
+        const rangeKm = c.range / 1000;
+        const effectiveRangeKm = rangeKm / Math.max(0.5, gain);
+        const baseMass = (c.type === "battleship" ? 0.5 : c.type === "destroyer" ? 0.3 : 0.15);
+        let gravStrength = baseMass;
+        const speed = c.speed || 0;
+        if (speed > 300) {
+          gravStrength += (speed / 1200) * 1.2;
+        } else if (speed > 1) {
+          gravStrength += (speed / 215) * 0.08;
+        }
+        let rangeFactor;
+        if (effectiveRangeKm <= 3) {
+          rangeFactor = 1.0;
+        } else if (effectiveRangeKm <= 8) {
+          rangeFactor = 0.3 + 0.7 * (1 - (effectiveRangeKm - 3) / 5);
+        } else if (effectiveRangeKm <= 15) {
+          rangeFactor = 0.05 + 0.25 * (1 - (effectiveRangeKm - 8) / 7);
+        } else {
+          rangeFactor = 0.05 * Math.exp(-(effectiveRangeKm - 15) / 20);
+        }
+        if ((c.speed || 0) <= 1 && effectiveRangeKm > 8) {
+          rangeFactor *= 0.1;
+        }
+        totalMass = gravStrength * rangeFactor;
       }
 
-      if (speed <= 1 && rangeKm > 8) {
-        rangeFactor *= 0.1;
-      }
-
-      const totalMass = gravStrength * rangeFactor;
       const proxFactor = 1 - bDist / 180;
-      const wellCenter = 0.5 + (relBrg / 360);
-      const wellDist = Math.abs(t - wellCenter);
-      if (wellDist < 0.06) {
-        const wellDepth = (1 - wellDist / 0.06) * totalMass * proxFactor;
-        displacement -= wellDepth * wellDepth * H * 0.25;
+      const wellCenterRaw = 0.5 + ((relBrg - gate.bearingOffsetDeg) / 360);
+      const wellCenter = ((wellCenterRaw % 1) + 1) % 1;
+      const directDist = Math.abs(t - wellCenter);
+      const wellDist = Math.min(directDist, 1 - directDist);
+      if (isCelestial) {
+        // Type-specific celestial signatures:
+        // - planet: broad parabolic hump
+        // - moon: narrower/smaller parabolic hump
+        // - asteroid belt: weak jagged cluster of micro-bumps
+        const signedWellDeltaRaw = t - wellCenter;
+        const signedWellDelta = signedWellDeltaRaw > 0.5
+          ? signedWellDeltaRaw - 1
+          : signedWellDeltaRaw < -0.5
+            ? signedWellDeltaRaw + 1
+            : signedWellDeltaRaw;
+
+        if (c.type === "planet" || c.type === "moon") {
+          const wellWidth = c.type === "planet" ? 0.062 : 0.036;
+          if (wellDist < wellWidth) {
+            const u = wellDist / wellWidth;
+            const parabola = 1 - u * u;
+            // Smooth edge envelope to remove hard "pop-in/pop-out" at bump boundaries.
+            const edge = 1 - u;
+            const easedEdge = edge * edge * (3 - 2 * edge);
+            const shaped = parabola * easedEdge;
+            const amp = c.type === "planet" ? 0.36 : 0.23;
+            const massScale = c.type === "planet" ? 1.0 : 0.82;
+            displacement += shaped * totalMass * massScale * proxFactor * H * amp;
+          }
+        } else if (c.type === "asteroid_belt") {
+          const beltSpan = 0.085;
+          if (wellDist < beltSpan) {
+            let beltContribution = 0;
+            const baseSeed = c.id.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+            const microCount = 6;
+            for (let i = 0; i < microCount; i++) {
+              const n0 = noise(baseSeed * 0.23 + i * 7.1, 0.31);
+              const n1 = noise(baseSeed * 0.19 + i * 11.7, 0.77);
+              const offset = (n0 - 0.5) * beltSpan * 1.5;
+              const microWidth = beltSpan * (0.09 + n1 * 0.12);
+              const d = Math.abs(signedWellDelta - offset);
+              if (d < microWidth) {
+                const edge = 1 - d / microWidth;
+                const jitter = 0.55 + noise(t * 220 + i * 13.0, time * 1.9 + baseSeed * 0.01) * 0.65;
+                beltContribution += edge * edge * jitter * (0.18 + n0 * 0.22);
+              }
+            }
+            displacement += beltContribution * totalMass * proxFactor * H * 0.26;
+          }
+        } else {
+          const fallbackWidth = 0.045;
+          if (wellDist < fallbackWidth) {
+            const wellDepth = (1 - wellDist / fallbackWidth) * totalMass * proxFactor;
+            displacement += wellDepth * H * 0.3;
+          }
+        }
+      } else {
+        const wellWidth = 0.06;
+        if (wellDist < wellWidth) {
+          const wellDepth = (1 - wellDist / wellWidth) * totalMass * proxFactor;
+          displacement -= wellDepth * wellDepth * H * 0.25;
+        }
       }
-      if (wellDist < 0.03) {
+      if (!isCelestial && wellDist < 0.03) {
         const dragFreq = 40 + c.range * 0.002;
         displacement += Math.sin(t * dragFreq + time * 2) * totalMass * proxFactor * 5;
       }
@@ -920,6 +1210,75 @@ const GravAnalyzer = ({ contacts, time, selectedBearing, onBearingChange }) => {
     ctx.fillStyle = BG_SCREEN;
     ctx.fillRect(0, 0, W, H);
 
+    if (warpInterference) {
+      ctx.strokeStyle = "rgba(0,204,170,0.07)";
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i < 12; i++) {
+        const x = (i / 12) * W;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      for (let i = 0; i < 6; i++) {
+        const y = (i / 6) * H;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(0,204,170,0.2)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+
+      ctx.beginPath();
+      ctx.strokeStyle = GRAV_CYAN;
+      ctx.lineWidth = 1.6;
+      ctx.shadowColor = "rgba(68,255,204,0.55)";
+      ctx.shadowBlur = 8;
+      for (let x = 0; x < W; x++) {
+        const t = x / Math.max(1, W - 1);
+        const displacement =
+          Math.sin(t * 70 + time * 8.5) * 30 +
+          Math.sin(t * 155 - time * 12.5) * 18 +
+          Math.sin(t * 290 + time * 21) * 10 +
+          (noise(t * 180, time * 7) - 0.5) * 70 +
+          (noise(t * 420 + 9.3, time * 13) - 0.5) * 32;
+        const y = midY + displacement;
+        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = "rgba(0,0,0,0.62)";
+      ctx.fillRect(W * 0.5 - 170, midY - 26, 340, 52);
+      ctx.strokeStyle = "rgba(0,204,170,0.35)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(W * 0.5 - 170, midY - 26, 340, 52);
+      ctx.font = "24px Consolas, Monaco, monospace";
+      ctx.fillStyle = "rgba(255,176,0,0.92)";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("WARP INTERFERENCE", W * 0.5, midY);
+      ctx.textAlign = "start";
+      ctx.textBaseline = "alphabetic";
+      return;
+    }
+
+    if (!scannerOn) {
+      ctx.strokeStyle = "rgba(130,130,130,0.08)";
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i < 12; i++) {
+        const x = (i / 12) * W;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      for (let i = 0; i < 6; i++) {
+        const y = (i / 6) * H;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(150,150,150,0.22)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+      ctx.font = "20px Consolas, Monaco, monospace";
+      ctx.fillStyle = "rgba(170,170,170,0.75)";
+      ctx.fillText("SCANNER OFFLINE", 8, 22);
+      return;
+    }
+
     ctx.strokeStyle = "rgba(0,204,170,0.07)";
     ctx.lineWidth = 0.5;
     for (let i = 0; i < 12; i++) {
@@ -938,15 +1297,36 @@ const GravAnalyzer = ({ contacts, time, selectedBearing, onBearingChange }) => {
     // Check if gravitational well is enclosed by gates
     let hasWellInGate = false;
     const shipHdgCheck = useGameStore.getState().ship.actualHeading;
-    contacts.forEach(c => {
+    gravContacts.forEach(c => {
+      if (c.gravProfile === "celestial" && gravHighPassAttenuation(c.type, highPassPct) <= 0.02) return;
       let relBrg = ((c.bearing - shipHdgCheck + 540) % 360) - 180;
-      const wellNorm = 0.5 + (relBrg / 360);
+      const wellNormRaw = 0.5 + ((relBrg - gate.bearingOffsetDeg) / 360);
+      const wellNorm = ((wellNormRaw % 1) + 1) % 1;
       if (wellNorm >= viewL && wellNorm <= viewR && gate.isGated) {
         hasWellInGate = true;
       }
     });
     const traceColor = hasWellInGateUI ? "#44ff66" : nearWellUI ? "#ffd24a" : GRAV_CYAN;
     const traceGlow = hasWellInGateUI ? "#88ffaa" : nearWellUI ? "#ffe38a" : GRAV_CYAN_GLOW;
+
+    // Precompute displacement and auto-scale Y so the trace stays in-bounds.
+    const displacementRaw = new Array(W);
+    let maxDispAbs = 0;
+    for (let x = 0; x < W; x++) {
+      const t = viewL + (x / W) * viewW;
+      let dRaw = computeDisplacement(t, gravContacts, selectedBearing, H, time) * zoomGain;
+      if (!Number.isFinite(dRaw)) dRaw = 0;
+      displacementRaw[x] = dRaw;
+      const abs = Math.abs(dRaw);
+      if (abs > maxDispAbs) maxDispAbs = abs;
+    }
+    const mainTargetSpan = H * 0.42;
+    const mainScaleRaw = maxDispAbs > 0.0001 ? mainTargetSpan / maxDispAbs : 1;
+    // Keep zoomed-out view calm: do not over-amplify at wide gates.
+    const zoomNorm = Math.max(0, Math.min(1, (gateZoom - 1) / 9));
+    const maxMainScale = 1 + zoomNorm * 3;
+    const mainScale = Math.max(0.12, Math.min(maxMainScale, mainScaleRaw));
+    const displacementScaled = displacementRaw.map((v) => v * mainScale);
 
     // Main trace
     ctx.beginPath();
@@ -955,25 +1335,36 @@ const GravAnalyzer = ({ contacts, time, selectedBearing, onBearingChange }) => {
     ctx.shadowColor = traceGlow;
     ctx.shadowBlur = 5;
     for (let x = 0; x < W; x++) {
-      const t = viewL + (x / W) * viewW;
-      const d = computeDisplacement(t, contacts, selectedBearing, H, time) * zoomGain;
-      const y = midY - d;
+      const y = midY - displacementScaled[x];
       if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();
 
     // Strain trace
+    const strainRaw = new Array(W);
+    let maxStrainAbs = 0;
+    let prevScaled = displacementScaled[0] || 0;
+    for (let x = 0; x < W; x++) {
+      const d = displacementScaled[x];
+      const s = (d - prevScaled) * 3;
+      prevScaled = d;
+      strainRaw[x] = s;
+      const abs = Math.abs(s);
+      if (abs > maxStrainAbs) maxStrainAbs = abs;
+    }
+    const strainBaseY = midY + H * 0.3;
+    const strainMaxSwing = Math.max(8, Math.min(strainBaseY, H - strainBaseY) - 4);
+    const strainScaleRaw = maxStrainAbs > 0.0001 ? strainMaxSwing / (maxStrainAbs * 2) : 1;
+    const maxStrainScale = 1 + zoomNorm * 2.5;
+    const strainScale = Math.max(0.2, Math.min(maxStrainScale, strainScaleRaw));
+
     ctx.beginPath();
     ctx.strokeStyle = hasWellInGate ? "rgba(68,255,102,0.3)" : "rgba(0,204,170,0.3)";
     ctx.lineWidth = 0.8;
     ctx.shadowBlur = 0;
-    let prevDisp = 0;
     for (let x = 0; x < W; x++) {
-      const t = viewL + (x / W) * viewW;
-      const d = computeDisplacement(t, contacts, selectedBearing, H, time) * zoomGain;
-      const strain = (d - prevDisp) * 3;
-      prevDisp = d;
-      const y = midY + H * 0.3 - strain * 2;
+      const strain = strainRaw[x] * strainScale;
+      const y = strainBaseY - strain * 2;
       if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();
@@ -982,147 +1373,336 @@ const GravAnalyzer = ({ contacts, time, selectedBearing, onBearingChange }) => {
     // Gate overlay
     const gateColor = hasWellInGateUI ? "#44ff66" : nearWellUI ? "#ffd24a" : GRAV_CYAN;
     const gateDim = hasWellInGateUI ? "#227733" : nearWellUI ? "#8a6f1a" : GRAV_CYAN_DIM;
-    drawGates(ctx, W, H, gate.gateL, gate.gateR, gateColor, gateDim);
+    drawGates(ctx, W, H, gate.cursor, gate.gateWidth, gateColor, gateDim);
+
+    // Zoom readout
+    ctx.font = "14px Consolas, Monaco, monospace";
+    ctx.fillStyle = GRAV_CYAN_DIM;
+    ctx.fillText(`ZOOM ${(1 / Math.max(0.001, viewW)).toFixed(1)}x`, 8, 18);
+      ctx.textAlign = "right";
+      ctx.fillText(`HPF ${Math.round(highPassPct)}%`, W - 8, 18);
+      ctx.textAlign = "start";
 
     // Cursor
     const cursorT = viewL + gate.cursor * viewW;
     const shipHdg2 = useGameStore.getState().ship.actualHeading;
-    const cursorRelDeg = ((cursorT - 0.5) * 360).toFixed(0);
-    const cursorAbsBrg = (((shipHdg2 + (cursorT - 0.5) * 360) % 360 + 360) % 360).toFixed(0);
-    const cursorBrg = `${cursorRelDeg > 0 ? "R" : "L"}${Math.abs(cursorRelDeg)} (${String(cursorAbsBrg).padStart(3, "0")})`;
-    drawCursor(ctx, W, H, gate.cursor, GRAV_CYAN, GRAV_CYAN_GLOW, `BRG ${cursorBrg}`);
-
-    // Labels — bottom left
-    ctx.font = "20px 'Share Tech Mono', monospace";
-    ctx.fillStyle = GRAV_CYAN_DIM;
-    ctx.fillText(`pN/kg  |  STRAIN  |  BRG: ${selectedBearing}°`, 6, H - 8);
-
-    // Bearing indication — top left
-    ctx.font = "20px 'Share Tech Mono', monospace";
-    ctx.fillStyle = hasWellInGateUI ? "#44ff66" : nearWellUI ? "#ffd24a" : GRAV_CYAN;
-    ctx.fillText(`BRG ${String(Math.round(selectedBearing)).padStart(3, "0")}`, 8, 22);
+    const cursorAbsBrg = (((shipHdg2 + (cursorT - 0.5) * 360 + gate.bearingOffsetDeg) % 360 + 360) % 360).toFixed(0);
+    drawCursor(ctx, W, H, gate.cursor, GRAV_CYAN, GRAV_CYAN_GLOW, `BRG ${String(cursorAbsBrg).padStart(3, "0")}`);
 
     // Lock indicator
     if (hasWellInGateUI || nearWellUI) {
-      ctx.font = "20px 'Share Tech Mono', monospace";
+      ctx.font = "20px Consolas, Monaco, monospace";
       ctx.fillStyle = hasWellInGateUI ? "#44ff66" : "#ffd24a";
       ctx.textAlign = "right";
       ctx.fillText(hasWellInGateUI ? "■ MASS LOCKED" : "■ MASS CLOSE", W - 10, 22);
       ctx.textAlign = "start";
     }
 
-    if (gate.analyzeResult) {
-      const r = gate.analyzeResult;
+    if (activeGravAnalysis) {
       const boxW = Math.min(W - 40, 600);
-      const boxH = 140;
+      const boxH = 120;
       const boxX = (W - boxW) / 2;
-      const boxY = 20;
+      const boxY = (H - boxH) / 2;
       ctx.fillStyle = "rgba(0,0,0,0.92)";
       ctx.fillRect(boxX, boxY, boxW, boxH);
-      ctx.strokeStyle = traceColor;
+      ctx.strokeStyle = GRAV_CYAN_GLOW;
       ctx.lineWidth = 2;
       ctx.strokeRect(boxX, boxY, boxW, boxH);
 
       const tx = boxX + 16;
-      ctx.font = "18px 'Share Tech Mono', monospace";
-      ctx.fillStyle = traceGlow;
-      ctx.fillText(`MASS: ${r.type}`, tx, boxY + 26);
-
-      ctx.font = "18px 'Share Tech Mono', monospace";
-      ctx.fillStyle = traceColor;
-      ctx.fillText(`CONFIDENCE: ${r.confidence}%`, tx, boxY + 54);
-      ctx.fillText(`SNR: ${r.snr} dB`, tx + boxW / 2, boxY + 54);
-      ctx.fillText(`BEARING: ${r.bearing}°`, tx, boxY + 82);
-      ctx.fillText(`RANGE: ${r.range} km`, tx + boxW / 2, boxY + 82);
-
-      ctx.font = "14px 'Share Tech Mono', monospace";
+      ctx.font = "18px Consolas, Monaco, monospace";
+      ctx.fillStyle = GRAV_CYAN_GLOW;
+      ctx.fillText(`ANALYZING: ${activeAnalysisCelestial?.name ?? activeGravAnalysis.celestialId}`, tx, boxY + 26);
+      ctx.fillStyle = GRAV_CYAN;
+      ctx.fillText(`CLARITY: ${Math.round(activeGravAnalysis.clarity * 100)}%`, tx, boxY + 52);
+      ctx.fillText(`TIME: ${(activeAnalysisRemaining / 1000).toFixed(1)} s`, tx + boxW / 2, boxY + 52);
+      ctx.fillRect(tx, boxY + 72, (boxW - 32) * activeAnalysisProgress, 16);
+      ctx.strokeStyle = GRAV_CYAN_DIM;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(tx, boxY + 72, boxW - 32, 16);
+      ctx.font = "14px Consolas, Monaco, monospace";
       ctx.fillStyle = GRAV_CYAN_DIM;
-      ctx.fillText(`GATE: ${(1 / gate.gateWidth).toFixed(1)}x`, tx, boxY + 110);
+      ctx.fillText(`TRACK SOLUTION ${(activeAnalysisProgress * 100).toFixed(0)}%`, tx, boxY + 104);
+    } else if (recentAnalysisResult && displayedResultLabel) {
+      const boxW = Math.min(W - 40, 560);
+      const boxH = 88;
+      const boxX = (W - boxW) / 2;
+      const boxY = (H - boxH) / 2;
+      ctx.fillStyle = "rgba(0,0,0,0.9)";
+      ctx.fillRect(boxX, boxY, boxW, boxH);
+      ctx.strokeStyle = "#44ff66";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(boxX, boxY, boxW, boxH);
+      ctx.font = "18px Consolas, Monaco, monospace";
+      ctx.fillStyle = "#88ffaa";
+      ctx.fillText(`TRACK REVEALED: ${displayedResultLabel.toUpperCase()}`, boxX + 16, boxY + 30);
+      ctx.font = "16px Consolas, Monaco, monospace";
+      ctx.fillStyle = "#44ff66";
+      ctx.fillText(
+        `ANALYSIS ${(recentAnalysisResult.durationMs / 1000).toFixed(1)}s  |  CLARITY ${Math.round(recentAnalysisResult.clarity * 100)}%`,
+        boxX + 16,
+        boxY + 58
+      );
     }
-  }, [time, contacts, selectedBearing, gate.gateL, gate.gateR, gate.cursor, gate.analyzeResult, gate.isGated, hasWellInGateUI, nearWellUI]);
+  }, [time, gravContacts, selectedBearing, gate.gateL, gate.gateR, gate.cursor, gate.isGated, gate.bearingOffsetDeg, hasWellInGateUI, nearWellUI, scannerOn, warpInterference, gain, highPassPct, activeGravAnalysis, activeAnalysisCelestial, activeAnalysisProgress, activeAnalysisRemaining, recentAnalysisResult, displayedResultLabel]);
 
-  const font = "'Share Tech Mono', monospace";
+  const font = "'Consolas', 'Monaco', monospace";
+  const shipHeading = useGameStore((s) => s.ship.actualHeading);
+  const handleWheel = useCallback((e) => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      if (!scannerUsable) return;
+      const gainStep = e.deltaY < 0 ? 0.05 : -0.05;
+        setGain((prev) => Math.max(0.5, Math.min(2, Number((prev + gainStep).toFixed(2)))));
+      return;
+    }
+    if (e.altKey) {
+      e.preventDefault();
+      if (!scannerUsable) return;
+      const hpfStep = e.deltaY < 0 ? 2 : -2;
+      setHighPassPct((prev) => Math.max(0, Math.min(100, prev + hpfStep)));
+      return;
+    }
+    if (!scannerUsable) return;
+    gate.onWheel(e);
+  }, [scannerUsable, gate]);
+  const viewSpanDeg = Math.max(1, (gate.gateR - gate.gateL) * 360);
+  const viewCenterT = (gate.gateL + gate.gateR) / 2;
+  const centerBearing = (((shipHeading + (viewCenterT - 0.5) * 360 + gate.bearingOffsetDeg) % 360) + 360) % 360;
+  const nearestThirty = Math.round(centerBearing / 30) * 30;
+  const bearingTapeTicks = Array.from({ length: 41 }, (_, i) => {
+    const rawDeg = nearestThirty + (i - 20) * 30;
+    const deltaDeg = rawDeg - centerBearing;
+    const leftPct = 50 + (deltaDeg / viewSpanDeg) * 100;
+    const wrapped = ((rawDeg % 360) + 360) % 360;
+    const labelVal = wrapped === 360 ? 0 : wrapped;
+    return {
+      key: `${rawDeg}`,
+      leftPct,
+      label: `${labelVal}`,
+    };
+  }).filter(t => t.leftPct >= -5 && t.leftPct <= 105);
+
   return (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <canvas
-        ref={canvasRef}
-        width={800}
-        height={280}
-        style={{ width: "100%", flex: 1, minHeight: 0, background: BG_SCREEN, cursor: "crosshair" }}
-        onMouseDown={gate.onMouseDown}
-        onMouseMove={gate.onMouseMove}
-        onMouseUp={gate.onMouseUp}
-        onMouseLeave={gate.onMouseUp}
-        onWheel={gate.onWheel}
-        onContextMenu={gate.onContextMenu}
-      />
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+          <canvas
+            ref={canvasRef}
+            width={800}
+            height={280}
+            style={{
+              width: "100%",
+              height: "100%",
+              minHeight: 0,
+              background: BG_SCREEN,
+              cursor: scannerUsable ? "crosshair" : "not-allowed",
+              pointerEvents: scannerUsable ? "auto" : "none",
+            }}
+            onMouseDown={scannerUsable ? gate.onMouseDown : undefined}
+            onMouseMove={scannerUsable ? gate.onMouseMove : undefined}
+            onMouseUp={scannerUsable ? gate.onMouseUp : undefined}
+            onMouseLeave={scannerUsable ? gate.onMouseUp : undefined}
+            onWheel={scannerUsable ? handleWheel : undefined}
+            onContextMenu={scannerUsable ? gate.onContextMenu : undefined}
+          />
+        </div>
+        <div style={{
+          width: GRAV_CONTROL_RACK_WIDTH,
+          borderLeft: `1px solid ${GRAV_CYAN_DIM}55`,
+          background: "rgba(0,0,0,0.35)",
+          display: "flex",
+          flexDirection: "row",
+          flexShrink: 0,
+        }}>
+          <div style={{
+            width: GRAV_CONTROL_COLUMN_WIDTH,
+            borderRight: `1px solid ${GRAV_CYAN_DIM}33`,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "6px 2px",
+          }}>
+            <span style={{ fontSize: 8, letterSpacing: 1, color: scannerUsable || warpInterference ? GRAV_CYAN_DIM : "rgba(150,150,150,0.8)" }}>GAIN</span>
+            <input
+              type="range"
+              min={0.5}
+              max={2}
+              step={0.01}
+              value={gain}
+              disabled={!scannerUsable}
+              onChange={(e) => setGain(Number(e.target.value))}
+              style={{
+                width: 150,
+                transform: "rotate(-90deg)",
+                accentColor: scannerUsable || warpInterference ? GRAV_CYAN : "rgba(130,130,130,0.6)",
+                cursor: scannerUsable ? "pointer" : "not-allowed",
+              }}
+              aria-label="Gravimetric gain"
+            />
+            <span style={{
+              fontSize: 8,
+              letterSpacing: 1,
+              color: scannerUsable || warpInterference ? GRAV_CYAN : "rgba(150,150,150,0.8)",
+              minWidth: 34,
+              textAlign: "center",
+            }}>
+              {gain.toFixed(2)}x
+            </span>
+          </div>
+          <div style={{
+            width: GRAV_CONTROL_COLUMN_WIDTH,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "6px 2px",
+          }}>
+            <span style={{ fontSize: 8, letterSpacing: 1, color: scannerUsable || warpInterference ? GRAV_CYAN_DIM : "rgba(150,150,150,0.8)" }}>HPF</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={highPassPct}
+              disabled={!scannerUsable}
+              onChange={(e) => setHighPassPct(Number(e.target.value))}
+              style={{
+                width: 150,
+                transform: "rotate(-90deg)",
+                accentColor: scannerUsable || warpInterference ? GRAV_CYAN : "rgba(130,130,130,0.6)",
+                cursor: scannerUsable ? "pointer" : "not-allowed",
+              }}
+              aria-label="Gravimetric high pass filter"
+            />
+            <span style={{
+              fontSize: 8,
+              letterSpacing: 1,
+              color: scannerUsable || warpInterference ? GRAV_CYAN : "rgba(150,150,150,0.8)",
+              minWidth: 34,
+              textAlign: "center",
+            }}>
+              {Math.round(highPassPct)}%
+            </span>
+          </div>
+        </div>
+      </div>
       <div style={{
         display: "flex",
-        justifyContent: "space-between",
-        padding: "6px 8px 4px",
         borderTop: `1px solid ${GRAV_CYAN_DIM}55`,
-        background: "rgba(0,0,0,0.45)",
+        background: "rgba(0,0,0,0.35)",
         flexShrink: 0,
+        minHeight: 32,
       }}>
-        <button
-          onClick={gate.reset}
+        <div style={{ flex: 1, minWidth: 0, padding: "3px 8px 5px" }}>
+          <div style={{
+            position: "relative",
+            height: 20,
+            overflow: "hidden",
+            fontFamily: font,
+          }}>
+            {bearingTapeTicks.map((tick) => (
+              <span
+                key={tick.key}
+                style={{
+                  position: "absolute",
+                  left: `${tick.leftPct}%`,
+                  transform: "translateX(-50%)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 1,
+                  textShadow: scannerUsable ? "0 0 4px rgba(68,255,204,0.35)" : "none",
+                  color: scannerUsable || warpInterference ? GRAV_CYAN_GLOW : "rgba(170,170,170,0.9)",
+                  fontSize: 10,
+                  fontWeight: "bold",
+                  letterSpacing: 0.5,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span
+                  style={{
+                    width: 1,
+                    height: 7,
+                    background: scannerUsable || warpInterference ? GRAV_CYAN : "rgba(150,150,150,0.8)",
+                  }}
+                />
+                <span>{tick.label}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+        <div
           style={{
-            padding: "4px 10px", fontSize: 10, letterSpacing: 1,
-            background: "rgba(0,204,170,0.1)", border: `1px solid ${GRAV_CYAN_DIM}`,
-            color: GRAV_CYAN, fontFamily: font, cursor: "pointer", borderRadius: 1,
-          }}
-        >RESET</button>
-        <button
-          onClick={() => {
-            if (!isOnCooldown && hasWellInGateUI) {
-              gate.analyze(contacts, gate.gateWidth);
-              setCooldownEnd(Date.now() + GRAV_COOLDOWN_SEC * 1000);
-            }
-          }}
-          disabled={!hasWellInGateUI || isOnCooldown}
-          style={{
-            padding: "4px 10px", fontSize: 10, letterSpacing: 1,
-            background: isOnCooldown ? "rgba(0,204,170,0.05)" : hasWellInGateUI ? "rgba(68,255,102,0.15)" : nearWellUI ? "rgba(255,210,74,0.15)" : "rgba(0,204,170,0.1)",
-            border: `1px solid ${isOnCooldown ? GRAV_CYAN_DIM : hasWellInGateUI ? "#44ff66" : nearWellUI ? "#ffd24a" : GRAV_CYAN}`,
-            color: isOnCooldown ? GRAV_CYAN_DIM : hasWellInGateUI ? "#44ff66" : nearWellUI ? "#ffd24a" : GRAV_CYAN,
-            fontFamily: font, cursor: (!isOnCooldown && hasWellInGateUI) ? "pointer" : "not-allowed", borderRadius: 1,
-            position: "relative", overflow: "hidden",
+            width: GRAV_CONTROL_RACK_WIDTH,
+            borderLeft: `1px solid ${GRAV_CYAN_DIM}55`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "4px 4px 6px",
           }}
         >
-          {isOnCooldown && (
-            <span style={{
-              position: "absolute", left: 0, top: 0, bottom: 0,
-              width: `${cooldownPct * 100}%`,
-              background: "rgba(0,204,170,0.15)",
-              transition: "width 0.5s linear",
-            }} />
-          )}
-          <span style={{ position: "relative" }}>
-            {isOnCooldown ? `${Math.ceil(cooldownRemaining / 1000)}s` : "ANALYZE"}
-          </span>
-        </button>
-      </div>
-      {gate.ctxMenu && (
-        <div style={{
-          position: "absolute", left: gate.ctxMenu.x, top: gate.ctxMenu.y,
-          background: BG_PANEL, border: `1px solid ${GRAV_CYAN_DIM}`, zIndex: 20,
-          minWidth: 100, fontSize: 9, fontFamily: font,
-        }}>
-          {[
-            { label: "GATE CURSOR", action: gate.gateAroundCursor },
-            { label: "ANALYZE", action: () => gate.analyze(contacts, gate.gateWidth) },
-            { label: "RESET VIEW", action: gate.reset },
-          ].map((item, i) => (
-            <div key={i} onClick={item.action} style={{
-              padding: "5px 10px", cursor: "pointer", color: GRAV_CYAN,
-              borderBottom: `1px solid ${GRAV_CYAN_DIM}22`,
+          <button
+            onClick={() => {
+              if (canStartAnalysis && gravQuality.target && gravQuality.celestialId) {
+                startEwGravAnalysis({
+                  celestialId: gravQuality.celestialId,
+                  anomalyId: gravQuality.target.id,
+                  startedAt: Date.now(),
+                  durationMs: gravQuality.durationMs,
+                  clarity: gravQuality.clarity,
+                });
+              }
             }}
-            onMouseEnter={e => e.currentTarget.style.background = "rgba(0,204,170,0.1)"}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-            >{item.label}</div>
-          ))}
+            disabled={!canStartAnalysis}
+            style={{
+              width: "100%",
+              padding: "4px 4px",
+              fontSize: 10,
+              letterSpacing: 1,
+              background: !scannerUsable
+                ? (warpInterference ? "rgba(0,204,170,0.08)" : "rgba(100,100,100,0.08)")
+                : activeGravAnalysis
+                  ? "rgba(0,204,170,0.08)"
+                  : targetAlreadyRevealed
+                    ? "rgba(68,255,102,0.08)"
+                    : hasWellInGateUI
+                      ? "rgba(68,255,102,0.15)"
+                      : nearWellUI
+                        ? "rgba(255,210,74,0.15)"
+                        : "rgba(0,204,170,0.1)",
+              border: `1px solid ${!scannerUsable ? (warpInterference ? "rgba(0,204,170,0.35)" : "rgba(130,130,130,0.35)") : activeGravAnalysis ? GRAV_CYAN : targetAlreadyRevealed ? "#44ff66" : hasWellInGateUI ? "#44ff66" : nearWellUI ? "#ffd24a" : GRAV_CYAN}`,
+              color: !scannerUsable ? (warpInterference ? GRAV_CYAN : "rgba(160,160,160,0.65)") : activeGravAnalysis ? GRAV_CYAN_GLOW : targetAlreadyRevealed ? "#88ffaa" : hasWellInGateUI ? "#44ff66" : nearWellUI ? "#ffd24a" : GRAV_CYAN,
+              fontFamily: font,
+              cursor: canStartAnalysis ? "pointer" : "not-allowed",
+              borderRadius: 1,
+              position: "relative",
+              overflow: "hidden",
+            }}
+          >
+            {activeGravAnalysis && (
+              <span style={{
+                position: "absolute", left: 0, top: 0, bottom: 0,
+                width: `${activeAnalysisProgress * 100}%`,
+                background: "rgba(0,204,170,0.15)",
+                transition: "width 0.5s linear",
+              }} />
+            )}
+            <span style={{ position: "relative" }}>
+              {warpInterference
+                ? "WARP"
+                : activeGravAnalysis
+                ? `${Math.ceil(activeAnalysisRemaining / 1000)}s`
+                : targetAlreadyRevealed
+                  ? "KNOWN"
+                  : gravQuality.state !== "none" && gravQuality.celestialId
+                    ? `ANALYZE ${Math.ceil(gravQuality.durationMs / 1000)}s`
+                    : "ANALYZE"}
+            </span>
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 };
@@ -1397,16 +1977,16 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
 
       // Only show labels/symbols for active radar contacts
       if (activeDetect) {
-        ctx.font = "16px 'Share Tech Mono', monospace";
+        ctx.font = "16px Consolas, Monaco, monospace";
         ctx.fillStyle = isLocked ? iffColor : (selectedContact === c.id ? AMBER_GLOW : AMBER);
         ctx.fillText(c.id, px + 24, py + 6);
 
         ctx.fillStyle = AMBER_DIM;
-        ctx.font = "14px 'Share Tech Mono', monospace";
+        ctx.font = "14px Consolas, Monaco, monospace";
         ctx.fillText(`${(c.range / 1000).toFixed(1)}`, px + 24, py + 24);
 
         if (isLocked) {
-          ctx.font = "12px 'Share Tech Mono', monospace";
+          ctx.font = "12px Consolas, Monaco, monospace";
           ctx.fillStyle = iffColor;
           ctx.fillText(iff, px + 24, py - 12);
           ctx.fillText(lock === "hard" ? "HRD" : "SFT", px - 20, py - 20);
@@ -1418,7 +1998,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
     ctx.restore();
 
     // Azimuth labels along bottom
-    ctx.font = "16px 'Share Tech Mono', monospace";
+    ctx.font = "16px Consolas, Monaco, monospace";
     ctx.fillStyle = AMBER_DIM;
     const labelAzStep = azHalf <= 30 ? 10 : 30;
     for (let az = -azHalf; az <= azHalf; az += labelAzStep) {
@@ -1432,7 +2012,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
       const y = MARGIN_T + (i / numLines) * scopeH;
       const rng = rangeKm * (1 - i / numLines);
       ctx.fillStyle = AMBER_DIM;
-      ctx.font = "16px 'Share Tech Mono', monospace";
+      ctx.font = "16px Consolas, Monaco, monospace";
       ctx.fillText(`${rng.toFixed(0)}`, 4, y + 6);
     }
 
@@ -1440,7 +2020,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
     const ownHeading = useGameStore.getState().ship.actualHeading;
     const hdgStr = String(Math.round(ownHeading)).padStart(3, "0");
     ctx.fillStyle = AMBER;
-    ctx.font = "18px 'Share Tech Mono', monospace";
+    ctx.font = "18px Consolas, Monaco, monospace";
     ctx.fillText(`RNG ${rangeKm}km`, MARGIN_L + 8, MARGIN_T - 12);
     ctx.textAlign = "center";
     ctx.fillText(`HDG ${hdgStr}`, MARGIN_L + scopeW / 2, MARGIN_T - 12);
@@ -1474,11 +2054,11 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
     if (lockContact) {
       const brg = String(Math.round(lockContact.bearing)).padStart(3, "0");
       const rngKm = Math.max(0, Math.round(lockContact.range / 1000));
-      ctx.font = "18px 'Share Tech Mono', monospace";
+      ctx.font = "18px Consolas, Monaco, monospace";
       ctx.fillText(brg, boxX + boxW / 2, boxY + 22);
       ctx.fillText(String(rngKm).padStart(2, "0"), boxX + boxW / 2, boxY + 52);
     } else {
-      ctx.font = "18px 'Share Tech Mono', monospace";
+      ctx.font = "18px Consolas, Monaco, monospace";
       ctx.fillText("---", boxX + boxW / 2, boxY + 22);
       ctx.fillText("--", boxX + boxW / 2, boxY + 52);
     }
@@ -1486,7 +2066,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
 
   }, [time, contacts, selectedContact, maxRange, azHalf, lockState, iffState, radarOn]);
 
-  const font = "'Share Tech Mono', monospace";
+  const font = "'Consolas', 'Monaco', monospace";
   const arrowBtnStyle = (dir) => ({
     padding: "2px 6px", fontSize: 10,
     background: "rgba(255,176,0,0.06)",
@@ -1575,7 +2155,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
             zIndex: 20,
             minWidth: 110,
             fontSize: 9,
-            fontFamily: "'Share Tech Mono', monospace",
+            fontFamily: "'Consolas', 'Monaco', monospace",
           }}>
             <div style={{ padding: "3px 8px", borderBottom: `1px solid ${AMBER_DIM}33`, color: AMBER_GLOW, fontSize: 8, letterSpacing: 1 }}>
               {contextMenu.id}
@@ -1651,7 +2231,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
 // EMCON status bars
 const EmconBar = ({ label, value, warning }) => (
   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-    <span style={{ width: 36, fontSize: 8, color: AMBER_DIM, fontFamily: "'Share Tech Mono', monospace", textAlign: "right" }}>{label}</span>
+    <span style={{ width: 36, fontSize: 8, color: AMBER_DIM, fontFamily: "'Consolas', 'Monaco', monospace", textAlign: "right" }}>{label}</span>
     <div style={{ flex: 1, height: 8, background: "#1a1a18", border: `1px solid ${AMBER_DIM}33`, borderRadius: 1, overflow: "hidden" }}>
       <div style={{
         width: `${value * 100}%`,
@@ -1661,7 +2241,7 @@ const EmconBar = ({ label, value, warning }) => (
         boxShadow: warning ? `0 0 6px ${RED_ALERT}` : "none",
       }} />
     </div>
-    <span style={{ width: 28, fontSize: 8, color: warning ? RED_ALERT : AMBER, fontFamily: "'Share Tech Mono', monospace" }}>
+    <span style={{ width: 28, fontSize: 8, color: warning ? RED_ALERT : AMBER, fontFamily: "'Consolas', 'Monaco', monospace" }}>
       {(value * 100).toFixed(0)}%
     </span>
   </div>
@@ -1716,7 +2296,7 @@ const EwRwr = () => {
     ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fill();
 
     // Cardinal labels
-    ctx.font = "14px 'Share Tech Mono', monospace";
+    ctx.font = "14px Consolas, Monaco, monospace";
     ctx.fillStyle = AMBER_DIM;
     ctx.textAlign = "center";
     ctx.fillText("12", cx, cy - outerR - 8);
@@ -1756,7 +2336,7 @@ const EwRwr = () => {
       }
 
       // Symbol
-      ctx.font = "bold 16px 'Share Tech Mono', monospace";
+      ctx.font = "bold 16px Consolas, Monaco, monospace";
       ctx.fillStyle = symColor;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -1766,7 +2346,7 @@ const EwRwr = () => {
     });
 
     // Heading label
-    ctx.font = "14px 'Share Tech Mono', monospace";
+    ctx.font = "14px Consolas, Monaco, monospace";
     ctx.fillStyle = AMBER;
     ctx.fillText(`HDG ${String(Math.round(shipHeading)).padStart(3, "0")}`, 6, 16);
 
@@ -1792,6 +2372,10 @@ const EwRwr = () => {
 export default function EWConsole() {
   const [time, setTime] = useState(0);
   const enemy = useGameStore((s) => s.enemy);
+  const starSystem = useGameStore((s) => s.starSystem);
+  const currentCelestialId = useGameStore((s) => s.currentCelestialId);
+  const gravScannerOn = useGameStore((s) => s.ewGravScannerOn);
+  const setGravScannerOn = useGameStore((s) => s.setEwGravScannerOn);
   const [contacts, setContacts] = useState(() => buildContactsFromGame(enemy));
   const [selectedContact, setSelectedContact] = useState("Σ");
   const [selectedBearing, setSelectedBearing] = useState(0);
@@ -1824,6 +2408,7 @@ export default function EWConsole() {
   const jammers = useGameStore((s) => s.ewJammers);
   const setJammers = useGameStore((s) => s.setEwJammers);
   const [selectedJammer, setSelectedJammer] = useState(0);
+  const [gravResetToken, setGravResetToken] = useState(0);
   const [staleContacts, setStaleContacts] = useState({});
   const [classifierMenu, setClassifierMenu] = useState(null);
   const radarWasOnRef = useRef(false);
@@ -1937,7 +2522,7 @@ export default function EWConsole() {
     setEmconLevel(radarOn ? 0.3 + radarPower / 100 * 0.6 : 0.1);
   }, [radarOn, radarPower]);
 
-  const font = "'Share Tech Mono', monospace";
+  const font = "'Consolas', 'Monaco', monospace";
 
   return (
     <div style={{
@@ -1955,7 +2540,6 @@ export default function EWConsole() {
       boxSizing: "border-box",
       overflow: "auto",
     }}>
-      <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet" />
 
       {/* Header */}
       <div style={{
@@ -1982,500 +2566,70 @@ export default function EWConsole() {
       </div>
 
       {/* Main layout */}
-      <div style={{ display: "flex", gap: 6, flex: 1, minHeight: 0 }}>
-
-        {/* Left column: Waterfall + Spectrum + EW + Grav + Radar */}
-        <div style={{ flex: 0.7, display: "flex", flexDirection: "column", gap: 6, minWidth: 0, overflowY: "auto", overflowX: "hidden" }}>
-          <Panel title="Waterfall — EM Spectrum / Bearing" style={{ flex: 1, minHeight: 80 }}>
-            <WaterfallDisplay contacts={contacts} time={time} shipHeading={useGameStore.getState().ship.actualHeading} />
-          </Panel>
-
-          <Panel title="Spectrum Analyzer" style={{ flex: 2, minHeight: 100 }}>
-            <SpectrumAnalyzer
-              contacts={visibleContacts} time={time} selectedBearing={selectedBearing}
-              onLockQualityChange={setSpectrumLockQuality}
-              jammers={jammers} jammerColors={JAMMER_COLORS} selectedJammer={selectedJammer}
-              onJammerFreqChange={(idx, freq) => setJammers(jammers.map((j, i) => i === idx ? { ...j, freq } : j))}
-            />
-          </Panel>
-
-          <Panel title="EW Countermeasures" style={{ flexShrink: 0 }}>
-            <div style={{ padding: "6px 8px" }}>
-              {/* Jammer selector row */}
-              <div style={{ display: "flex", gap: 3, marginBottom: 6 }}>
-                {jammers.map((j, i) => {
-                  const isSel = selectedJammer === i;
-                  const isAct = j.active;
-                  const jColor = JAMMER_COLORS[i];
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => setSelectedJammer(i)}
-                      style={{
-                        flex: 1, padding: "4px 0", fontSize: 10, fontWeight: "bold",
-                        background: isAct ? `${jColor}33` : isSel ? `${jColor}22` : "rgba(255,176,0,0.03)",
-                        border: `1px solid ${isSel || isAct ? jColor : AMBER_DIM}`,
-                        color: isSel || isAct ? jColor : AMBER_DIM,
-                        fontFamily: font, cursor: "pointer", borderRadius: 1,
-                      }}
-                    >{i + 1}{j.mode ? ` ${j.mode}` : ""}</button>
-                  );
-                })}
-              </div>
-
-              {/* Mode assignment for selected jammer */}
-              <div style={{ display: "flex", gap: 3, marginBottom: 6 }}>
-                {[
-                  { id: "NJ", label: "NOISE", desc: "Broadband noise jam" },
-                  { id: "SJ", label: "SPOT", desc: "Focused spot jam" },
-                  { id: "DRFM", label: "DRFM", desc: "Digital replay" },
-                  { id: "RGPO", label: "RGPO", desc: "Range gate pull-off" },
-                ].map(m => {
-                  const curMode = jammers[selectedJammer]?.mode;
-                  const isCur = curMode === m.id;
-                  return (
-                    <button
-                      key={m.id}
-                      onClick={() => setJammers(jammers.map((j, i) => i === selectedJammer ? { ...j, mode: isCur ? null : m.id, active: false } : j))}
-                      title={m.desc}
-                      style={{
-                        flex: 1, padding: "3px 2px", fontSize: 7, letterSpacing: 1,
-                        background: isCur ? "rgba(255,176,0,0.18)" : "rgba(255,176,0,0.03)",
-                        border: `1px solid ${isCur ? AMBER : AMBER_DIM}`,
-                        color: isCur ? AMBER_GLOW : AMBER_DIM,
-                        fontFamily: font, cursor: "pointer", borderRadius: 1,
-                      }}
-                    >{m.label}</button>
-                  );
-                })}
-              </div>
-
-              {/* Activate / deactivate selected jammer */}
-              <button
-                onClick={() => {
-                  const j = jammers[selectedJammer];
-                  if (!j?.mode) return;
-                  setJammers(jammers.map((jj, i) => i === selectedJammer ? { ...jj, active: !jj.active } : jj));
-                }}
-                disabled={!jammers[selectedJammer]?.mode || (spectrumLockQuality !== "locked" && spectrumLockQuality !== "close")}
-                style={{
-                  width: "100%", padding: "5px 0", fontSize: 9, letterSpacing: 2,
-                  background: jammers[selectedJammer]?.active ? "rgba(255,50,50,0.25)" : "rgba(255,176,0,0.06)",
-                  border: `1px solid ${jammers[selectedJammer]?.active ? RED_ALERT : jammers[selectedJammer]?.mode ? AMBER : AMBER_DIM}`,
-                  color: jammers[selectedJammer]?.active ? RED_ALERT : jammers[selectedJammer]?.mode ? AMBER : AMBER_DIM,
-                  fontFamily: font, cursor: jammers[selectedJammer]?.mode && (spectrumLockQuality === "locked" || spectrumLockQuality === "close") ? "pointer" : "not-allowed", borderRadius: 1,
-                }}
-              >
-                {jammers[selectedJammer]?.active
-                  ? `⚠ J${selectedJammer + 1} ${jammers[selectedJammer].mode} ACTIVE`
-                  : jammers[selectedJammer]?.mode
-                    ? `ARM J${selectedJammer + 1} ${jammers[selectedJammer].mode}`
-                    : `J${selectedJammer + 1} — SELECT MODE`}
-              </button>
-
-              {/* Status */}
-              {jammers.some(j => j.active) && (
-                <div style={{
-                  marginTop: 5, padding: "3px 8px",
-                  background: "rgba(255,50,50,0.1)",
-                  border: "1px solid rgba(255,50,50,0.3)",
-                  fontSize: 8, color: RED_ALERT,
-                  textAlign: "center", letterSpacing: 1, borderRadius: 1,
-                }}>
-                  ⚠ JAMMING — {jammers.filter(j => j.active).map((j, i) => `J${jammers.indexOf(j) + 1}:${j.mode}`).join("  ")}
-                </div>
-              )}
-            </div>
-          </Panel>
-
-          <Panel title="Gravitational Analyzer" style={{ flex: 2, minHeight: 100 }}>
-            <GravAnalyzer contacts={visibleContacts} time={time} selectedBearing={selectedBearing} onBearingChange={setSelectedBearing} />
-          </Panel>
-
-          {/* Radar Management */}
-          <Panel title="Radar Management" style={{ flexShrink: 0 }}>
-            <div style={{ padding: "6px 8px" }}>
-              <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+      <div style={{ display: "flex", gap: 6, flex: 1, minHeight: 0, alignItems: "stretch" }}>
+        <div style={{ flex: "0 0 36%", display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+          <Panel
+            title="Gravimetric Scanner"
+            style={{ minHeight: 160 }}
+            dimmed={!gravScannerOn}
+            headerRight={(
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <button
-                  onClick={() => {
-                    const next = !radarOn;
-                    setRadarOn(next);
-                    if (!next) setLockState(() => ({}));
-                  }}
+                  onClick={() => setGravResetToken((v) => v + 1)}
                   style={{
-                    flex: 1, padding: "6px 0", fontSize: 10, letterSpacing: 2,
-                    background: radarOn ? "rgba(255,50,50,0.2)" : "rgba(255,176,0,0.06)",
-                    border: `1px solid ${radarOn ? RED_ALERT : AMBER_DIM}`,
-                    color: radarOn ? RED_ALERT : AMBER_DIM,
-                    fontFamily: font, cursor: "pointer", borderRadius: 1,
+                    padding: "1px 6px",
+                    fontSize: 8,
+                    letterSpacing: 1,
+                    borderRadius: 1,
+                    border: `1px solid ${gravScannerOn ? GRAV_CYAN_DIM : "rgba(130,130,130,0.35)"}`,
+                    background: gravScannerOn ? "rgba(0,204,170,0.08)" : "rgba(90,90,90,0.12)",
+                    color: gravScannerOn ? GRAV_CYAN : "rgba(180,180,180,0.65)",
+                    fontFamily: font,
+                    cursor: gravScannerOn ? "pointer" : "not-allowed",
                   }}
+                  disabled={!gravScannerOn}
+                  aria-label="Reset gravimetric scanner gate"
                 >
-                  {radarOn ? "⚠ RADAR ON" : "RADAR OFF"}
+                  RESET
+                </button>
+                <button
+                  onClick={() => setGravScannerOn(!gravScannerOn)}
+                  style={{
+                    padding: "1px 6px",
+                    fontSize: 8,
+                    letterSpacing: 1,
+                    borderRadius: 1,
+                    border: `1px solid ${gravScannerOn ? GRAV_CYAN : "rgba(130,130,130,0.5)"}`,
+                    background: gravScannerOn ? "rgba(0,204,170,0.14)" : "rgba(90,90,90,0.16)",
+                    color: gravScannerOn ? GRAV_CYAN_GLOW : "rgba(180,180,180,0.85)",
+                    fontFamily: font,
+                    cursor: "pointer",
+                  }}
+                  aria-label="Toggle gravimetric scanner"
+                >
+                  {gravScannerOn ? "ON" : "OFF"}
                 </button>
               </div>
-
-              <div style={{ fontSize: 8, color: AMBER_DIM, letterSpacing: 1, marginBottom: 4 }}>MODE</div>
-              <div style={{ display: "flex", gap: 3, marginBottom: 8, flexWrap: "wrap" }}>
-                {[
-                  { id: "RWS", label: "RWS" },
-                  { id: "TWS", label: "TWS" },
-                  { id: "SCM", label: "SCM" },
-                  { id: "HOJ", label: "HOJ" },
-                ].map(m => (
-                  <button
-                    key={m.id}
-                    onClick={() => setRadarMode(m.id)}
-                    style={{
-                      flex: 1, padding: "4px 2px", fontSize: 9, letterSpacing: 1,
-                      background: radarMode === m.id ? "rgba(255,176,0,0.15)" : "rgba(255,176,0,0.03)",
-                      border: `1px solid ${radarMode === m.id ? AMBER : AMBER_DIM}`,
-                      color: radarMode === m.id ? AMBER_GLOW : AMBER_DIM,
-                      fontFamily: font, cursor: "pointer", borderRadius: 1,
-                    }}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-              <div style={{ marginBottom: 8, fontSize: 8, color: hardLockedId ? "#44ff66" : AMBER_DIM, letterSpacing: 1 }}>
-                STT: {hardLockedId ? `AUTO — ${hardLockedId}` : "AUTO — NO HARD LOCK"}
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: AMBER_DIM, marginBottom: 2 }}>
-                <span>POWER</span>
-                <span>{radarPower}%</span>
-              </div>
-              <input
-                type="range" min={10} max={100} value={radarPower}
-                onChange={e => setRadarPower(Number(e.target.value))}
-                style={{ width: "100%", height: 4, accentColor: AMBER, cursor: "pointer" }}
-              />
-
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: AMBER_DIM, marginBottom: 2, marginTop: 8 }}>
-                <span>FREQUENCY</span>
-                <span>{(radarFreq * 18 + 2).toFixed(1)} GHz</span>
-              </div>
-              <input
-                type="range" min={0} max={100} value={radarFreq * 100}
-                onChange={e => setRadarFreq(e.target.value / 100)}
-                style={{ width: "100%", height: 4, accentColor: AMBER, cursor: "pointer" }}
-              />
-
-              <div style={{ fontSize: 8, color: AMBER_DIM, letterSpacing: 1, marginTop: 8, marginBottom: 4 }}>PRF</div>
-              <div style={{ display: "flex", gap: 3, marginBottom: 8 }}>
-                {["LOW", "MED", "HIGH", "INTER"].map(p => (
-                  <button
-                    key={p}
-                    onClick={() => setRadarPRF(p)}
-                    style={{
-                      flex: 1, padding: "3px 0", fontSize: 8, letterSpacing: 1,
-                      background: radarPRF === p ? "rgba(255,176,0,0.15)" : "rgba(255,176,0,0.03)",
-                      border: `1px solid ${radarPRF === p ? AMBER : AMBER_DIM}`,
-                      color: radarPRF === p ? AMBER_GLOW : AMBER_DIM,
-                      fontFamily: font, cursor: "pointer", borderRadius: 1,
-                    }}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-
-              <div style={{
-                padding: "8px 10px", marginTop: 6,
-                background: radarOn ? "rgba(255,50,50,0.15)" : "rgba(255,176,0,0.04)",
-                border: `1px solid ${radarOn ? "rgba(255,50,50,0.4)" : AMBER_DIM + "33"}`,
-                fontSize: 11, color: radarOn ? RED_ALERT : AMBER_DIM,
-                textAlign: "center", letterSpacing: 2, borderRadius: 1,
-                fontWeight: radarOn ? "bold" : "normal",
-              }}>
-                {radarOn
-                  ? `⚠ EMITTING — ${effectiveRadarMode} ${radarPRF} PRF ${radarPower}%`
-                  : "RADAR SILENT — PASSIVE ONLY"}
-              </div>
-              <div style={{ marginTop: 6, fontSize: 8, color: AMBER_DIM, textAlign: "center", letterSpacing: 1 }}>
-                EST DETECT RNG (BS RCS): {estimatedRangeKm} km
-              </div>
-            </div>
-          </Panel>
-        </div>
-
-        {/* Center column: Polar scope — wider */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, minWidth: 320 }}>
-          <Panel title="B-Scope Radar" style={{ flex: 1, minHeight: 320 }}>
-            <BScope
-              contacts={contactsWithDetection}
+            )}
+          >
+            <GravAnalyzer
+              contacts={visibleContacts}
               time={time}
-              selectedContact={selectedContact}
-              onSelectContact={setSelectedContact}
-              lockState={lockState}
-              setLockState={setLockState}
-              iffState={iffState}
-              setIffState={setIffState}
-              radarOn={radarOn}
-              spectrumQuality={spectrumLockQuality}
+              selectedBearing={selectedBearing}
+              onBearingChange={setSelectedBearing}
+              resetToken={gravResetToken}
+              scannerOn={gravScannerOn}
             />
           </Panel>
-
-          {/* EMCON Panel */}
-          <Panel title="EMCON — Ship Emissions" style={{ minHeight: 100 }}>
-            <div style={{ padding: "6px 8px" }}>
-              <EmconBar label="EM" value={emconLevel} warning={emconLevel > 0.6} />
-              <EmconBar label="THRM" value={0.22 + Math.sin(time * 0.5) * 0.03} warning={false} />
-              <EmconBar label="GRAV" value={0.08} warning={false} />
-              <EmconBar label="COMMS" value={0.12} warning={false} />
-              <div style={{
-                marginTop: 6, padding: "4px 8px",
-                background: emconLevel > 0.6 ? "rgba(255,50,50,0.1)" : "rgba(255,176,0,0.04)",
-                border: `1px solid ${emconLevel > 0.6 ? "rgba(255,50,50,0.3)" : AMBER_DIM + "33"}`,
-                fontSize: 8, color: emconLevel > 0.6 ? RED_ALERT : AMBER_DIM,
-                textAlign: "center", letterSpacing: 1,
-                borderRadius: 1,
-              }}>
-                {emconLevel > 0.6 ? "⚠ DETECTABLE — EMISSIONS ABOVE THRESHOLD" : "EMISSIONS NOMINAL — LOW OBSERVABILITY"}
-              </div>
-            </div>
-          </Panel>
         </div>
 
-        {/* Right column: Contacts + Log */}
-        <div style={{ width: 240, display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-          {/* Contact Classifier */}
-          <Panel title="Signal Classifier" style={{ flex: 1 }}>
-            <div style={{ padding: "4px 0" }}>
-              {visibleContacts.filter(c => c.activeDetect).map(c => {
-                const iff = iffState[c.id] || "UNK";
-                const iffColor = iff === "HOSTILE" ? RED_ALERT : iff === "FRIENDLY" ? "#00ff66" : AMBER;
-                const lock = lockState[c.id];
-                const isLocked = lock === "hard" || lock === "soft";
-                return (
-                <div
-                  key={c.id}
-                  onClick={() => {
-                    setSelectedContact(c.id);
-                    setSelectedBearing(Math.round(c.bearing));
-                    setClassifierMenu(null);
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setClassifierMenu({
-                      id: c.id,
-                      x: e.clientX,
-                      y: e.clientY,
-                      stale: false,
-                    });
-                  }}
-                  style={{
-                    padding: "6px 10px",
-                    borderBottom: `1px solid ${AMBER_DIM}22`,
-                    cursor: "context-menu",
-                    background: selectedContact === c.id ? `${iffColor}15` : "transparent",
-                    borderLeft: selectedContact === c.id ? `2px solid ${iffColor}` : `2px solid transparent`,
-                    transition: "all 0.15s",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                    <span style={{ color: iffColor, fontSize: 12, fontWeight: "bold" }}>CONTACT {c.id}</span>
-                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                      {isLocked && (
-                        <span style={{
-                          fontSize: 6, padding: "1px 4px",
-                          background: `${iffColor}22`,
-                          border: `1px solid ${iffColor}66`,
-                          color: iffColor,
-                          letterSpacing: 1,
-                          borderRadius: 1,
-                        }}>
-                          {lock === "hard" ? "HRD LCK" : "SFT LCK"}
-                        </span>
-                      )}
-                      <span style={{
-                        fontSize: 7, padding: "1px 5px",
-                        background: iff === "HOSTILE" ? "rgba(255,50,50,0.15)" : iff === "FRIENDLY" ? "rgba(0,255,100,0.1)" : "rgba(255,176,0,0.07)",
-                        border: `1px solid ${iffColor}66`,
-                        color: iffColor,
-                        letterSpacing: 1,
-                        borderRadius: 1,
-                      }}>
-                        {iff}
-                      </span>
-                      <span style={{
-                        fontSize: 7, padding: "1px 5px",
-                        background: c.emStrength > 0.4 ? "rgba(255,176,0,0.15)" : c.emStrength > 0 ? "rgba(255,176,0,0.07)" : "rgba(255,50,50,0.1)",
-                        border: `1px solid ${c.emStrength > 0.4 ? AMBER_DIM : c.emStrength > 0 ? AMBER_DIM + "66" : "rgba(255,50,50,0.3)"}`,
-                        color: c.emStrength > 0 ? AMBER : RED_ALERT,
-                        letterSpacing: 1,
-                        borderRadius: 1,
-                      }}>
-                        {c.emStrength > 0.4 ? "STRONG" : c.emStrength > 0 ? "WEAK" : "GHOST"}
-                      </span>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 8, color: AMBER_DIM, lineHeight: 1.6 }}>
-                    BRG: <span style={{ color: iffColor }}>{c.bearing.toFixed(1)}°</span> &nbsp;
-                    RNG: <span style={{ color: iffColor }}>{(c.range / 1000).toFixed(1)}km</span><br />
-                    EM: {(c.emStrength * 100).toFixed(0)}% &nbsp; THRM: {(c.thermal * 100).toFixed(0)}%<br />
-                    CLASS: <span style={{ color: iffColor }}>
-                      {c.type.toUpperCase()}
-                    </span>
-                    &nbsp; CONF: {c.emStrength > 0.4 ? "72%" : c.emStrength > 0 ? "34%" : "11%"}
-                  </div>
-                </div>
-                );
-              })}
-              {staleContactList.map(c => {
-                const iff = iffState[c.id] || "UNK";
-                const staleColor = "#8a8a8a";
-                return (
-                  <div
-                    key={`stale-${c.id}`}
-                    style={{
-                      padding: "6px 10px",
-                      borderBottom: `1px solid ${AMBER_DIM}22`,
-                      cursor: "not-allowed",
-                      background: "rgba(120,120,120,0.08)",
-                      borderLeft: `2px solid ${staleColor}`,
-                      opacity: 0.75,
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                      <span style={{ color: staleColor, fontSize: 12, fontWeight: "bold" }}>CONTACT {c.id}</span>
-                      <span style={{
-                        fontSize: 7, padding: "1px 5px",
-                        background: "rgba(130,130,130,0.15)",
-                        border: "1px solid rgba(170,170,170,0.4)",
-                        color: staleColor, letterSpacing: 1, borderRadius: 1,
-                      }}>
-                        STALE
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 8, color: "#8f8f8f", lineHeight: 1.6 }}>
-                      BRG: <span style={{ color: staleColor }}>{c.bearing.toFixed(1)}°</span> &nbsp;
-                      RNG: <span style={{ color: staleColor }}>{(c.range / 1000).toFixed(1)}km</span><br />
-                      LAST IFF: {iff} &nbsp; CLASS: {String(c.type || "UNKNOWN").toUpperCase()}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {classifierMenu && (
-              <div style={{
-                position: "fixed",
-                left: classifierMenu.x,
-                top: classifierMenu.y,
-                background: BG_PANEL,
-                border: `1px solid ${AMBER_DIM}`,
-                zIndex: 40,
-                minWidth: 120,
-                fontSize: 9,
-                fontFamily: font,
-              }}>
-                <div style={{
-                  padding: "4px 8px",
-                  borderBottom: `1px solid ${AMBER_DIM}33`,
-                  color: AMBER_GLOW,
-                  fontSize: 8,
-                  letterSpacing: 1,
-                }}>
-                  {classifierMenu.id}
-                </div>
-                <div
-                  onClick={() => {
-                    setSelectedContact(classifierMenu.id);
-                    setLockState(prev => ({ ...prev, [classifierMenu.id]: "hard" }));
-                    setClassifierMenu(null);
-                  }}
-                  style={{
-                    padding: "6px 8px",
-                    cursor: "pointer",
-                    color: AMBER,
-                    borderBottom: `1px solid ${AMBER_DIM}11`,
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,176,0,0.1)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                >
-                  HARD LOCK
-                </div>
-                <div
-                  onClick={() => setClassifierMenu(null)}
-                  style={{
-                    padding: "6px 8px",
-                    cursor: "pointer",
-                    color: AMBER_DIM,
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,176,0,0.06)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                >
-                  CANCEL
-                </div>
-              </div>
-            )}
-
-            {/* Selected contact actions */}
-            {selectedData && (
-              <div style={{ padding: "6px 10px", borderTop: `1px solid ${AMBER_DIM}33` }}>
-                <div style={{ fontSize: 8, color: AMBER_DIM, marginBottom: 4, letterSpacing: 1 }}>
-                  ACTIONS — {selectedData.id}
-                </div>
-                <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-                  {["TRACK", "SPOT JAM", "SPOOF", "HANDOFF"].map(a => (
-                    <button key={a} style={{
-                      padding: "3px 8px", fontSize: 7, letterSpacing: 1,
-                      background: "rgba(255,176,0,0.05)",
-                      border: `1px solid ${AMBER_DIM}66`,
-                      color: AMBER,
-                      fontFamily: font,
-                      cursor: "pointer",
-                      borderRadius: 1,
-                    }}>
-                      {a}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </Panel>
-
-          {/* Master controls */}
-          <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
-            <button
-              onClick={() => {
-                setRadarOn(false);
-                setLockState(() => ({}));
-                setJammers(jammers.map(j => ({ ...j, active: false })));
-              }}
-              style={{
-                flex: 1, padding: "5px 0", fontSize: 8, letterSpacing: 1, fontWeight: "bold",
-                background: (!radarOn && !jammers.some(j => j.active)) ? "rgba(0,204,170,0.15)" : "rgba(255,50,50,0.15)",
-                border: `1px solid ${(!radarOn && !jammers.some(j => j.active)) ? "#00ccaa" : RED_ALERT}`,
-                color: (!radarOn && !jammers.some(j => j.active)) ? "#00ccaa" : RED_ALERT,
-                fontFamily: font, cursor: "pointer", borderRadius: 1,
-              }}
-            >SILENT</button>
-            <button
-              onClick={() => { setRadarOn(false); setLockState(() => ({})); }}
-              style={{
-                flex: 1, padding: "5px 0", fontSize: 8, letterSpacing: 1,
-                background: radarOn ? "rgba(255,176,0,0.1)" : "rgba(255,176,0,0.04)",
-                border: `1px solid ${radarOn ? AMBER : AMBER_DIM}`,
-                color: radarOn ? AMBER : AMBER_DIM,
-                fontFamily: font, cursor: "pointer", borderRadius: 1,
-              }}
-            >RADAR OFF</button>
-            <button
-              onClick={() => setJammers(jammers.map(j => ({ ...j, active: false })))}
-              style={{
-                flex: 1, padding: "5px 0", fontSize: 8, letterSpacing: 1,
-                background: jammers.some(j => j.active) ? "rgba(255,176,0,0.1)" : "rgba(255,176,0,0.04)",
-                border: `1px solid ${jammers.some(j => j.active) ? AMBER : AMBER_DIM}`,
-                color: jammers.some(j => j.active) ? AMBER : AMBER_DIM,
-                fontFamily: font, cursor: "pointer", borderRadius: 1,
-              }}
-            >JAMMER OFF</button>
-          </div>
-
-          {/* RWR — amber styled */}
-          <Panel title="RWR — Threat Warning" style={{ flexShrink: 0, height: 200 }}>
-            <EwRwr />
+        <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
+          <Panel
+            title="Multi-Mode Display"
+            style={{ flex: 1, minHeight: 160 }}
+            headerRight={<span style={{ color: AMBER_DIM, fontSize: 8 }}>MAP ONLINE</span>}
+          >
+            <EWSystemMap time={time} />
           </Panel>
         </div>
       </div>
