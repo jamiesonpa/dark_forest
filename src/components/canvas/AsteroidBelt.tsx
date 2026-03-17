@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useLoader } from '@react-three/fiber'
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
 
@@ -23,30 +23,18 @@ type SpawnConfig = {
 }
 
 const ASTEROID_MODEL_URLS = [
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-1-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-2-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-3-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-4-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-5-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-7-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-8-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-9-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-10-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-11-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-12-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-13-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-14-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-15-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-20-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-21-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-23-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-24-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-25-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-27-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-28-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-30-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-32-1.obj',
-  '/models/asteroids/uploads_files_2353346_Assem1+-+astro-33-1.obj',
+  '/models/asteroids/asteroid1.fbx',
+  '/models/asteroids/asteroid2.fbx',
+  '/models/asteroids/asteroid3.fbx',
+  '/models/asteroids/asteroid4.fbx',
+  '/models/asteroids/asteroid5.fbx',
+] as const
+
+const ASTEROID_TEXTURE_URLS = [
+  '/models/asteroids/asteroids_Mat1_Base_Color.jpg',
+  '/models/asteroids/asteroids_Mat1_Mixed_AO.jpg',
+  '/models/asteroids/asteroids_Mat1_Normal_DirectX.jpg',
+  '/models/asteroids/asteroids_Mat1_Roughness.jpg',
 ] as const
 
 function firstMeshGeometry(root: THREE.Object3D): THREE.BufferGeometry | null {
@@ -60,6 +48,7 @@ function firstMeshGeometry(root: THREE.Object3D): THREE.BufferGeometry | null {
 
 export function AsteroidBelt() {
   const spawnNonce = useGameStore((s) => s.asteroidBeltSpawnNonce)
+  const clearNonce = useGameStore((s) => s.asteroidBeltClearNonce)
   const thickness = useGameStore((s) => s.asteroidBeltThickness)
   const jitter = useGameStore((s) => s.asteroidBeltJitter)
   const density = useGameStore((s) => s.asteroidBeltDensity)
@@ -68,7 +57,11 @@ export function AsteroidBelt() {
   const minSize = useGameStore((s) => s.asteroidBeltMinSize)
   const maxSize = useGameStore((s) => s.asteroidBeltMaxSize)
 
-  const loadedObjects = useLoader(OBJLoader, [...ASTEROID_MODEL_URLS]) as THREE.Group[]
+  const loadedObjects = useLoader(FBXLoader, [...ASTEROID_MODEL_URLS]) as THREE.Group[]
+  const [baseColorMap, aoMap, normalMap, roughnessMap] = useLoader(
+    THREE.TextureLoader,
+    [...ASTEROID_TEXTURE_URLS]
+  ) as [THREE.Texture, THREE.Texture, THREE.Texture, THREE.Texture]
   const beltGroupRef = useRef<THREE.Group>(null)
   const meshRefs = useRef<Array<THREE.InstancedMesh | null>>([])
   const [spawnConfig, setSpawnConfig] = useState<SpawnConfig | null>(null)
@@ -86,6 +79,11 @@ export function AsteroidBelt() {
       nonce: spawnNonce,
     })
   }, [arcLength, density, jitter, maxSize, minSize, radius, spawnNonce, thickness])
+
+  useEffect(() => {
+    if (clearNonce <= 0) return
+    setSpawnConfig(null)
+  }, [clearNonce])
 
   const geometries = useMemo(
     () =>
@@ -132,17 +130,28 @@ export function AsteroidBelt() {
   }, [geometries, spawnConfig])
 
   const asteroidMaterial = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        color: 0x77614a,
-        roughness: 0.92,
-        metalness: 0.06,
+    () => {
+      baseColorMap.colorSpace = THREE.SRGBColorSpace
+      aoMap.colorSpace = THREE.NoColorSpace
+      normalMap.colorSpace = THREE.NoColorSpace
+      roughnessMap.colorSpace = THREE.NoColorSpace
+      return new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: baseColorMap,
+        aoMap,
+        normalMap,
+        roughnessMap,
+        roughness: 1,
+        metalness: 0.04,
         side: THREE.DoubleSide,
-      }),
-    []
+      })
+    },
+    [aoMap, baseColorMap, normalMap, roughnessMap]
   )
 
   useEffect(() => {
+    // The supplied normal texture is authored in DirectX format.
+    asteroidMaterial.normalScale = new THREE.Vector2(1, -1)
     return () => asteroidMaterial.dispose()
   }, [asteroidMaterial])
 

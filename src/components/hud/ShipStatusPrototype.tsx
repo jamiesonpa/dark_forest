@@ -29,11 +29,21 @@ const WARP_MIN_POST_CAPACITOR = 1
 const STATUS_SPEED_EPSILON_MPS = 0.5
 const STATUS_SPEED_TRACK_EPSILON_MPS = 1
 const STATUS_ANGLE_EPSILON_DEG = 0.5
+const DAMPENERS_REENGAGE_CAP_DRAIN_PER_MPS = 0.0005
 const WARP_ARRIVAL_DISTANCE_OPTIONS_KM = [15, 20, 25, 30, 35, 40, 45, 50] as const
 const WARP_ARRIVAL_DISTANCE_DATALIST_ID = 'warp-arrival-distance-steps'
 const WARP_ARRIVAL_MIN_KM = WARP_ARRIVAL_DISTANCE_OPTIONS_KM[0]
 const WARP_ARRIVAL_MAX_KM =
   WARP_ARRIVAL_DISTANCE_OPTIONS_KM[WARP_ARRIVAL_DISTANCE_OPTIONS_KM.length - 1]!
+const MWD_DURATION_OPTIONS_SECONDS = [5, 10, 15, 20] as const
+const MWD_DURATION_DATALIST_ID = 'mwd-duration-steps'
+const MWD_DURATION_MIN_SECONDS = MWD_DURATION_OPTIONS_SECONDS[0]
+const MWD_DURATION_MAX_SECONDS = MWD_DURATION_OPTIONS_SECONDS[MWD_DURATION_OPTIONS_SECONDS.length - 1]!
+const SHIELD_RECHARGE_RATE_OPTIONS_PCT = [0, 25, 50, 75, 100] as const
+const SHIELD_RECHARGE_DATALIST_ID = 'shield-recharge-rate-steps'
+const SHIELD_RECHARGE_MIN_PCT = SHIELD_RECHARGE_RATE_OPTIONS_PCT[0]
+const SHIELD_RECHARGE_MAX_PCT =
+  SHIELD_RECHARGE_RATE_OPTIONS_PCT[SHIELD_RECHARGE_RATE_OPTIONS_PCT.length - 1]!
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value))
@@ -80,6 +90,7 @@ export function ShipStatusPrototype() {
   const ship = useGameStore((s) => s.ship)
   const setTargetSpeed = useGameStore((s) => s.setTargetSpeed)
   const setMwdActive = useGameStore((s) => s.setMwdActive)
+  const setShipState = useGameStore((s) => s.setShipState)
   const setDampenersActive = useGameStore((s) => s.setDampenersActive)
   const startWarp = useGameStore((s) => s.startWarp)
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
@@ -95,17 +106,23 @@ export function ShipStatusPrototype() {
   const warpTargetId = useGameStore((s) => s.warpTargetId)
   const warpTravelProgress = useGameStore((s) => s.warpTravelProgress)
   const [hoverPct, setHoverPct] = useState<number | null>(null)
+  const [mwdDurationSeconds, setMwdDurationSeconds] = useState<number>(MWD_DURATION_MAX_SECONDS)
 
   const setSpeedMps = ship.mwdActive ? MWD_SPEED_MPS : ship.targetSpeed
   const actualSpeedMps = ship.actualSpeed
   const maxSpeedMps = ship.mwdActive ? MWD_SPEED_MPS : MAX_SUBWARP_MPS
   const setSpeedPct = clamp01(setSpeedMps / maxSpeedMps)
   const actualSpeedPct = clamp01(actualSpeedMps / maxSpeedMps)
-  const shieldPct = clamp01(ship.shield / ship.shieldMax)
+  const displayedShieldValue = ship.shieldsUp
+    ? Math.max(0, Math.min(ship.shieldOnlineLevel, ship.shield, ship.shieldMax))
+    : 0
+  const shieldPct = clamp01(displayedShieldValue / ship.shieldMax)
   const armorPct = clamp01(ship.armor / ship.armorMax)
   const hullPct = clamp01(ship.hull / ship.hullMax)
   const capacitorPct = clamp01(ship.capacitor / ship.capacitorMax)
-  const shieldTooltip = `Shield: ${formatHudValue(ship.shield)} / ${formatHudValue(ship.shieldMax)}`
+  const shieldTooltip = `Shield: ${formatHudValue(displayedShieldValue)} / ${formatHudValue(
+    ship.shieldMax
+  )}`
   const armorTooltip = `Armor: ${formatHudValue(ship.armor)} / ${formatHudValue(ship.armorMax)}`
   const hullTooltip = `Hull: ${formatHudValue(ship.hull)} / ${formatHudValue(ship.hullMax)}`
 
@@ -143,9 +160,35 @@ export function ShipStatusPrototype() {
   const isHoverPreviewing = hoverDesignatedSpeed !== null
   const mwdCooldownRemaining = Math.max(0, ship.mwdCooldownRemaining)
   const isMwdCoolingDown = !ship.mwdActive && mwdCooldownRemaining > 0
+  const mwdDurationScale = mwdDurationSeconds / MWD_DURATION_MAX_SECONDS
+  const mwdActivationCost =
+    ship.capacitorMax * MWD_CAPACITOR_ACTIVATION_FRACTION * mwdDurationScale
   const canActivateMwd =
-    ship.capacitor >= ship.capacitorMax * MWD_CAPACITOR_ACTIVATION_FRACTION &&
-    mwdCooldownRemaining <= 0
+    ship.capacitor >= mwdActivationCost && mwdCooldownRemaining <= 0
+  const dmpBrakeCapRequired = clamp01(
+    Math.max(0, actualSpeedMps - MAX_SUBWARP_MPS) * DAMPENERS_REENGAGE_CAP_DRAIN_PER_MPS
+  ) * ship.capacitorMax
+  const dmpBrakeCapRequiredPct = ship.capacitorMax > 0
+    ? clamp01(dmpBrakeCapRequired / ship.capacitorMax)
+    : 0
+  const dmpBrakeCapRequiredPctRounded = Math.round(dmpBrakeCapRequiredPct * 100)
+  const dmpBrakeMeterIsWarning = !ship.dampenersActive && actualSpeedMps > MAX_SUBWARP_MPS
+  const dmpBrakeMeterNearDepletionThreshold = Math.max(0, ship.capacitor - ship.capacitorMax * 0.1)
+  const dmpBrakeMeterIsCritical = !ship.dampenersActive && dmpBrakeCapRequired >= ship.capacitor
+  const dmpBrakeMeterIsCaution =
+    !ship.dampenersActive && dmpBrakeCapRequired >= dmpBrakeMeterNearDepletionThreshold
+  const dmpBrakeMeterStateClass = ship.dampenersActive
+    ? 'is-idle'
+    : dmpBrakeMeterIsCritical
+      ? 'is-critical'
+      : dmpBrakeMeterIsCaution
+        ? 'is-caution'
+        : dmpBrakeMeterIsWarning
+          ? 'is-warning'
+          : ''
+  const dmpBrakeMeterLabel = ship.dampenersActive
+    ? 'DMP online. Brake capacitor meter idle.'
+    : `DMP brake re-engage cost: ${dmpBrakeCapRequiredPctRounded}% capacitor.`
   const warpBusy = warpState !== 'idle'
   const warpTransitActive = warpState === 'warping' || warpState === 'landing'
   const hasWarpCapacitor = useMemo(() => {
@@ -167,10 +210,15 @@ export function ShipStatusPrototype() {
     [selectedWarpDestinationId, starSystem]
   )
   const warpArrivalProgress =
-    (warpArrivalDistanceKm - WARP_ARRIVAL_MIN_KM) /
+    (WARP_ARRIVAL_MAX_KM - warpArrivalDistanceKm) /
     (WARP_ARRIVAL_MAX_KM - WARP_ARRIVAL_MIN_KM)
-  const warpArrivalSliderValue =
-    WARP_ARRIVAL_MAX_KM - (warpArrivalDistanceKm - WARP_ARRIVAL_MIN_KM)
+  const mwdDurationProgress =
+    (MWD_DURATION_MAX_SECONDS - mwdDurationSeconds) /
+    (MWD_DURATION_MAX_SECONDS - MWD_DURATION_MIN_SECONDS)
+  const shieldRechargeRatePct = clamp01((ship.shieldRechargeRatePct ?? 100) / 100) * 100
+  const shieldRechargeProgress =
+    (SHIELD_RECHARGE_MAX_PCT - shieldRechargeRatePct) /
+    (SHIELD_RECHARGE_MAX_PCT - SHIELD_RECHARGE_MIN_PCT)
   const activeWarpTarget = useMemo(
     () => (warpTargetId ? getCelestialById(warpTargetId, starSystem) : null),
     [starSystem, warpTargetId]
@@ -478,26 +526,156 @@ export function ShipStatusPrototype() {
               </>
             )}
           </div>
-          <button
-            type="button"
-            className={`dmp-button ship-status-v2-dmp-button ${ship.dampenersActive ? 'active' : ''}`}
-            onClick={() => setDampenersActive(!ship.dampenersActive)}
-            aria-pressed={ship.dampenersActive}
+          <div
+            className="ship-status-v2-dmp-stack"
+            style={{ '--dmp-brake-fill': dmpBrakeCapRequiredPct } as CSSProperties}
           >
-            DMP
-          </button>
-          <button
-            type="button"
-            className={`mwd-button ship-status-v2-mwd-button ${ship.mwdActive ? 'active' : ''} ${isMwdCoolingDown ? 'cooldown' : ''}`.trim()}
-            onClick={() => !ship.mwdActive && canActivateMwd && setMwdActive(true)}
-            disabled={ship.mwdActive || !canActivateMwd}
-          >
-            {ship.mwdActive
-              ? `MWD ${ship.mwdRemaining.toFixed(1)}s`
-              : mwdCooldownRemaining > 0
-                ? `CD ${mwdCooldownRemaining.toFixed(1)}s`
-                : 'MWD'}
-          </button>
+            <span className="ship-status-v2-dmp-brake-title">
+              <span>DMP CAP</span>
+              <span>(%)</span>
+            </span>
+            <div className="ship-status-v2-dmp-brake-indicator" aria-hidden="true">
+              <span className="ship-status-v2-dmp-brake-indicator-line" />
+              <span className="ship-status-v2-dmp-brake-indicator-label">
+                {dmpBrakeCapRequiredPctRounded}%
+              </span>
+            </div>
+            <div
+              className={`ship-status-v2-dmp-brake-meter ${dmpBrakeMeterStateClass}`}
+              role="img"
+              aria-label={dmpBrakeMeterLabel}
+            >
+              <span className="ship-status-v2-dmp-brake-meter-fill" />
+            </div>
+            <div className="ship-status-v2-shd-recharge-slider">
+              <span className="ship-status-v2-shd-recharge-title">
+                <span>SHD CHG</span>
+                <span>(%)</span>
+              </span>
+              <div className="ship-status-v2-shd-recharge-labels" aria-hidden="true">
+                {[...SHIELD_RECHARGE_RATE_OPTIONS_PCT].reverse().map((ratePct, index) => (
+                  <span key={ratePct} style={{ '--shd-notch-index': index } as CSSProperties}>
+                    {ratePct}
+                  </span>
+                ))}
+              </div>
+              <div className="ship-status-v2-shd-recharge-input-wrap">
+                <div className="ship-status-v2-shd-notch-rail" aria-hidden="true">
+                  {[...SHIELD_RECHARGE_RATE_OPTIONS_PCT].reverse().map((ratePct, index) => (
+                    <span key={`shd-notch-${ratePct}`} style={{ '--shd-notch-index': index } as CSSProperties} />
+                  ))}
+                </div>
+                <input
+                  type="range"
+                  min={SHIELD_RECHARGE_MIN_PCT}
+                  max={SHIELD_RECHARGE_MAX_PCT}
+                  step={25}
+                  list={SHIELD_RECHARGE_DATALIST_ID}
+                  className="ship-status-v2-shd-recharge-input"
+                  value={shieldRechargeRatePct}
+                  onChange={(event) => {
+                    setShipState({ shieldRechargeRatePct: Number(event.target.value) })
+                  }}
+                  aria-label="Shield recharge rate percent"
+                />
+                <span
+                  className="ship-status-v2-shd-recharge-dot"
+                  style={{ '--shd-thumb-progress': shieldRechargeProgress } as CSSProperties}
+                  aria-hidden="true"
+                />
+              </div>
+              <datalist id={SHIELD_RECHARGE_DATALIST_ID}>
+                {SHIELD_RECHARGE_RATE_OPTIONS_PCT.map((ratePct) => (
+                  <option key={ratePct} value={ratePct} />
+                ))}
+              </datalist>
+            </div>
+            <button
+              type="button"
+              className={`dmp-button ship-status-v2-shd-button ${ship.shieldsUp ? 'active' : ''}`}
+              onClick={() => {
+                const nextShieldsUp = !ship.shieldsUp
+                setShipState({
+                  shieldsUp: nextShieldsUp,
+                  shieldOnlineLevel: 0,
+                })
+              }}
+              aria-pressed={ship.shieldsUp}
+            >
+              SHD
+            </button>
+            <button
+              type="button"
+              className={`dmp-button ship-status-v2-dmp-button ${ship.dampenersActive ? 'active' : ''}`}
+              onClick={() => setDampenersActive(!ship.dampenersActive)}
+              aria-pressed={ship.dampenersActive}
+            >
+              DMP
+            </button>
+          </div>
+          <div className="ship-status-v2-mwd-stack">
+            <div className="ship-status-v2-mwd-duration-slider">
+              <span className="ship-status-v2-mwd-duration-title">
+                <span>MWD DUR</span>
+                <span>(S)</span>
+              </span>
+              <div className="ship-status-v2-mwd-duration-labels" aria-hidden="true">
+                {[...MWD_DURATION_OPTIONS_SECONDS].reverse().map((durationSeconds, index) => (
+                  <span key={durationSeconds} style={{ '--mwd-notch-index': index } as CSSProperties}>
+                    {durationSeconds}
+                  </span>
+                ))}
+              </div>
+              <div className="ship-status-v2-mwd-duration-input-wrap">
+                <div className="ship-status-v2-mwd-notch-rail" aria-hidden="true">
+                  {[...MWD_DURATION_OPTIONS_SECONDS].reverse().map((durationSeconds, index) => (
+                    <span
+                      key={`mwd-notch-${durationSeconds}`}
+                      style={{ '--mwd-notch-index': index } as CSSProperties}
+                    />
+                  ))}
+                </div>
+                <input
+                  type="range"
+                  min={MWD_DURATION_MIN_SECONDS}
+                  max={MWD_DURATION_MAX_SECONDS}
+                  step={5}
+                  list={MWD_DURATION_DATALIST_ID}
+                  className="ship-status-v2-mwd-duration-input"
+                  value={mwdDurationSeconds}
+                  onChange={(event) => {
+                    setMwdDurationSeconds(Number(event.target.value))
+                  }}
+                  disabled={ship.mwdActive || isMwdCoolingDown}
+                  aria-label="Micro warp drive burn duration in seconds"
+                />
+                <span
+                  className="ship-status-v2-mwd-duration-dot"
+                  style={{ '--mwd-thumb-progress': mwdDurationProgress } as CSSProperties}
+                  aria-hidden="true"
+                />
+              </div>
+              <datalist id={MWD_DURATION_DATALIST_ID}>
+                {MWD_DURATION_OPTIONS_SECONDS.map((durationSeconds) => (
+                  <option key={durationSeconds} value={durationSeconds} />
+                ))}
+              </datalist>
+            </div>
+            <button
+              type="button"
+              className={`mwd-button ship-status-v2-mwd-button ${ship.mwdActive ? 'active' : ''} ${isMwdCoolingDown ? 'cooldown' : ''}`.trim()}
+              onClick={() =>
+                !ship.mwdActive && canActivateMwd && setMwdActive(true, mwdDurationSeconds)
+              }
+              disabled={ship.mwdActive || !canActivateMwd}
+            >
+              {ship.mwdActive
+                ? `MWD ${ship.mwdRemaining.toFixed(1)}s`
+                : mwdCooldownRemaining > 0
+                  ? `CD ${mwdCooldownRemaining.toFixed(1)}s`
+                  : 'MWD'}
+            </button>
+          </div>
           <div className="ship-status-v2-warp-stack">
             <div className="ship-status-v2-warp-distance-slider">
               <span className="ship-status-v2-warp-distance-title">
@@ -524,12 +702,9 @@ export function ShipStatusPrototype() {
                   step={5}
                   list={WARP_ARRIVAL_DISTANCE_DATALIST_ID}
                   className="ship-status-v2-warp-distance-input"
-                  value={warpArrivalSliderValue}
+                  value={warpArrivalDistanceKm}
                   onChange={(event) => {
-                    const nextSliderValue = Number(event.target.value)
-                    const nextDistanceKm =
-                      WARP_ARRIVAL_MAX_KM - (nextSliderValue - WARP_ARRIVAL_MIN_KM)
-                    setWarpArrivalDistanceKm(nextDistanceKm)
+                    setWarpArrivalDistanceKm(Number(event.target.value))
                   }}
                   disabled={warpBusy}
                   aria-label="Warp arrival distance from destination center"

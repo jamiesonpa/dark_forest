@@ -77,6 +77,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   asteroidBeltMinSize: 26,
   asteroidBeltMaxSize: 140,
   asteroidBeltSpawnNonce: 0,
+  asteroidBeltClearNonce: 0,
   setStarSystemSnapshot: (snapshot) =>
     set((s) => {
       const warpables = snapshot.system.celestials.filter((c) => c.id !== 'star')
@@ -218,6 +219,10 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   spawnAsteroidBelt: () =>
     set((s) => ({
       asteroidBeltSpawnNonce: s.asteroidBeltSpawnNonce + 1,
+    })),
+  clearSpawnedAsteroidBelt: () =>
+    set((s) => ({
+      asteroidBeltClearNonce: s.asteroidBeltClearNonce + 1,
     })),
   startWarp: (targetCelestialId) =>
     set((s) => {

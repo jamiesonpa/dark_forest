@@ -12,6 +12,9 @@ export interface ShipState {
   currentCelestialId: string
   inWarpTransit: boolean
   position: [number, number, number]
+  shieldsUp: boolean
+  shieldOnlineLevel: number
+  shieldRechargeRatePct: number
   shield: number
   shieldMax: number
   armor: number
@@ -161,6 +164,7 @@ export interface GameStore {
   asteroidBeltMinSize: number
   asteroidBeltMaxSize: number
   asteroidBeltSpawnNonce: number
+  asteroidBeltClearNonce: number
   setAsteroidBeltSettings: (partial: Partial<{
     thickness: number
     jitter: number
@@ -171,12 +175,13 @@ export interface GameStore {
     sizeMax: number
   }>) => void
   spawnAsteroidBelt: () => void
+  clearSpawnedAsteroidBelt: () => void
   setLocalPlayerId: (id: string) => void
   setLocalShipState: (partial: Partial<ShipState>) => void
   upsertRemoteShips: (snapshot: Record<string, WireShipSnapshot>) => void
   setShipState: (partial: Partial<ShipState>) => void
   setTargetSpeed: (mps: number) => void
-  setMwdActive: (active: boolean) => void
+  setMwdActive: (active: boolean, durationSeconds?: number) => void
   setMwdRemaining: (seconds: number) => void
   setDampenersActive: (active: boolean) => void
   setBearing: (deg: number) => void

@@ -23,6 +23,13 @@ const THRUST_CAPACITOR_EPSILON = 0.0001
 const PARTICLE_INACTIVE_POSITION = 0
 const REMOTE_POSITION_LERP_SPEED = 12
 const REMOTE_ROTATION_LERP_SPEED = 10
+const SHIELD_WIREFRAME_BASE_OPACITY = 0.3
+const SHIELD_SURFACE_BASE_OPACITY = 0.15
+const SHIELD_SURFACE_BASE_COLOR = new THREE.Color(0x3f8cff)
+const SHIELD_WIREFRAME_BASE_COLOR = new THREE.Color(0x66bbff)
+const SHIELD_VISIBILITY_EPSILON = 0.0005
+const SHIELD_SURFACE_BASE_EMISSIVE_INTENSITY = 0.7
+const SHIELD_WIREFRAME_BASE_EMISSIVE_INTENSITY = 1.5
 
 function shortestAngleDeltaDeg(fromDeg: number, toDeg: number) {
   return ((toDeg - fromDeg + 540) % 360) - 180
@@ -80,6 +87,8 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   const thrusterMaterialRefs = useRef<Array<THREE.PointsMaterial | null>>([])
   const warpDistortionPointsRefs = useRef<Array<THREE.Points | null>>([])
   const warpDistortionMaterialRefs = useRef<Array<THREE.PointsMaterial | null>>([])
+  const shieldWireframeMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null)
+  const shieldSurfaceMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null)
   const obj = useLoader(OBJLoader, RAVEN_OBJ)
   const hullTexture = useLoader(THREE.TextureLoader, RAVEN_TEX)
   const shipCenterOffset = useMemo<[number, number, number]>(() => {
@@ -192,6 +201,92 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
     hullTexture.needsUpdate = true
     return hullTexture
   }, [hullTexture])
+  const shieldSurfaceObj = useMemo(() => {
+    const overlay = centeredObj.clone(true)
+    const shieldSurfaceMaterial = new THREE.MeshStandardMaterial({
+      color: SHIELD_SURFACE_BASE_COLOR,
+      emissive: SHIELD_SURFACE_BASE_COLOR,
+      emissiveIntensity: SHIELD_SURFACE_BASE_EMISSIVE_INTENSITY,
+      metalness: 0,
+      roughness: 1,
+      transparent: true,
+      opacity: SHIELD_SURFACE_BASE_OPACITY,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.NormalBlending,
+      toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    })
+
+    overlay.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return
+      child.castShadow = false
+      child.receiveShadow = false
+      child.material = shieldSurfaceMaterial
+      child.renderOrder = 3
+    })
+
+    overlay.name = 'player-ship-shield-surface'
+    return overlay
+  }, [centeredObj])
+
+  const shieldWireframeObj = useMemo(() => {
+    const overlay = centeredObj.clone(true)
+    const shieldWireframeMaterial = new THREE.MeshStandardMaterial({
+      color: SHIELD_WIREFRAME_BASE_COLOR,
+      emissive: SHIELD_WIREFRAME_BASE_COLOR,
+      emissiveIntensity: SHIELD_WIREFRAME_BASE_EMISSIVE_INTENSITY,
+      metalness: 0,
+      roughness: 1,
+      transparent: true,
+      opacity: SHIELD_WIREFRAME_BASE_OPACITY,
+      wireframe: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.NormalBlending,
+      toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
+
+    overlay.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return
+      child.castShadow = false
+      child.receiveShadow = false
+      child.material = shieldWireframeMaterial
+      child.renderOrder = 4
+    })
+
+    overlay.name = 'player-ship-shield-wireframe'
+    return overlay
+  }, [centeredObj])
+
+  useEffect(() => {
+    shieldSurfaceObj.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+        shieldSurfaceMaterialRef.current = child.material
+      }
+    })
+    return () => {
+      shieldSurfaceMaterialRef.current?.dispose()
+      shieldSurfaceMaterialRef.current = null
+    }
+  }, [shieldSurfaceObj])
+
+  useEffect(() => {
+    shieldWireframeObj.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+        shieldWireframeMaterialRef.current = child.material
+      }
+    })
+    return () => {
+      shieldWireframeMaterialRef.current?.dispose()
+      shieldWireframeMaterialRef.current = null
+    }
+  }, [shieldWireframeObj])
 
   useEffect(() => {
     const configureParticleMaterial = (material: THREE.PointsMaterial | null) => {
@@ -246,6 +341,8 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
 
   useFrame((_state, delta) => {
     if (!groupRef.current) return
+    let shield = Math.min(ship.shieldOnlineLevel, ship.shield)
+    let shieldMax = ship.shieldMax
     if (isLocal) {
       const localShip = useGameStore.getState().ship
       renderPositionRef.current.set(
@@ -256,6 +353,8 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
       renderHeadingRef.current = localShip.actualHeading
       renderInclinationRef.current = localShip.actualInclination
       renderRollRef.current = localShip.rollAngle
+      shield = Math.min(localShip.shieldOnlineLevel, localShip.shield)
+      shieldMax = localShip.shieldMax
     } else {
       const posAlpha = 1 - Math.exp(-REMOTE_POSITION_LERP_SPEED * delta)
       const rotAlpha = 1 - Math.exp(-REMOTE_ROTATION_LERP_SPEED * delta)
@@ -276,6 +375,21 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
     const pitch = THREE.MathUtils.degToRad(renderInclinationRef.current)
     const roll = THREE.MathUtils.degToRad(renderRollRef.current)
     groupRef.current.rotation.set(-pitch, -yaw, roll, 'YXZ')
+
+    const shieldPct = shieldMax > 0 ? THREE.MathUtils.clamp(shield / shieldMax, 0, 1) : 0
+    const shieldVisible = ship.shieldsUp && shieldPct > SHIELD_VISIBILITY_EPSILON
+    shieldSurfaceObj.visible = shieldVisible
+    shieldWireframeObj.visible = shieldVisible
+    if (shieldSurfaceMaterialRef.current) {
+      shieldSurfaceMaterialRef.current.opacity = SHIELD_SURFACE_BASE_OPACITY * shieldPct
+      shieldSurfaceMaterialRef.current.emissiveIntensity =
+        SHIELD_SURFACE_BASE_EMISSIVE_INTENSITY * shieldPct
+    }
+    if (shieldWireframeMaterialRef.current) {
+      shieldWireframeMaterialRef.current.opacity = SHIELD_WIREFRAME_BASE_OPACITY * shieldPct
+      shieldWireframeMaterialRef.current.emissiveIntensity =
+        SHIELD_WIREFRAME_BASE_EMISSIVE_INTENSITY * shieldPct
+    }
 
     const hasCapacitorForThrust = ship.capacitor > THRUST_CAPACITOR_EPSILON
     const isMwdActive = ship.mwdActive && hasCapacitorForThrust
@@ -616,13 +730,18 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
           ? 'arrival'
           : 'inactive'
       : 'inactive'
-
   return (
     <group ref={groupRef}>
       <group name={isLocal ? getPlayerPivotAnchorName(playerId) : undefined} position={[0, 0, 0]} />
       {isLocal && <WarpBubbleEffect ship={ship} phase={warpBubblePhase} />}
       <group position={visualOriginCorrection}>
         <primitive object={centeredObj} scale={1} />
+        {ship.shieldsUp && (
+          <>
+            <primitive object={shieldSurfaceObj} scale={1.006} renderOrder={3} />
+            <primitive object={shieldWireframeObj} scale={1.008} renderOrder={4} />
+          </>
+        )}
         {thrusterEmitters.map((_, index) => {
           const thrusterParticleData = thrusterParticleDataList[index]
           if (!thrusterParticleData) return null

@@ -13,6 +13,8 @@ export function DebugSettingsWindow() {
   const setShipState = useGameStore((s) => s.setShipState)
   const starSystem = useGameStore((s) => s.starSystem)
   const capacitorMax = useGameStore((s) => s.ship.capacitorMax)
+  const shield = useGameStore((s) => s.ship.shield)
+  const shieldMax = useGameStore((s) => s.ship.shieldMax)
   const pivotPosition = useGameStore((s) => s.debugPivotPosition)
   const asteroidBeltThickness = useGameStore((s) => s.asteroidBeltThickness)
   const asteroidBeltJitter = useGameStore((s) => s.asteroidBeltJitter)
@@ -23,6 +25,7 @@ export function DebugSettingsWindow() {
   const asteroidBeltMaxSize = useGameStore((s) => s.asteroidBeltMaxSize)
   const setAsteroidBeltSettings = useGameStore((s) => s.setAsteroidBeltSettings)
   const spawnAsteroidBelt = useGameStore((s) => s.spawnAsteroidBelt)
+  const clearSpawnedAsteroidBelt = useGameStore((s) => s.clearSpawnedAsteroidBelt)
   const revealEwCelestial = useGameStore((s) => s.revealEwCelestial)
   const cancelEwGravAnalysis = useGameStore((s) => s.cancelEwGravAnalysis)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
@@ -215,6 +218,13 @@ export function DebugSettingsWindow() {
       <button
         type="button"
         className="hud-debug-spawn-roids"
+        onClick={clearSpawnedAsteroidBelt}
+      >
+        CLEAR SPAWNED ROIDS
+      </button>
+      <button
+        type="button"
+        className="hud-debug-spawn-roids"
         onClick={() => {
           cancelEwGravAnalysis()
           starSystem.celestials.forEach((celestial) => {
@@ -373,6 +383,24 @@ export function DebugSettingsWindow() {
         onClick={() => setShipState({ capacitor: capacitorMax })}
       >
         CAP FULL
+      </button>
+      <button
+        type="button"
+        className="hud-debug-reset"
+        onClick={() =>
+          setShipState({ shield: Math.max(0, shield - shieldMax * 0.1) })
+        }
+      >
+        DAMAGE SHIELDS
+      </button>
+      <button
+        type="button"
+        className="hud-debug-reset"
+        onClick={() =>
+          setShipState({ shield: Math.min(shieldMax, shield + shieldMax * 0.1) })
+        }
+      >
+        GRANT SHIELDS
       </button>
     </div>
   )

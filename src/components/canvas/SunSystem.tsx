@@ -13,6 +13,15 @@ const OCCLUDER_REFRESH_INTERVAL = 120
 const OCCLUSION_MIN_DISTANCE = 350
 const OCCLUSION_DARKENING = 0.995
 const WARPING_STATES: WarpState[] = ['warping', 'landing']
+const SUN_SCALE_MIN_ORBIT_MULTIPLIER = 2
+const SUN_SCALE_MAX_ORBIT_MULTIPLIER = 0.25
+const SUN_SCALE_SMOOTH_SPEED = 3.5
+const SUN_LIGHT_INTENSITY = 2.4
+const SUN_BLOCKED_LIGHT_FACTOR = 0.12
+const SUN_SHADOW_DISTANCE = 12000
+const SUN_SHADOW_FRUSTUM_RADIUS = 3200
+const SUN_SHADOW_NEAR = 100
+const SUN_SHADOW_FAR = 26000
 
 type FlareConfig = {
   offset: number
@@ -133,6 +142,27 @@ function createUltraDiffuseHaloTexture() {
   return texture
 }
 
+function getOrbitRadiusExtents(
+  celestials: { id: string; position: [number, number, number] }[],
+  starPosition: [number, number, number]
+) {
+  let minRadius = Number.POSITIVE_INFINITY
+  let maxRadius = 0
+  for (const celestial of celestials) {
+    if (celestial.id === 'star') continue
+    const dx = celestial.position[0] - starPosition[0]
+    const dy = celestial.position[1] - starPosition[1]
+    const dz = celestial.position[2] - starPosition[2]
+    const radius = Math.hypot(dx, dy, dz)
+    if (radius < minRadius) minRadius = radius
+    if (radius > maxRadius) maxRadius = radius
+  }
+  if (!Number.isFinite(minRadius) || maxRadius <= 0) {
+    return null
+  }
+  return { minRadius, maxRadius }
+}
+
 export function SunSystem() {
   const { camera, scene } = useThree()
   const directionalLightRef = useRef<THREE.DirectionalLight>(null)
@@ -148,6 +178,7 @@ export function SunSystem() {
   const frameRef = useRef(0)
   const occludersRef = useRef<THREE.Object3D[]>([])
   const blockedRef = useRef(false)
+  const sunScaleFactorRef = useRef(1)
 
   const raycaster = useMemo(() => new THREE.Raycaster(), [])
   const forward = useMemo(() => new THREE.Vector3(), [])
@@ -159,6 +190,7 @@ export function SunSystem() {
   const sunRayDir = useMemo(() => new THREE.Vector3(), [])
   const sunDirection = useMemo(() => new THREE.Vector3(), [])
   const sunLightPos = useMemo(() => new THREE.Vector3(), [])
+  const shadowTarget = useMemo(() => new THREE.Object3D(), [])
   const irstSunCoreRef = useRef<THREE.Sprite>(null)
   const irstSunHaloRef = useRef<THREE.Sprite>(null)
 
@@ -197,6 +229,21 @@ export function SunSystem() {
   )
 
   useEffect(() => {
+    shadowTarget.userData.ignoreSunOcclusion = true
+    scene.add(shadowTarget)
+    if (directionalLightRef.current) {
+      directionalLightRef.current.target = shadowTarget
+      directionalLightRef.current.shadow.bias = -0.00025
+      directionalLightRef.current.shadow.normalBias = 0.02
+      directionalLightRef.current.shadow.mapSize.set(1024, 1024)
+      directionalLightRef.current.shadow.camera.near = SUN_SHADOW_NEAR
+      directionalLightRef.current.shadow.camera.far = SUN_SHADOW_FAR
+      directionalLightRef.current.shadow.camera.left = -SUN_SHADOW_FRUSTUM_RADIUS
+      directionalLightRef.current.shadow.camera.right = SUN_SHADOW_FRUSTUM_RADIUS
+      directionalLightRef.current.shadow.camera.top = SUN_SHADOW_FRUSTUM_RADIUS
+      directionalLightRef.current.shadow.camera.bottom = -SUN_SHADOW_FRUSTUM_RADIUS
+      directionalLightRef.current.shadow.camera.updateProjectionMatrix()
+    }
     refreshOccluders()
     sunCoreRef.current?.layers.set(2)
     sunDiscRef.current?.layers.set(2)
@@ -206,15 +253,16 @@ export function SunSystem() {
     irstSunCoreRef.current?.layers.set(1)
     irstSunHaloRef.current?.layers.set(1)
     return () => {
+      scene.remove(shadowTarget)
       coreTexture.dispose()
       hardCoreTexture.dispose()
       haloTexture.dispose()
       ultraHaloTexture.dispose()
       flareTexture.dispose()
     }
-  }, [coreTexture, hardCoreTexture, haloTexture, ultraHaloTexture, flareTexture])
+  }, [coreTexture, hardCoreTexture, haloTexture, scene, shadowTarget, ultraHaloTexture, flareTexture])
 
-  useFrame(() => {
+  useFrame((_, dt) => {
     frameRef.current += 1
     if (frameRef.current % OCCLUDER_REFRESH_INTERVAL === 0) {
       refreshOccluders()
@@ -266,11 +314,45 @@ export function SunSystem() {
       sunDirection.copy(DEFAULT_SUN_DIRECTION)
     }
 
+    const starWorldPosition = starCelestial?.position ?? ([0, 0, 0] as [number, number, number])
+    const orbitExtents = getOrbitRadiusExtents(liveState.starSystem.celestials, starWorldPosition)
+    let targetSunScaleFactor = 1
+    if (observerWorldPosition && orbitExtents) {
+      const observerRadius = Math.hypot(
+        observerWorldPosition[0] - starWorldPosition[0],
+        observerWorldPosition[1] - starWorldPosition[1],
+        observerWorldPosition[2] - starWorldPosition[2]
+      )
+      const orbitSpan = orbitExtents.maxRadius - orbitExtents.minRadius
+      if (orbitSpan > 0.0001) {
+        const orbitT = THREE.MathUtils.clamp(
+          (observerRadius - orbitExtents.minRadius) / orbitSpan,
+          0,
+          1
+        )
+        targetSunScaleFactor = THREE.MathUtils.lerp(
+          SUN_SCALE_MIN_ORBIT_MULTIPLIER,
+          SUN_SCALE_MAX_ORBIT_MULTIPLIER,
+          orbitT
+        )
+      }
+    }
+    sunScaleFactorRef.current = THREE.MathUtils.lerp(
+      sunScaleFactorRef.current,
+      targetSunScaleFactor,
+      THREE.MathUtils.clamp(dt * SUN_SCALE_SMOOTH_SPEED, 0, 1)
+    )
+    const sunScaleFactor = sunScaleFactorRef.current
+
     camera.getWorldPosition(camPos)
     sunPos.copy(camPos).addScaledVector(sunDirection, SUN_DISTANCE)
     sunAnchorRef.current?.position.copy(sunPos)
     irstSunGroupRef.current?.position.copy(sunPos)
-    directionalLightRef.current?.position.copy(sunLightPos.copy(sunDirection).multiplyScalar(20000))
+    shadowTarget.position.copy(camPos)
+    shadowTarget.updateMatrixWorld()
+    directionalLightRef.current?.position.copy(
+      sunLightPos.copy(camPos).addScaledVector(sunDirection, SUN_SHADOW_DISTANCE)
+    )
 
     forward.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize()
     const alignment = THREE.MathUtils.smoothstep(forward.dot(sunDirection), 0.45, 0.995)
@@ -279,19 +361,14 @@ export function SunSystem() {
     const inFront = ndc.z > -1 && ndc.z < 1
     const inView = Math.abs(ndc.x) < 1.8 && Math.abs(ndc.y) < 1.8
 
-    let blocked = false
-    if (inFront && inView && alignment > 0.02) {
-      if (frameRef.current % OCCLUSION_SAMPLE_INTERVAL === 0) {
-        sunRayDir.copy(sunPos).sub(camPos).normalize()
-        raycaster.near = OCCLUSION_MIN_DISTANCE
-        raycaster.far = SUN_DISTANCE - 50
-        raycaster.set(camPos, sunRayDir)
-        blockedRef.current = raycaster.intersectObjects(occludersRef.current, false).length > 0
-      }
-      blocked = blockedRef.current
-    } else {
-      blockedRef.current = false
+    if (frameRef.current % OCCLUSION_SAMPLE_INTERVAL === 0) {
+      sunRayDir.copy(sunPos).sub(camPos).normalize()
+      raycaster.near = OCCLUSION_MIN_DISTANCE
+      raycaster.far = SUN_DISTANCE - 50
+      raycaster.set(camPos, sunRayDir)
+      blockedRef.current = raycaster.intersectObjects(occludersRef.current, false).length > 0
     }
+    const blocked = blockedRef.current
 
     const blockedFactor = blocked ? 0.02 : 1
     const targetIntensity = inFront && inView ? alignment * blockedFactor : 0
@@ -302,6 +379,10 @@ export function SunSystem() {
     const occlusionLerp = blocked ? 0.32 : 0.08
     occlusionRef.current = THREE.MathUtils.lerp(occlusionRef.current, targetOcclusion, occlusionLerp)
     const occlusion = occlusionRef.current
+    const lightOcclusionFactor = THREE.MathUtils.lerp(1, SUN_BLOCKED_LIGHT_FACTOR, occlusion)
+    if (directionalLightRef.current) {
+      directionalLightRef.current.intensity = SUN_LIGHT_INTENSITY * lightOcclusionFactor
+    }
     const visibleIntensity = intensity * (1 - occlusion * OCCLUSION_DARKENING)
     const flareOcclusion = Math.max(0, 1 - occlusion * 1.35)
     const edgeFade = 1 - THREE.MathUtils.smoothstep(Math.hypot(ndc.x, ndc.y), 0.7, 1.35)
@@ -315,19 +396,19 @@ export function SunSystem() {
     const ultraHaloMaterial = ultraHaloRef.current?.material as THREE.SpriteMaterial | undefined
     if (ultraHaloMaterial) ultraHaloMaterial.opacity = visibleIntensity * 0.42
     if (sunCoreRef.current) {
-      const coreScale = 900 + visibleIntensity * 1400
+      const coreScale = (900 + visibleIntensity * 1400) * sunScaleFactor
       sunCoreRef.current.scale.set(coreScale, coreScale, 1)
     }
     if (sunDiscRef.current) {
-      const discScale = 3600 + visibleIntensity * 5600
+      const discScale = (3600 + visibleIntensity * 5600) * sunScaleFactor
       sunDiscRef.current.scale.set(discScale, discScale, 1)
     }
     if (haloRef.current) {
-      const haloScale = 8000 + visibleIntensity * 15000
+      const haloScale = (8000 + visibleIntensity * 15000) * sunScaleFactor
       haloRef.current.scale.set(haloScale, haloScale, 1)
     }
     if (ultraHaloRef.current) {
-      const ultraHaloScale = 14000 + visibleIntensity * 25000
+      const ultraHaloScale = (14000 + visibleIntensity * 25000) * sunScaleFactor
       ultraHaloRef.current.scale.set(ultraHaloScale, ultraHaloScale, 1)
     }
 
@@ -346,9 +427,18 @@ export function SunSystem() {
       worldTarget.set(ndcX, ndcY, 0.25).unproject(camera)
       worldDir.copy(worldTarget).sub(camPos).normalize()
       flare.position.copy(camPos).addScaledVector(worldDir, FLARE_DISTANCE)
-      flare.scale.setScalar(config.scale * (1 + visibleIntensity * 1.7))
+      flare.scale.setScalar(config.scale * (1 + visibleIntensity * 1.7) * sunScaleFactor)
       mat.opacity = config.opacity * visibleIntensity * edgeFade * 2.8 * flareOcclusion
     })
+
+    if (irstSunCoreRef.current) {
+      const irstCoreScale = 2200 * sunScaleFactor
+      irstSunCoreRef.current.scale.set(irstCoreScale, irstCoreScale, 1)
+    }
+    if (irstSunHaloRef.current) {
+      const irstHaloScale = 7000 * sunScaleFactor
+      irstSunHaloRef.current.scale.set(irstHaloScale, irstHaloScale, 1)
+    }
   })
 
   return (
@@ -356,10 +446,8 @@ export function SunSystem() {
       <directionalLight
         ref={directionalLightRef}
         position={DEFAULT_SUN_DIRECTION.clone().multiplyScalar(20000).toArray()}
-        intensity={2.4}
+        intensity={SUN_LIGHT_INTENSITY}
         castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
       />
 
       <group ref={sunAnchorRef} userData={{ sunVisual: true }} renderOrder={8}>

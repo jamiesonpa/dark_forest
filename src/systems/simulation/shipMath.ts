@@ -26,13 +26,10 @@ type CapacitorFrameInput = {
   selectedSpeedRatio: number
   ewGravScannerOn: boolean
   dampenersActive: boolean
-  dampenersJustReengaged: boolean
-  actualSpeed: number
-  maxSelectedSpeed: number
   drainTimeAtMaxSpeedSec: number
   rechargeFractionOfMaxDrain: number
   dampenersDrainFractionOfMaxDrain: number
-  dampenersReengageCapDrainPerMps: number
+  dampenersRecoveryDrain: number
   dt: number
 }
 
@@ -45,21 +42,72 @@ export function getNextCapacitor(input: CapacitorFrameInput) {
   const dampenersDrainPerSecond = input.dampenersActive
     ? capacitorDrainPerSecondAtMaxSpeed * input.dampenersDrainFractionOfMaxDrain
     : 0
-  const dampenersReengageDrain = input.dampenersJustReengaged
-    ? clamp(
-        Math.max(0, input.actualSpeed - input.maxSelectedSpeed) *
-          input.dampenersReengageCapDrainPerMps *
-          input.capacitorMax,
-        0,
-        input.capacitorMax
-      )
-    : 0
   const capacitorDelta =
     (capacitorRechargePerSecond - capacitorDrain - dampenersDrainPerSecond) * input.dt
 
   return clamp(
-    input.capacitor - dampenersReengageDrain + capacitorDelta,
+    input.capacitor - input.dampenersRecoveryDrain + capacitorDelta,
     0,
     input.capacitorMax
   )
+}
+
+type ShieldRechargeFrameInput = {
+  shieldsUp: boolean
+  shield: number
+  shieldMax: number
+  shieldRechargeRatePct: number
+  capacitor: number
+  capacitorMax: number
+  maxShieldRechargePerSecondAt100Pct: number
+  maxCapDrainFractionPerSecondAt100Pct: number
+  dt: number
+}
+
+export function getShieldRechargeFrame(input: ShieldRechargeFrameInput) {
+  const rechargeRateFraction = clamp(input.shieldRechargeRatePct / 100, 0, 1)
+  const shieldDeficit = Math.max(0, input.shieldMax - input.shield)
+  const shouldRecharge =
+    input.shieldsUp &&
+    rechargeRateFraction > 0 &&
+    shieldDeficit > 0 &&
+    input.shieldMax > 0 &&
+    input.capacitorMax > 0
+  if (!shouldRecharge) {
+    return {
+      shield: clamp(input.shield, 0, input.shieldMax),
+      capacitor: clamp(input.capacitor, 0, input.capacitorMax),
+      shieldRechargeApplied: 0,
+      shieldCapDrainApplied: 0,
+    }
+  }
+
+  const requestedShieldRecharge = Math.min(
+    shieldDeficit,
+    input.maxShieldRechargePerSecondAt100Pct * rechargeRateFraction * input.dt
+  )
+  const requestedCapDrain =
+    input.capacitorMax *
+    input.maxCapDrainFractionPerSecondAt100Pct *
+    rechargeRateFraction *
+    input.dt
+  if (requestedShieldRecharge <= 0 || requestedCapDrain <= 0) {
+    return {
+      shield: clamp(input.shield, 0, input.shieldMax),
+      capacitor: clamp(input.capacitor, 0, input.capacitorMax),
+      shieldRechargeApplied: 0,
+      shieldCapDrainApplied: 0,
+    }
+  }
+
+  const shieldCapDrainApplied = Math.min(input.capacitor, requestedCapDrain)
+  const rechargeEfficiency = clamp(shieldCapDrainApplied / requestedCapDrain, 0, 1)
+  const shieldRechargeApplied = requestedShieldRecharge * rechargeEfficiency
+
+  return {
+    shield: clamp(input.shield + shieldRechargeApplied, 0, input.shieldMax),
+    capacitor: clamp(input.capacitor - shieldCapDrainApplied, 0, input.capacitorMax),
+    shieldRechargeApplied,
+    shieldCapDrainApplied,
+  }
 }

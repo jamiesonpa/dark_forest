@@ -5,6 +5,10 @@ import type { WireShipSnapshot } from '../../../shared/contracts/multiplayer'
 
 const MWD_CAPACITOR_ACTIVATION_FRACTION = 0.2
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
+const MWD_MIN_DURATION_SECONDS = 5
+const MWD_MAX_DURATION_SECONDS = 20
+const MWD_DURATION_STEP_SECONDS = 5
+const MWD_COOLDOWN_MULTIPLIER = 3
 
 function clampAngle(deg: number) {
   return ((deg % 360) + 360) % 360
@@ -122,7 +126,7 @@ export const createShipSlice: StateCreator<GameStore, [], [], Partial<GameStore>
         targetSpeed: Math.max(0, Math.min(215, mps)),
       }))
     ),
-  setMwdActive: (active) =>
+  setMwdActive: (active, durationSeconds = MWD_MIN_DURATION_SECONDS) =>
     set((s) => {
       const state = s as GameStore
       const localId = getLocalPlayerId(state)
@@ -145,13 +149,23 @@ export const createShipSlice: StateCreator<GameStore, [], [], Partial<GameStore>
       if (localShip.mwdActive) return {}
       if (localShip.mwdCooldownRemaining > 0) return {}
 
-      const activationCost = localShip.capacitorMax * MWD_CAPACITOR_ACTIVATION_FRACTION
+      const clampedDuration = Math.max(
+        MWD_MIN_DURATION_SECONDS,
+        Math.min(MWD_MAX_DURATION_SECONDS, durationSeconds)
+      )
+      const quantizedDuration =
+        Math.round(clampedDuration / MWD_DURATION_STEP_SECONDS) * MWD_DURATION_STEP_SECONDS
+      const durationScale = quantizedDuration / MWD_MAX_DURATION_SECONDS
+      const activationCost =
+        localShip.capacitorMax * MWD_CAPACITOR_ACTIVATION_FRACTION * durationScale
+      const cooldownSeconds = quantizedDuration * MWD_COOLDOWN_MULTIPLIER
       if (localShip.capacitor < activationCost) return {}
 
       const updated = {
         ...localShip,
         mwdActive: true,
-        mwdRemaining: 5,
+        mwdRemaining: quantizedDuration,
+        mwdCooldownRemaining: cooldownSeconds,
         capacitor: Math.max(0, localShip.capacitor - activationCost),
       }
 

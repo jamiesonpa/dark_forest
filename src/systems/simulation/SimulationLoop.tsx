@@ -32,7 +32,12 @@ import {
   vectorMagnitude,
   worldPositionForCelestial,
 } from '@/systems/warp/navigationMath'
-import { getNextCapacitor, getThrustAuthority, normalizeSigned180 } from '@/systems/simulation/shipMath'
+import {
+  getNextCapacitor,
+  getShieldRechargeFrame,
+  getThrustAuthority,
+  normalizeSigned180,
+} from '@/systems/simulation/shipMath'
 import { sendMoveIfDue } from '@/systems/simulation/networkSync'
 import { updateEnemyAndElectronicWarfare } from '@/systems/simulation/enemySystems'
 import { isEditableTarget } from '@/utils/dom'
@@ -67,9 +72,11 @@ const WARP_MIN_POST_CAPACITOR = 1
 const CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC = 120
 const CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN = 0.6
 const CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN = 0.15
+const SHIELD_RECHARGE_PER_SECOND_AT_100_PCT = 100
+const SHIELD_RECHARGE_CAP_DRAIN_FRACTION_PER_SECOND_AT_100_PCT = 0.01
+const SHIELD_ONLINE_RAMP_SECONDS_AT_MAX = 2
 const MWD_ACCEL_MULTIPLIER = 70
 const POST_MWD_SUBWARP_BRAKE_MULTIPLIER = 20
-const MWD_COOLDOWN_SEC = 60
 const THRUST_CAPACITOR_EPSILON = 0.0001
 const THRUST_FULL_AUTHORITY_CAP_FRACTION = 0.1
 const LOW_CAP_THRUST_ACCEL_EXPONENT = 2
@@ -125,6 +132,7 @@ export function SimulationLoop() {
   const dacPitchRef = useRef(0)
   const prevDampenersActiveRef = useRef(useGameStore.getState().ship.dampenersActive)
   const dampenersRecoveryActiveRef = useRef(false)
+  const dampenersRecoveryCapDebtRef = useRef(0)
 
   useEffect(() => {
     const thrustEuler = new THREE.Euler(0, 0, 0, 'YXZ')
@@ -228,8 +236,18 @@ export function SimulationLoop() {
       const dacDirectActive = dacActive
       if (!dampenersOnline) {
         dampenersRecoveryActiveRef.current = false
+        dampenersRecoveryCapDebtRef.current = 0
       } else if (dampenersJustReengaged && ship.actualSpeed > MAX_SELECTED_SPEED) {
         dampenersRecoveryActiveRef.current = true
+        dampenersRecoveryCapDebtRef.current = clamp(
+          Math.max(0, ship.actualSpeed - MAX_SELECTED_SPEED) *
+            DAMPENERS_REENGAGE_CAP_DRAIN_PER_MPS *
+            ship.capacitorMax,
+          0,
+          ship.capacitorMax
+        )
+      } else if (dampenersJustReengaged) {
+        dampenersRecoveryCapDebtRef.current = 0
       }
 
       if (state.warpState === 'warping' || state.warpState === 'landing') {
@@ -316,7 +334,8 @@ export function SimulationLoop() {
           shipPatch.targetSpeed = nextTargetSpeed
         }
       }
-      if (ship.targetSpeed > maxTargetSpeedByCap) {
+      const requestedTargetSpeed = shipPatch.targetSpeed ?? ship.targetSpeed
+      if (requestedTargetSpeed > maxTargetSpeedByCap) {
         shipPatch.targetSpeed = maxTargetSpeedByCap
       }
       if (!hasCapacitorForThrust && ship.targetSpeed !== 0) {
@@ -356,7 +375,7 @@ export function SimulationLoop() {
         ship.dampenersActive &&
         newSpeed > MAX_SELECTED_SPEED &&
         !dampenersRecoveryActiveRef.current
-      const effectiveDecelRate = isPostMwdSubwarpBrake
+      const baseEffectiveDecelRate = isPostMwdSubwarpBrake
         ? decelRate * POST_MWD_SUBWARP_BRAKE_MULTIPLIER
         : dampenersRecoveryActiveRef.current
           ? decelRate * (
@@ -367,6 +386,34 @@ export function SimulationLoop() {
       const decelTargetSpeed = isPostMwdSubwarpBrake
         ? Math.max(desiredSpeed, MAX_SELECTED_SPEED)
         : desiredSpeed
+      const overspeedAtFrameStart = Math.max(0, ship.actualSpeed - MAX_SELECTED_SPEED)
+      let recoveryBrakeEnergyRatio = 1
+      if (
+        dampenersRecoveryActiveRef.current &&
+        dampenersRecoveryCapDebtRef.current > 0 &&
+        overspeedAtFrameStart > 0 &&
+        ship.capacitor > 0
+      ) {
+        const predictedRecoverySpeed = Math.max(decelTargetSpeed, newSpeed - baseEffectiveDecelRate * dt)
+        const predictedOverspeedAtFrameEnd = Math.max(0, predictedRecoverySpeed - MAX_SELECTED_SPEED)
+        const predictedOverspeedBleed = Math.max(
+          0,
+          overspeedAtFrameStart - predictedOverspeedAtFrameEnd
+        )
+        if (predictedOverspeedBleed > 0) {
+          const predictedBrakeProgress = clamp(predictedOverspeedBleed / overspeedAtFrameStart, 0, 1)
+          const predictedRecoveryDrain = Math.min(
+            dampenersRecoveryCapDebtRef.current,
+            dampenersRecoveryCapDebtRef.current * predictedBrakeProgress
+          )
+          if (predictedRecoveryDrain > 0) {
+            recoveryBrakeEnergyRatio = clamp(ship.capacitor / predictedRecoveryDrain, 0, 1)
+          }
+        }
+      }
+      const effectiveDecelRate = dampenersRecoveryActiveRef.current
+        ? baseEffectiveDecelRate * recoveryBrakeEnergyRatio
+        : baseEffectiveDecelRate
       if (!ship.dampenersActive) {
         if (effectiveMwdActive && ship.mwdRemaining > 0) {
           // Dampeners offline: no MWD top speed cap; accelerate for full burn duration.
@@ -386,8 +433,32 @@ export function SimulationLoop() {
       } else if (newSpeed > desiredSpeed && ship.dampenersActive) {
         newSpeed = Math.max(decelTargetSpeed, newSpeed - effectiveDecelRate * dt)
       }
-      if (dampenersRecoveryActiveRef.current && newSpeed <= MAX_SELECTED_SPEED) {
+      const dampenersRecoveryCompletedThisFrame =
+        dampenersRecoveryActiveRef.current && newSpeed <= MAX_SELECTED_SPEED
+      const overspeedAtFrameEnd = Math.max(0, newSpeed - MAX_SELECTED_SPEED)
+      let dampenersRecoveryDrainThisFrame = 0
+      if (
+        dampenersRecoveryActiveRef.current &&
+        dampenersRecoveryCapDebtRef.current > 0 &&
+        overspeedAtFrameStart > 0
+      ) {
+        const overspeedBleedThisFrame = Math.max(0, overspeedAtFrameStart - overspeedAtFrameEnd)
+        if (overspeedBleedThisFrame > 0) {
+          const brakeProgressThisFrame = clamp(overspeedBleedThisFrame / overspeedAtFrameStart, 0, 1)
+          const requestedRecoveryDrainThisFrame = Math.min(
+            dampenersRecoveryCapDebtRef.current,
+            dampenersRecoveryCapDebtRef.current * brakeProgressThisFrame
+          )
+          dampenersRecoveryDrainThisFrame = Math.min(requestedRecoveryDrainThisFrame, ship.capacitor)
+          dampenersRecoveryCapDebtRef.current = Math.max(
+            0,
+            dampenersRecoveryCapDebtRef.current - dampenersRecoveryDrainThisFrame
+          )
+        }
+      }
+      if (dampenersRecoveryCompletedThisFrame) {
         dampenersRecoveryActiveRef.current = false
+        dampenersRecoveryCapDebtRef.current = 0
       }
 
       let newHeading = ship.actualHeading
@@ -670,23 +741,51 @@ export function SimulationLoop() {
         ? 1
         : clamp(effectiveTargetSpeed / MAX_SELECTED_SPEED, 0, 1)
       const selectedSpeedRatio = hasCapacitorForThrust ? requestedThrustRatio : 0
-      shipPatch.capacitor = getNextCapacitor({
+      let nextCapacitor = getNextCapacitor({
         capacitor: ship.capacitor,
         capacitorMax: ship.capacitorMax,
         selectedSpeedRatio,
         ewGravScannerOn: state.ewGravScannerOn,
         dampenersActive: ship.dampenersActive,
-        dampenersJustReengaged,
-        actualSpeed: ship.actualSpeed,
-        maxSelectedSpeed: MAX_SELECTED_SPEED,
         drainTimeAtMaxSpeedSec: CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC,
         rechargeFractionOfMaxDrain: CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN,
         dampenersDrainFractionOfMaxDrain: CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN,
-        dampenersReengageCapDrainPerMps: DAMPENERS_REENGAGE_CAP_DRAIN_PER_MPS,
+        dampenersRecoveryDrain: dampenersRecoveryDrainThisFrame,
         dt,
       })
+      const shieldRecharge = getShieldRechargeFrame({
+        shieldsUp: ship.shieldsUp,
+        shield: ship.shield,
+        shieldMax: ship.shieldMax,
+        shieldRechargeRatePct: ship.shieldRechargeRatePct ?? 100,
+        capacitor: nextCapacitor,
+        capacitorMax: ship.capacitorMax,
+        maxShieldRechargePerSecondAt100Pct: SHIELD_RECHARGE_PER_SECOND_AT_100_PCT,
+        maxCapDrainFractionPerSecondAt100Pct: SHIELD_RECHARGE_CAP_DRAIN_FRACTION_PER_SECOND_AT_100_PCT,
+        dt,
+      })
+      nextCapacitor = shieldRecharge.capacitor
+      if (shieldRecharge.shield !== ship.shield) {
+        shipPatch.shield = shieldRecharge.shield
+      }
+      const shieldTargetLevel = clamp(
+        ship.shieldsUp ? shieldRecharge.shield : 0,
+        0,
+        ship.shieldMax
+      )
+      const currentShieldOnlineLevel = clamp(ship.shieldOnlineLevel ?? shieldTargetLevel, 0, ship.shieldMax)
+      const shieldOnlineRampPerSecond = ship.shieldMax > 0
+        ? ship.shieldMax / SHIELD_ONLINE_RAMP_SECONDS_AT_MAX
+        : 0
+      const nextShieldOnlineLevel = shieldTargetLevel > currentShieldOnlineLevel
+        ? Math.min(shieldTargetLevel, currentShieldOnlineLevel + shieldOnlineRampPerSecond * dt)
+        : shieldTargetLevel
+      if (nextShieldOnlineLevel !== ship.shieldOnlineLevel) {
+        shipPatch.shieldOnlineLevel = nextShieldOnlineLevel
+      }
+      shipPatch.capacitor = nextCapacitor
 
-      if (ship.mwdCooldownRemaining > 0) {
+      if (!ship.mwdActive && ship.mwdCooldownRemaining > 0) {
         shipPatch.mwdCooldownRemaining = Math.max(0, ship.mwdCooldownRemaining - dt)
       }
 
@@ -695,7 +794,6 @@ export function SimulationLoop() {
         if (remaining <= 0) {
           shipPatch.mwdRemaining = 0
           shipPatch.mwdActive = false
-          shipPatch.mwdCooldownRemaining = MWD_COOLDOWN_SEC
         } else {
           shipPatch.mwdRemaining = remaining
         }

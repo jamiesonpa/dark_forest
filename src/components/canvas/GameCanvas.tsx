@@ -14,11 +14,14 @@ export function GameCanvas() {
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <Canvas
+        shadows
         gl={{ antialias: true, alpha: false, logarithmicDepthBuffer: true }}
         camera={{ position: [0, 0, 500], fov: 60, near: 50, far: 20000000 }}
         onCreated={({ gl }) => {
           gl.toneMapping = THREE.ACESFilmicToneMapping
           gl.toneMappingExposure = 1.58
+          gl.shadowMap.enabled = true
+          gl.shadowMap.type = THREE.PCFSoftShadowMap
         }}
       >
         <MainCameraSetup />
