@@ -106,7 +106,7 @@ export function ShipStatusPrototype() {
   const warpTargetId = useGameStore((s) => s.warpTargetId)
   const warpTravelProgress = useGameStore((s) => s.warpTravelProgress)
   const [hoverPct, setHoverPct] = useState<number | null>(null)
-  const [mwdDurationSeconds, setMwdDurationSeconds] = useState<number>(MWD_DURATION_MAX_SECONDS)
+  const [mwdDurationSeconds, setMwdDurationSeconds] = useState<number>(MWD_DURATION_MIN_SECONDS)
 
   const setSpeedMps = ship.mwdActive ? MWD_SPEED_MPS : ship.targetSpeed
   const actualSpeedMps = ship.actualSpeed

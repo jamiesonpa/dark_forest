@@ -1,4 +1,13 @@
-export type CelestialType = 'star' | 'planet' | 'moon' | 'asteroid_belt'
+export type CelestialType = 'star' | 'planet' | 'asteroid_belt'
+
+export interface OrbitalElements {
+  semiMajorAxisAu: number
+  eccentricity: number
+  inclinationDeg: number
+  ascendingNodeDeg: number
+  argumentOfPeriapsisDeg: number
+  trueAnomalyDeg: number
+}
 
 export interface Celestial {
   id: string
@@ -7,6 +16,7 @@ export interface Celestial {
   position: [number, number, number]
   gridRadius: number
   radius?: number
+  orbitalElements?: OrbitalElements
 }
 
 export interface StarSystemData {
@@ -18,7 +28,6 @@ export interface StarSystemData {
 export interface StarSystemGenerationConfig {
   seed: number
   planetCount: number
-  moonCount: number
   asteroidBeltCount: number
   minOrbitAu: number
   maxOrbitAu: number

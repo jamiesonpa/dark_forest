@@ -86,6 +86,7 @@ export interface GameStore {
   currentCelestialId: string
   debugPivotEnabled: boolean
   orientDebugEnabled: boolean
+  debugEwPlanet1TargetEnabled: boolean
   showIRSTCone: boolean
   showCelestialGridCenterMarker: boolean
   debugPivotPosition: [number, number, number]
@@ -137,6 +138,7 @@ export interface GameStore {
   setCurrentCelestial: (id: string) => void
   setDebugPivotEnabled: (enabled: boolean) => void
   setOrientDebugEnabled: (enabled: boolean) => void
+  setDebugEwPlanet1TargetEnabled: (enabled: boolean) => void
   setShowIRSTCone: (enabled: boolean) => void
   setShowCelestialGridCenterMarker: (enabled: boolean) => void
   setDebugPivotPosition: (position: [number, number, number]) => void
@@ -165,6 +167,7 @@ export interface GameStore {
   asteroidBeltMaxSize: number
   asteroidBeltSpawnNonce: number
   asteroidBeltClearNonce: number
+  planetTextureRandomizeNonce: number
   setAsteroidBeltSettings: (partial: Partial<{
     thickness: number
     jitter: number
@@ -176,6 +179,7 @@ export interface GameStore {
   }>) => void
   spawnAsteroidBelt: () => void
   clearSpawnedAsteroidBelt: () => void
+  randomizePlanetTextures: () => void
   setLocalPlayerId: (id: string) => void
   setLocalShipState: (partial: Partial<ShipState>) => void
   upsertRemoteShips: (snapshot: Record<string, WireShipSnapshot>) => void

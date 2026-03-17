@@ -8,7 +8,6 @@ describe('roomLifecycle', () => {
     const snapshot = generateStarSystemSnapshot({
       seed: 777,
       planetCount: 2,
-      moonCount: 1,
       asteroidBeltCount: 1,
       minOrbitAu: 60,
       maxOrbitAu: 220,

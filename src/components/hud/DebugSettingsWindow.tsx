@@ -6,6 +6,8 @@ export function DebugSettingsWindow() {
   const setDebugPivotEnabled = useGameStore((s) => s.setDebugPivotEnabled)
   const orientDebugEnabled = useGameStore((s) => s.orientDebugEnabled)
   const setOrientDebugEnabled = useGameStore((s) => s.setOrientDebugEnabled)
+  const debugEwPlanet1TargetEnabled = useGameStore((s) => s.debugEwPlanet1TargetEnabled)
+  const setDebugEwPlanet1TargetEnabled = useGameStore((s) => s.setDebugEwPlanet1TargetEnabled)
   const showIRSTCone = useGameStore((s) => s.showIRSTCone)
   const setShowIRSTCone = useGameStore((s) => s.setShowIRSTCone)
   const showCelestialGridCenterMarker = useGameStore((s) => s.showCelestialGridCenterMarker)
@@ -26,6 +28,7 @@ export function DebugSettingsWindow() {
   const setAsteroidBeltSettings = useGameStore((s) => s.setAsteroidBeltSettings)
   const spawnAsteroidBelt = useGameStore((s) => s.spawnAsteroidBelt)
   const clearSpawnedAsteroidBelt = useGameStore((s) => s.clearSpawnedAsteroidBelt)
+  const randomizePlanetTextures = useGameStore((s) => s.randomizePlanetTextures)
   const revealEwCelestial = useGameStore((s) => s.revealEwCelestial)
   const cancelEwGravAnalysis = useGameStore((s) => s.cancelEwGravAnalysis)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
@@ -196,6 +199,13 @@ export function DebugSettingsWindow() {
       </button>
       <button
         type="button"
+        className={`hud-debug-toggle ${debugEwPlanet1TargetEnabled ? 'active' : ''}`}
+        onClick={() => setDebugEwPlanet1TargetEnabled(!debugEwPlanet1TargetEnabled)}
+      >
+        EW P1 TARGET
+      </button>
+      <button
+        type="button"
         className={`hud-debug-toggle ${showIRSTCone ? 'active' : ''}`}
         onClick={() => setShowIRSTCone(!showIRSTCone)}
       >
@@ -221,6 +231,13 @@ export function DebugSettingsWindow() {
         onClick={clearSpawnedAsteroidBelt}
       >
         CLEAR SPAWNED ROIDS
+      </button>
+      <button
+        type="button"
+        className="hud-debug-spawn-roids"
+        onClick={randomizePlanetTextures}
+      >
+        RANDOMIZE PLANET TEXTURES
       </button>
       <button
         type="button"

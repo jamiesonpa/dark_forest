@@ -5,7 +5,6 @@ import {
 
 export function gravMassForCelestialType(type) {
   if (type === "planet") return 1.25;
-  if (type === "moon") return 0.8;
   if (type === "asteroid_belt") return 0.55;
   return 0.3;
 }
@@ -23,7 +22,6 @@ function highPassFade(value, fullAt, goneAt) {
 export function gravHighPassAttenuation(type, highPassPct = 100) {
   const hp = clamp(highPassPct, 0, 100);
   if (type === "planet") return highPassFade(hp, 100, 70);
-  if (type === "moon") return highPassFade(hp, 70, 40);
   if (type === "asteroid_belt") return highPassFade(hp, 60, 30);
   return 1;
 }
@@ -35,11 +33,9 @@ export function gravNoiseFloorScale(highPassPct = 100) {
 
 export function gravRelativeIntensityBoost(type, highPassPct = 100) {
   const planetSuppression = 1 - gravHighPassAttenuation("planet", highPassPct);
-  const moonSuppression = 1 - gravHighPassAttenuation("moon", highPassPct);
 
   if (type === "planet") return 1;
-  if (type === "moon") return 1 + planetSuppression * 0.85;
-  if (type === "asteroid_belt") return 1 + planetSuppression * 0.75 + moonSuppression * 0.95;
+  if (type === "asteroid_belt") return 1 + planetSuppression * 0.75;
   return 1;
 }
 

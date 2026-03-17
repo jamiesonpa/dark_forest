@@ -592,7 +592,7 @@ body {
 }
 
 .ship-status-panel {
-  min-width: 468px;
+  min-width: 520px;
   padding: 0 16px 16px;
 }
 
@@ -703,6 +703,9 @@ body {
 }
 
 .ship-status-v2-speed-row {
+  --ship-status-v2-mode-button-width: 44px;
+  --ship-status-v2-button-gap: 53px;
+  --ship-status-v2-button-near-offset: 158px;
   position: relative;
   width: 100%;
   margin-top: 6px;
@@ -1163,14 +1166,15 @@ body {
 
 .ship-status-v2-mwd-button {
   margin-top: 0;
-  width: 52px;
+  width: var(--ship-status-v2-mode-button-width);
   padding: 3px 0;
   font-size: 10px;
 }
 
 .ship-status-v2-mwd-stack {
   position: absolute;
-  right: 63px;
+  left: calc(50% + var(--ship-status-v2-button-near-offset));
+  transform: translateX(-50%);
   bottom: 0;
   display: flex;
   flex-direction: column;
@@ -1180,7 +1184,10 @@ body {
 
 .ship-status-v2-warp-stack {
   position: absolute;
-  right: 8px;
+  left: calc(
+    50% + var(--ship-status-v2-button-near-offset) + var(--ship-status-v2-button-gap)
+  );
+  transform: translateX(-50%);
   bottom: 0;
   display: flex;
   flex-direction: column;
@@ -1190,7 +1197,7 @@ body {
 
 .ship-status-v2-warp-button {
   margin-top: 0;
-  width: 56px;
+  width: var(--ship-status-v2-mode-button-width);
   padding: 3px 0;
   font-size: 10px;
 }
@@ -1529,9 +1536,10 @@ body {
   --dmp-meter-length: 134px;
   --dmp-meter-gap-from-button: 16px;
   position: absolute;
-  left: 56px;
+  left: calc(50% - var(--ship-status-v2-button-near-offset));
+  transform: translateX(-50%);
   bottom: 0;
-  width: 40px;
+  width: var(--ship-status-v2-mode-button-width);
 }
 
 .ship-status-v2-dmp-brake-title {
@@ -1802,14 +1810,14 @@ body {
 
 .ship-status-v2-shd-button {
   position: absolute;
-  left: -48px;
+  left: calc(-1 * var(--ship-status-v2-button-gap));
   bottom: 0;
   margin: 0;
 }
 
 .dmp-button {
   margin-top: 0;
-  width: 40px;
+  width: var(--ship-status-v2-mode-button-width);
   padding: 3px 0;
   font-size: 10px;
   background: rgba(138, 155, 168, 0.12);
@@ -1840,7 +1848,7 @@ body {
 
 .warp-button {
   margin-top: 0;
-  width: 48px;
+  width: var(--ship-status-v2-mode-button-width);
   padding: 3px 0;
   font-size: 10px;
   background: rgba(121, 120, 159, 0.14);
@@ -2995,4 +3003,23 @@ body {
 
 .station-name {
   text-transform: uppercase;
+}
+
+.pilot-target-cue-world {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  opacity: 0.92;
+}
+
+.pilot-target-cue-world-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px dotted var(--hud-danger);
+  box-shadow: 0 0 8px rgba(255, 68, 68, 0.8);
+  transform: translate(-50%, -50%);
 }

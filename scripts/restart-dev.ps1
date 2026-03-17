@@ -3,7 +3,6 @@ param(
   [switch]$NoClient,
   [int]$Seed = -1,
   [int]$PlanetCount = -1,
-  [int]$MoonCount = -1,
   [int]$BeltCount = -1
 )
 $ErrorActionPreference = "Stop"
@@ -23,7 +22,6 @@ function Resolve-StarSystemValue([int]$explicitValue, [int]$randomMinInclusive, 
 
 $randomSeed = Resolve-StarSystemValue -explicitValue $Seed -randomMinInclusive 0 -randomMaxExclusive 10000
 $randomPlanetCount = Resolve-StarSystemValue -explicitValue $PlanetCount -randomMinInclusive 0 -randomMaxExclusive 4
-$randomMoonCount = Resolve-StarSystemValue -explicitValue $MoonCount -randomMinInclusive 0 -randomMaxExclusive 4
 $randomBeltCount = Resolve-StarSystemValue -explicitValue $BeltCount -randomMinInclusive 0 -randomMaxExclusive 4
 
 function Stop-ByPort([int[]]$ports) {
@@ -102,14 +100,14 @@ if (-not (Wait-PortFree -ports @(2567, 5173, 5174, 5175))) {
   Write-Host "Warning: one or more dev ports are still in use. Server may fail to start."
 }
 
-Write-Host ("Star system config: seed={0} planets={1} moons={2} belts={3}" -f $randomSeed, $randomPlanetCount, $randomMoonCount, $randomBeltCount)
-Write-Host "Reuse the same values with -Seed/-PlanetCount/-MoonCount/-BeltCount for a reproducible restart."
+Write-Host ("Star system config: seed={0} planets={1} belts={2}" -f $randomSeed, $randomPlanetCount, $randomBeltCount)
+Write-Host "Reuse the same values with -Seed/-PlanetCount/-BeltCount for a reproducible restart."
 
 if (-not $NoServer) {
   Write-Host "Starting server in background (no pop-out)..."
   Set-Content -Path $serverLogPath -Value "" -Encoding Unicode
   Set-Content -Path $serverErrLogPath -Value "" -Encoding Unicode
-  $serverCommand = "/c cd /d ""$serverDir"" && set DF_STAR_SYSTEM_SEED=$randomSeed && set DF_STAR_SYSTEM_PLANETS=$randomPlanetCount && set DF_STAR_SYSTEM_MOONS=$randomMoonCount && set DF_STAR_SYSTEM_BELTS=$randomBeltCount && .\node_modules\.bin\tsx.cmd src/index.ts"
+  $serverCommand = "/c cd /d ""$serverDir"" && set DF_STAR_SYSTEM_SEED=$randomSeed && set DF_STAR_SYSTEM_PLANETS=$randomPlanetCount && set DF_STAR_SYSTEM_BELTS=$randomBeltCount && .\node_modules\.bin\tsx.cmd src/index.ts"
   $serverProc = Start-Process `
     -FilePath "cmd.exe" `
     -ArgumentList $serverCommand `

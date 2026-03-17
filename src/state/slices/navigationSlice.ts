@@ -50,6 +50,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   currentCelestialId: 'planet-1',
   debugPivotEnabled: false,
   orientDebugEnabled: false,
+  debugEwPlanet1TargetEnabled: false,
   showIRSTCone: false,
   showCelestialGridCenterMarker: false,
   debugPivotPosition: SHIP_CENTER_PIVOT,
@@ -78,6 +79,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   asteroidBeltMaxSize: 140,
   asteroidBeltSpawnNonce: 0,
   asteroidBeltClearNonce: 0,
+  planetTextureRandomizeNonce: 0,
   setStarSystemSnapshot: (snapshot) =>
     set((s) => {
       const warpables = snapshot.system.celestials.filter((c) => c.id !== 'star')
@@ -144,6 +146,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
     }),
   setDebugPivotEnabled: (enabled) => set({ debugPivotEnabled: enabled }),
   setOrientDebugEnabled: (enabled) => set({ orientDebugEnabled: enabled }),
+  setDebugEwPlanet1TargetEnabled: (enabled) => set({ debugEwPlanet1TargetEnabled: enabled }),
   setShowIRSTCone: (enabled) => set({ showIRSTCone: enabled }),
   setShowCelestialGridCenterMarker: (enabled) => set({ showCelestialGridCenterMarker: enabled }),
   setDebugPivotPosition: (position) => set({ debugPivotPosition: sanitizePivot(position) }),
@@ -223,6 +226,10 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   clearSpawnedAsteroidBelt: () =>
     set((s) => ({
       asteroidBeltClearNonce: s.asteroidBeltClearNonce + 1,
+    })),
+  randomizePlanetTextures: () =>
+    set((s) => ({
+      planetTextureRandomizeNonce: s.planetTextureRandomizeNonce + 1,
     })),
   startWarp: (targetCelestialId) =>
     set((s) => {

@@ -47,7 +47,6 @@ export const STAR_SYSTEM: StarSystemData = {
 export const DEFAULT_STAR_SYSTEM_CONFIG: StarSystemGenerationConfig = {
   seed: 1337,
   planetCount: 2,
-  moonCount: 0,
   asteroidBeltCount: 1,
   minOrbitAu: 60,
   maxOrbitAu: 220,

@@ -12,7 +12,6 @@ describe('starSystemGenerator', () => {
       ...DEFAULT_STAR_SYSTEM_CONFIG,
       seed: 42,
       planetCount: 3,
-      moonCount: 1,
       asteroidBeltCount: 2,
     }
     const a = generateStarSystemSnapshot(config)
@@ -36,7 +35,6 @@ describe('starSystemGenerator', () => {
     const generated = generateStarSystemSnapshot({
       ...DEFAULT_STAR_SYSTEM_CONFIG,
       planetCount: 0,
-      moonCount: 0,
       asteroidBeltCount: 0,
     })
     const stars = generated.system.celestials.filter((c) => c.type === 'star')
@@ -50,7 +48,6 @@ describe('starSystemGenerator', () => {
       ...DEFAULT_STAR_SYSTEM_CONFIG,
       seed: 90210,
       planetCount: 4,
-      moonCount: 2,
       asteroidBeltCount: 1,
     })
     const pair = getFarthestWarpablePair(generated.system)
@@ -77,41 +74,78 @@ describe('starSystemGenerator', () => {
     expect(pairDistSq).toBe(maxDistSq)
   })
 
-  it('keeps warpables on a shared orbital plane within 10 degree tilt', () => {
+  it('generates warpables with varied inclinations', () => {
     const generated = generateStarSystemSnapshot({
       ...DEFAULT_STAR_SYSTEM_CONFIG,
       seed: 501,
       planetCount: 6,
-      moonCount: 4,
       asteroidBeltCount: 2,
     })
     const warpables = getWarpableCelestials(generated.system)
     expect(warpables.length).toBeGreaterThanOrEqual(2)
+    const inclinations = warpables
+      .map((warpable) => warpable.orbitalElements?.inclinationDeg ?? 0)
+      .map((deg) => Math.round(Math.abs(deg) * 10) / 10)
+    const uniqueInclinations = new Set(inclinations)
+    expect(uniqueInclinations.size).toBeGreaterThan(1)
+    expect(inclinations.some((deg) => deg > 0.5)).toBe(true)
 
-    const a = warpables[0].position
-    const b = warpables[1].position
-    const normal = [
-      a[1] * b[2] - a[2] * b[1],
-      a[2] * b[0] - a[0] * b[2],
-      a[0] * b[1] - a[1] * b[0],
-    ] as const
-    const normalLen = Math.hypot(normal[0], normal[1], normal[2])
-    expect(normalLen).toBeGreaterThan(0)
-    if (normalLen <= 0) return
+    const maxAbsY = Math.max(...warpables.map((warpable) => Math.abs(warpable.position[1])))
+    expect(maxAbsY).toBeGreaterThan(250)
+  })
 
-    const unitNormal = [normal[0] / normalLen, normal[1] / normalLen, normal[2] / normalLen] as const
+  it('uses circular orbits (no eccentricity)', () => {
+    const generated = generateStarSystemSnapshot({
+      ...DEFAULT_STAR_SYSTEM_CONFIG,
+      seed: 77,
+      planetCount: 5,
+      asteroidBeltCount: 2,
+    })
+    const warpables = getWarpableCelestials(generated.system)
+    const eccentricities = warpables.map((warpable) => warpable.orbitalElements?.eccentricity ?? 0)
+    expect(eccentricities.every((value) => Math.abs(value) < 0.000001)).toBe(true)
+  })
+
+  it('pins planet-1 to 0 inclination and keeps all bodies within 30 degrees', () => {
+    const generated = generateStarSystemSnapshot({
+      ...DEFAULT_STAR_SYSTEM_CONFIG,
+      seed: 2026,
+      planetCount: 5,
+      asteroidBeltCount: 2,
+    })
+    const warpables = getWarpableCelestials(generated.system)
+    const planetOne = warpables.find((warpable) => warpable.id === 'planet-1')
+    expect(planetOne).toBeDefined()
+    expect(Math.abs(planetOne?.orbitalElements?.inclinationDeg ?? 999)).toBeLessThan(0.001)
+
     for (const warpable of warpables) {
-      const p = warpable.position
-      const pLen = Math.hypot(p[0], p[1], p[2])
-      expect(pLen).toBeGreaterThan(0)
-      if (pLen <= 0) continue
-      const signedPlaneDistance = (unitNormal[0] * p[0] + unitNormal[1] * p[1] + unitNormal[2] * p[2]) / pLen
-      // Integer rounding during generation introduces a tiny plane error tolerance.
-      expect(Math.abs(signedPlaneDistance)).toBeLessThan(0.01)
+      const inclinationDeg = warpable.orbitalElements?.inclinationDeg ?? 0
+      expect(Math.abs(inclinationDeg)).toBeLessThanOrEqual(30)
     }
+  })
 
-    const planeTiltRad = Math.acos(Math.abs(unitNormal[1]))
-    const planeTiltDeg = (planeTiltRad * 180) / Math.PI
-    expect(planeTiltDeg).toBeLessThanOrEqual(10.1)
+  it('keeps semi-major axes separated by minimum configured gap', () => {
+    const config = {
+      ...DEFAULT_STAR_SYSTEM_CONFIG,
+      seed: 31415,
+      planetCount: 6,
+      asteroidBeltCount: 2,
+      minOrbitAu: 60,
+      maxOrbitAu: 260,
+      minSeparationAu: 22,
+    }
+    const generated = generateStarSystemSnapshot(config)
+    const warpables = getWarpableCelestials(generated.system)
+      .map((warpable) => ({
+        id: warpable.id,
+        semiMajorAxisAu: warpable.orbitalElements?.semiMajorAxisAu ?? 0,
+      }))
+      .sort((a, b) => a.semiMajorAxisAu - b.semiMajorAxisAu)
+
+    for (let i = 0; i < warpables.length - 1; i += 1) {
+      const inner = warpables[i]
+      const outer = warpables[i + 1]
+      expect(outer.semiMajorAxisAu - inner.semiMajorAxisAu).toBeGreaterThanOrEqual(config.minSeparationAu - 0.001)
+    }
   })
 })

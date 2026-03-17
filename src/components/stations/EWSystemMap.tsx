@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -26,9 +27,23 @@ const BG_SCREEN = '#080808'
 const LINE_GREY = '#7d848e'
 const SELECT_BLUE = '#6cb8ff'
 
-const MAP_TABS = ['MAP', 'SIG', 'DATA'] as const
+const MAP_TABS = ['MAP', 'RADAR'] as const
+const B_SCOPE_RANGE_OPTIONS_KM = [10, 25, 50, 100, 160, 250, 500] as const
+const B_SCOPE_AZ_LIMIT_DEG = 60
+const B_SCOPE_MIN_VIEW_SPAN_DEG = 12
+const B_SCOPE_AZ_GRID_STEP_DEG = 5
+const B_SCOPE_GREEN = '#44ff66'
+const B_SCOPE_GREEN_DIM = '#1f8a39'
+const B_SCOPE_GREEN_GLOW = '#88ffaa'
 
 type MapTab = (typeof MAP_TABS)[number]
+type BScopeTrack = {
+  id: string
+  absBearingDeg: number
+  relInclinationDeg: number
+  rangeM: number
+  relBearingDeg: number
+}
 
 type OrbitState = {
   yaw: number
@@ -40,6 +55,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
 }
 
+function normalizeBearingDeg(value: number) {
+  return ((value % 360) + 360) % 360
+}
+
 type DisplayPoint = [number, number, number]
 type RevealedTrack = {
   bearingDeg: number
@@ -47,7 +66,7 @@ type RevealedTrack = {
   id: string
   name: string
   distanceWorldUnits: number
-  orbitRadius: number
+  orbitPathPoints: DisplayPoint[]
   position: DisplayPoint
 }
 
@@ -76,8 +95,161 @@ function normalizePoint(
   ]
 }
 
+function normalizeRelativePoint(
+  relativePoint: readonly [number, number, number],
+  systemRadius: number
+): DisplayPoint {
+  const safeRadius = Math.max(1, systemRadius)
+  const scale = DISPLAY_RADIUS / safeRadius
+  return [
+    relativePoint[0] * scale,
+    relativePoint[1] * scale,
+    relativePoint[2] * scale,
+  ]
+}
+
 function planarRadius(point: readonly [number, number, number]) {
   return Math.hypot(point[0], point[2])
+}
+
+function stableHash(value: string) {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function normalizeVector(vector: readonly [number, number, number]): [number, number, number] {
+  const len = Math.hypot(vector[0], vector[1], vector[2])
+  if (len < 1e-6) return [0, 0, 1]
+  return [vector[0] / len, vector[1] / len, vector[2] / len]
+}
+
+function cross(
+  a: readonly [number, number, number],
+  b: readonly [number, number, number]
+): [number, number, number] {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ]
+}
+
+function buildOrbitPathPoints(
+  orbitId: string,
+  starWorldPosition: readonly [number, number, number],
+  fallbackWorldPosition: readonly [number, number, number],
+  systemRadius: number,
+  referenceFrameRotation: THREE.Quaternion,
+  orbitalElements?: {
+    semiMajorAxisAu: number
+    eccentricity: number
+    inclinationDeg: number
+    ascendingNodeDeg: number
+    argumentOfPeriapsisDeg: number
+  }
+) {
+  const pointCount = 128
+  const points: DisplayPoint[] = []
+
+  if (!orbitalElements) {
+    const relativeWorld: [number, number, number] = [
+      fallbackWorldPosition[0] - starWorldPosition[0],
+      fallbackWorldPosition[1] - starWorldPosition[1],
+      fallbackWorldPosition[2] - starWorldPosition[2],
+    ]
+    const relativeVector = new THREE.Vector3(relativeWorld[0], relativeWorld[1], relativeWorld[2])
+    relativeVector.applyQuaternion(referenceFrameRotation)
+    const relative: [number, number, number] = [relativeVector.x, relativeVector.y, relativeVector.z]
+    const relMag = Math.hypot(relative[0], relative[1], relative[2])
+    if (relMag < 1e-6) {
+      const fallbackNormalized = normalizePoint(fallbackWorldPosition, starWorldPosition, systemRadius)
+      const fallbackRadius = Math.max(0.45, planarRadius(fallbackNormalized))
+      for (let i = 0; i <= pointCount; i += 1) {
+        const t = (i / pointCount) * Math.PI * 2
+        points.push([
+          Math.cos(t) * fallbackRadius,
+          0,
+          Math.sin(t) * fallbackRadius,
+        ])
+      }
+      return points
+    }
+
+    if (orbitId === 'planet-1') {
+      const referenceRadius = Math.max(0.45, Math.hypot(relative[0], relative[2]))
+      for (let i = 0; i <= pointCount; i += 1) {
+        const t = (i / pointCount) * Math.PI * 2
+        points.push([
+          (Math.cos(t) * referenceRadius / Math.max(1, systemRadius)) * DISPLAY_RADIUS,
+          0,
+          (Math.sin(t) * referenceRadius / Math.max(1, systemRadius)) * DISPLAY_RADIUS,
+        ])
+      }
+      return points
+    }
+
+    const hash = stableHash(orbitId)
+    const axisCandidate = normalizeVector([
+      ((hash & 1023) / 511.5) - 1,
+      (((hash >>> 10) & 1023) / 511.5) - 1,
+      (((hash >>> 20) & 1023) / 511.5) - 1,
+    ])
+    let orbitNormal = cross(relative, axisCandidate)
+    if (Math.hypot(orbitNormal[0], orbitNormal[1], orbitNormal[2]) < 1e-4) {
+      orbitNormal = cross(relative, [0, 1, 0])
+    }
+    if (Math.hypot(orbitNormal[0], orbitNormal[1], orbitNormal[2]) < 1e-4) {
+      orbitNormal = cross(relative, [1, 0, 0])
+    }
+    const n = normalizeVector(orbitNormal)
+    const nCrossR = cross(n, relative)
+
+    for (let i = 0; i <= pointCount; i += 1) {
+      const t = (i / pointCount) * Math.PI * 2
+      const cosT = Math.cos(t)
+      const sinT = Math.sin(t)
+      const x = relative[0] * cosT + nCrossR[0] * sinT
+      const y = relative[1] * cosT + nCrossR[1] * sinT
+      const z = relative[2] * cosT + nCrossR[2] * sinT
+      points.push(normalizeRelativePoint([x, y, z], systemRadius))
+    }
+    return points
+  }
+
+  const semiMajorAxisUnits = orbitalElements.semiMajorAxisAu * WORLD_UNITS_PER_AU
+  const eccentricity = clamp(orbitalElements.eccentricity, 0, 0.9)
+  const inclination = (orbitalElements.inclinationDeg * Math.PI) / 180
+  const ascendingNode = (orbitalElements.ascendingNodeDeg * Math.PI) / 180
+  const argumentOfPeriapsis = (orbitalElements.argumentOfPeriapsisDeg * Math.PI) / 180
+  const cosNode = Math.cos(ascendingNode)
+  const sinNode = Math.sin(ascendingNode)
+  const cosInclination = Math.cos(inclination)
+  const sinInclination = Math.sin(inclination)
+
+  for (let i = 0; i <= pointCount; i += 1) {
+    const trueAnomaly = (i / pointCount) * Math.PI * 2
+    const denominator = 1 + eccentricity * Math.cos(trueAnomaly)
+    const orbitRadiusUnits =
+      Math.abs(denominator) <= 1e-6
+        ? semiMajorAxisUnits
+        : (semiMajorAxisUnits * (1 - eccentricity * eccentricity)) / denominator
+    const argumentOfLatitude = argumentOfPeriapsis + trueAnomaly
+    const cosU = Math.cos(argumentOfLatitude)
+    const sinU = Math.sin(argumentOfLatitude)
+    const x = orbitRadiusUnits * (cosNode * cosU - sinNode * sinU * cosInclination)
+    const y = orbitRadiusUnits * (sinU * sinInclination)
+    const z = orbitRadiusUnits * (sinNode * cosU + cosNode * sinU * cosInclination)
+    const orbitWorld = new THREE.Vector3(x, y, z)
+    orbitWorld.applyQuaternion(referenceFrameRotation)
+    points.push(
+      normalizeRelativePoint([orbitWorld.x, orbitWorld.y, orbitWorld.z], systemRadius)
+    )
+  }
+  return points
 }
 
 function createStarfieldTexture() {
@@ -252,24 +424,32 @@ function RevealedTrackGeometry({
 }) {
   const markerRef = useRef<THREE.Mesh>(null)
   const highlighted = hovered || selected
+  const orbitLinePositions = useMemo(
+    () => new Float32Array(track.orbitPathPoints.flatMap((point) => point)),
+    [track.orbitPathPoints]
+  )
 
   useFrame(() => {
     if (!markerRef.current) return
-    const pulse = 1 + Math.sin(time * 1.8 + track.orbitRadius) * (highlighted ? 0.2 : 0.12)
+    const pulse = 1 + Math.sin(time * 1.8 + track.distanceWorldUnits * 0.00014) * (highlighted ? 0.2 : 0.12)
     markerRef.current.scale.setScalar(pulse)
   })
 
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[track.orbitRadius, 0.012, 10, 96]} />
-        <meshBasicMaterial
+      <line>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[orbitLinePositions, 3]}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial
           color={highlighted ? SELECT_BLUE : LINE_GREY}
           transparent
-          opacity={highlighted ? 0.7 : 0.42}
-          side={THREE.DoubleSide}
+          opacity={highlighted ? 0.72 : 0.45}
         />
-      </mesh>
+      </line>
       <mesh
         ref={markerRef}
         position={track.position}
@@ -524,6 +704,10 @@ export function EWSystemMap({ time }: { time: number }) {
   } | null>(null)
   const dragMovedRef = useRef(false)
   const [activeTab, setActiveTab] = useState<MapTab>('MAP')
+  const [bScopeRangeIdx, setBScopeRangeIdx] = useState(4)
+  const [bScopeBearingMode, setBScopeBearingMode] = useState<'REL' | 'ABS'>('REL')
+  const [bScopeViewMinDeg, setBScopeViewMinDeg] = useState(-B_SCOPE_AZ_LIMIT_DEG)
+  const [bScopeViewMaxDeg, setBScopeViewMaxDeg] = useState(B_SCOPE_AZ_LIMIT_DEG)
   const [orbit, setOrbit] = useState<OrbitState>({ yaw: -0.7, pitch: 0.62 })
   const [zoomDistance, setZoomDistance] = useState(10.5)
   const [isDragging, setIsDragging] = useState(false)
@@ -532,7 +716,12 @@ export function EWSystemMap({ time }: { time: number }) {
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
 
   const starSystem = useGameStore((s) => s.starSystem)
+  const enemy = useGameStore((s) => s.enemy)
   const shipPosition = useGameStore((s) => s.ship.position)
+  const shipHeadingDeg = useGameStore((s) => s.ship.actualHeading)
+  const ewLockState = useGameStore((s) => s.ewLockState)
+  const setEwLockState = useGameStore((s) => s.setEwLockState)
+  const debugEwPlanet1TargetEnabled = useGameStore((s) => s.debugEwPlanet1TargetEnabled)
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const warpState = useGameStore((s) => s.warpState)
   const warpSourceCelestialId = useGameStore((s) => s.warpSourceCelestialId)
@@ -595,6 +784,24 @@ export function EWSystemMap({ time }: { time: number }) {
     return worldPositionForCelestial(star)
   }, [star])
 
+  const referenceFrameRotation = useMemo(() => {
+    const up = new THREE.Vector3(0, 1, 0)
+    const reference = getCelestialById('planet-1', starSystem)
+    const orbital = reference?.orbitalElements
+    if (!orbital) return new THREE.Quaternion()
+    const inclination = (orbital.inclinationDeg * Math.PI) / 180
+    const ascendingNode = (orbital.ascendingNodeDeg * Math.PI) / 180
+    const sinInclination = Math.sin(inclination)
+    const normal = new THREE.Vector3(
+      Math.sin(ascendingNode) * sinInclination,
+      Math.cos(inclination),
+      Math.cos(ascendingNode) * sinInclination
+    ).normalize()
+    const rotation = new THREE.Quaternion()
+    rotation.setFromUnitVectors(normal, up)
+    return rotation
+  }, [starSystem])
+
   const systemRadius = useMemo(() => {
     const distances = starSystem.celestials.map((celestial) => {
       const position = worldPositionForCelestial(celestial)
@@ -617,9 +824,14 @@ export function EWSystemMap({ time }: { time: number }) {
   }, [starSystem.celestials, starWorldPosition, stellarMapShipWorldPosition])
 
   const shipDisplayPosition = useMemo(() => {
-    const normalized = normalizePoint(stellarMapShipWorldPosition, starWorldPosition, systemRadius)
-    return [normalized[0], 0, normalized[2]] as DisplayPoint
-  }, [starWorldPosition, stellarMapShipWorldPosition, systemRadius])
+    const relative = new THREE.Vector3(
+      stellarMapShipWorldPosition[0] - starWorldPosition[0],
+      stellarMapShipWorldPosition[1] - starWorldPosition[1],
+      stellarMapShipWorldPosition[2] - starWorldPosition[2]
+    )
+    relative.applyQuaternion(referenceFrameRotation)
+    return normalizeRelativePoint([relative.x, relative.y, relative.z], systemRadius)
+  }, [referenceFrameRotation, starWorldPosition, stellarMapShipWorldPosition, systemRadius])
 
   const revealedTracks = useMemo<RevealedTrack[]>(() => (
     starSystem.celestials
@@ -628,7 +840,13 @@ export function EWSystemMap({ time }: { time: number }) {
       )
       .map((celestial) => {
         const worldPosition = worldPositionForCelestial(celestial)
-        const normalized = normalizePoint(worldPosition, starWorldPosition, systemRadius)
+        const worldRelative = new THREE.Vector3(
+          worldPosition[0] - starWorldPosition[0],
+          worldPosition[1] - starWorldPosition[1],
+          worldPosition[2] - starWorldPosition[2]
+        )
+        worldRelative.applyQuaternion(referenceFrameRotation)
+        const normalized = normalizeRelativePoint([worldRelative.x, worldRelative.y, worldRelative.z], systemRadius)
         const vectorToTarget = vectorBetweenWorldPoints(stellarMapShipWorldPosition, worldPosition)
         const distanceWorldUnits = vectorMagnitude(vectorToTarget)
         const { bearing, inclination } = bearingInclinationFromVector(vectorToTarget)
@@ -638,11 +856,18 @@ export function EWSystemMap({ time }: { time: number }) {
           inclinationDeg: inclination,
           name: celestial.name,
           distanceWorldUnits,
-          orbitRadius: Math.max(0.45, planarRadius([normalized[0], 0, normalized[2]])),
-          position: [normalized[0], 0, normalized[2]] as DisplayPoint,
+          orbitPathPoints: buildOrbitPathPoints(
+            celestial.id,
+            starWorldPosition,
+            worldPosition,
+            systemRadius,
+            referenceFrameRotation,
+            celestial.orbitalElements
+          ),
+          position: normalized,
         }
       })
-  ), [currentCelestialId, revealedCelestialIds, starSystem.celestials, starWorldPosition, stellarMapShipWorldPosition, systemRadius])
+  ), [currentCelestialId, referenceFrameRotation, revealedCelestialIds, starSystem.celestials, starWorldPosition, stellarMapShipWorldPosition, systemRadius])
 
   const hoveredMarkerDetails = useMemo(() => {
     if (!hoveredMarker) return null
@@ -690,6 +915,145 @@ export function EWSystemMap({ time }: { time: number }) {
       stellarMapShipWorldPosition[1] - starWorldPosition[1],
       stellarMapShipWorldPosition[2] - starWorldPosition[2]
     ) / WORLD_UNITS_PER_AU
+  const bScopeRangeKm = B_SCOPE_RANGE_OPTIONS_KM[bScopeRangeIdx] ?? 160
+  const bScopeMaxRangeM = bScopeRangeKm * 1000
+  const bScopeViewSpanDeg = Math.max(1, bScopeViewMaxDeg - bScopeViewMinDeg)
+  const bScopeAzTicks = useMemo(() => {
+    const start = Math.ceil(bScopeViewMinDeg / B_SCOPE_AZ_GRID_STEP_DEG) * B_SCOPE_AZ_GRID_STEP_DEG
+    const ticks: number[] = []
+    for (let tick = start; tick <= bScopeViewMaxDeg; tick += B_SCOPE_AZ_GRID_STEP_DEG) {
+      ticks.push(tick)
+    }
+    if (!ticks.includes(0) && bScopeViewMinDeg < 0 && bScopeViewMaxDeg > 0) {
+      ticks.push(0)
+      ticks.sort((a, b) => a - b)
+    }
+    return ticks
+  }, [bScopeViewMaxDeg, bScopeViewMinDeg])
+
+  const bScopeAllTracks = useMemo<BScopeTrack[]>(() => {
+    const tracks: BScopeTrack[] = []
+
+    if (enemy?.position && shipPosition) {
+      const dx = -(enemy.position[0] - shipPosition[0])
+      const dy = enemy.position[1] - shipPosition[1]
+      const dz = enemy.position[2] - shipPosition[2]
+      const rangeM = Math.hypot(dx, dz)
+      const { bearing: bearingDeg, inclination: relInclinationDeg } =
+        bearingInclinationFromVector([dx, dy, dz])
+      const relBearingDeg = ((bearingDeg - shipHeadingDeg + 540) % 360) - 180
+
+      tracks.push({
+        id: 'Σ',
+        absBearingDeg: bearingDeg,
+        relInclinationDeg,
+        rangeM,
+        relBearingDeg,
+      })
+
+      if (enemy.missileLaunched) {
+        tracks.push({
+          id: 'M',
+          absBearingDeg: bearingDeg,
+          relInclinationDeg,
+          rangeM: Math.max(0, rangeM - 2000),
+          relBearingDeg,
+        })
+      }
+    }
+
+    if (debugEwPlanet1TargetEnabled) {
+      const planetOne = getCelestialById('planet-1', starSystem)
+      if (planetOne) {
+        const planetOneWorld = worldPositionForCelestial(planetOne)
+        const debugTargetWorld: [number, number, number] = [
+          planetOneWorld[0] + 100000,
+          planetOneWorld[1],
+          planetOneWorld[2],
+        ]
+        const toTarget = vectorBetweenWorldPoints(shipWorldPosition, debugTargetWorld)
+        const rangeM = vectorMagnitude(toTarget)
+        const { bearing, inclination } = bearingInclinationFromVector(toTarget)
+        const relBearingDeg = ((bearing - shipHeadingDeg + 540) % 360) - 180
+        tracks.push({
+          id: 'P1',
+          absBearingDeg: bearing,
+          relInclinationDeg: inclination,
+          rangeM,
+          relBearingDeg,
+        })
+      }
+    }
+
+    return tracks
+  }, [debugEwPlanet1TargetEnabled, enemy, shipHeadingDeg, shipPosition, shipWorldPosition, starSystem])
+
+  const bScopeTracks = useMemo<BScopeTrack[]>(() => {
+    return bScopeAllTracks.filter(
+      (track) =>
+        track.relBearingDeg >= bScopeViewMinDeg
+        && track.relBearingDeg <= bScopeViewMaxDeg
+        && track.rangeM <= bScopeMaxRangeM
+    )
+  }, [bScopeAllTracks, bScopeMaxRangeM, bScopeViewMaxDeg, bScopeViewMinDeg])
+  const bScopeTrackRelBearingById = useMemo<Record<string, number>>(() => {
+    const byId: Record<string, number> = {}
+    bScopeAllTracks.forEach((track) => {
+      byId[track.id] = track.relBearingDeg
+    })
+    return byId
+  }, [bScopeAllTracks])
+
+  useEffect(() => {
+    const hardLockedId = Object.keys(ewLockState).find((id) => ewLockState[id] === 'hard')
+    if (!hardLockedId) return
+    const relBearing = bScopeTrackRelBearingById[hardLockedId]
+    if (relBearing === undefined) {
+      setEwLockState((prev) => {
+        const next = { ...prev }
+        delete next[hardLockedId]
+        return next
+      })
+      return
+    }
+    if (Math.abs(relBearing) > B_SCOPE_AZ_LIMIT_DEG) {
+      setEwLockState((prev) => {
+        const next = { ...prev }
+        delete next[hardLockedId]
+        return next
+      })
+    }
+  }, [bScopeTrackRelBearingById, ewLockState, setEwLockState])
+
+  const handleBScopeWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const rect = event.currentTarget.getBoundingClientRect()
+    const mouseXNorm = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
+    const currentSpan = bScopeViewSpanDeg
+    const zoomFactor = event.deltaY < 0 ? 0.86 : 1.18
+    const nextSpan = clamp(currentSpan * zoomFactor, B_SCOPE_MIN_VIEW_SPAN_DEG, B_SCOPE_AZ_LIMIT_DEG * 2)
+    const mouseAzDeg = bScopeViewMinDeg + mouseXNorm * currentSpan
+
+    let nextMin = mouseAzDeg - mouseXNorm * nextSpan
+    let nextMax = nextMin + nextSpan
+
+    if (nextMin < -B_SCOPE_AZ_LIMIT_DEG) {
+      const shift = -B_SCOPE_AZ_LIMIT_DEG - nextMin
+      nextMin += shift
+      nextMax += shift
+    }
+    if (nextMax > B_SCOPE_AZ_LIMIT_DEG) {
+      const shift = nextMax - B_SCOPE_AZ_LIMIT_DEG
+      nextMin -= shift
+      nextMax -= shift
+    }
+
+    setBScopeViewMinDeg(nextMin)
+    setBScopeViewMaxDeg(nextMax)
+  }
+  const bScopeLeftAbsDeg = normalizeBearingDeg(shipHeadingDeg + bScopeViewMinDeg)
+  const bScopeCenterAbsDeg = normalizeBearingDeg(shipHeadingDeg + (bScopeViewMinDeg + bScopeViewMaxDeg) * 0.5)
+  const bScopeRightAbsDeg = normalizeBearingDeg(shipHeadingDeg + bScopeViewMaxDeg)
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (activeTab !== 'MAP') return
@@ -929,6 +1293,333 @@ export function EWSystemMap({ time }: { time: number }) {
                 />
               </Canvas>
             </>
+          ) : activeTab === 'RADAR' ? (
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                border: '1px solid rgba(255,176,0,0.08)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: AMBER,
+                fontFamily: "'Consolas', 'Monaco', monospace",
+              }}
+            >
+              <div
+                style={{
+                  width: '68%',
+                  height: '78%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'stretch',
+                  gap: 6,
+                }}
+              >
+                <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 6 }}>
+                  <div
+                    style={{
+                      width: 64,
+                    border: `1px solid ${B_SCOPE_GREEN_DIM}77`,
+                      background: 'rgba(0,0,0,0.38)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 6px',
+                      flexShrink: 0,
+                    }}
+                  >
+                  <span style={{ fontSize: 9, color: B_SCOPE_GREEN_DIM, letterSpacing: 1 }}>RNG</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={() => setBScopeRangeIdx((prev) => Math.min(B_SCOPE_RANGE_OPTIONS_KM.length - 1, prev + 1))}
+                      disabled={bScopeRangeIdx >= B_SCOPE_RANGE_OPTIONS_KM.length - 1}
+                      style={{
+                        width: 30,
+                        height: 22,
+                        border: `1px solid ${B_SCOPE_GREEN_DIM}`,
+                        background: 'rgba(68,255,102,0.08)',
+                        color: B_SCOPE_GREEN_GLOW,
+                        fontFamily: "'Consolas', 'Monaco', monospace",
+                        fontSize: 12,
+                        lineHeight: 1,
+                        cursor: bScopeRangeIdx >= B_SCOPE_RANGE_OPTIONS_KM.length - 1 ? 'not-allowed' : 'pointer',
+                        opacity: bScopeRangeIdx >= B_SCOPE_RANGE_OPTIONS_KM.length - 1 ? 0.45 : 1,
+                      }}
+                      aria-label="Increase B-scope range scale"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBScopeRangeIdx((prev) => Math.max(0, prev - 1))}
+                      disabled={bScopeRangeIdx <= 0}
+                      style={{
+                        width: 30,
+                        height: 22,
+                        border: `1px solid ${B_SCOPE_GREEN_DIM}`,
+                        background: 'rgba(68,255,102,0.08)',
+                        color: B_SCOPE_GREEN_GLOW,
+                        fontFamily: "'Consolas', 'Monaco', monospace",
+                        fontSize: 14,
+                        lineHeight: 1,
+                        cursor: bScopeRangeIdx <= 0 ? 'not-allowed' : 'pointer',
+                        opacity: bScopeRangeIdx <= 0 ? 0.45 : 1,
+                      }}
+                      aria-label="Decrease B-scope range scale"
+                    >
+                      -
+                    </button>
+                  </div>
+                  <span style={{ fontSize: 10, color: B_SCOPE_GREEN_GLOW, letterSpacing: 0.5 }}>
+                      {`${bScopeRangeKm}km`}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      flex: 1,
+                    border: `1px solid ${B_SCOPE_GREEN_DIM}55`,
+                      background: 'rgba(0,0,0,0.38)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      padding: '10px 12px',
+                      gap: 8,
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        color: B_SCOPE_GREEN_GLOW,
+                        fontSize: 12,
+                        letterSpacing: 1,
+                      }}
+                    >
+                      <span>B-SCOPE</span>
+                      <span style={{ color: B_SCOPE_GREEN_DIM }}>{`AZ ${bScopeViewSpanDeg.toFixed(0)}° | RNG ${bScopeRangeKm}km`}</span>
+                    </div>
+
+                    <div
+                      style={{
+                        position: 'relative',
+                        flex: 1,
+                        border: `1px solid ${B_SCOPE_GREEN_DIM}55`,
+                        background: BG_SCREEN,
+                        overflow: 'hidden',
+                      }}
+                      onWheel={handleBScopeWheel}
+                      onContextMenu={(event) => {
+                        event.preventDefault()
+                        setEwLockState((prev) => {
+                          const next = { ...prev }
+                          Object.keys(next).forEach((id) => {
+                            if (next[id] === 'hard') {
+                              delete next[id]
+                            }
+                          })
+                          return next
+                        })
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: '50%',
+                          top: 0,
+                          bottom: 0,
+                          width: 1,
+                        background: 'rgba(68,255,102,0.28)',
+                        }}
+                      />
+                      {bScopeAzTicks.map((tickDeg) => (
+                        <div
+                          key={`az-${tickDeg}`}
+                          style={{
+                            position: 'absolute',
+                            left: `${((tickDeg - bScopeViewMinDeg) / bScopeViewSpanDeg) * 100}%`,
+                            top: 0,
+                            bottom: 0,
+                            width: 1,
+                          background: tickDeg === 0 ? 'rgba(68,255,102,0.3)' : 'rgba(68,255,102,0.14)',
+                          }}
+                        />
+                      ))}
+                      {[0, 0.25, 0.5, 0.75, 1].map((step) => {
+                        const rangeKm = Math.round((step * bScopeRangeKm) / 10) * 10
+                        return (
+                          <div key={`rng-${step}`}>
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: 0,
+                                right: 0,
+                                bottom: `${step * 100}%`,
+                                height: 1,
+                                background: step === 0 ? 'rgba(68,255,102,0.28)' : 'rgba(68,255,102,0.1)',
+                              }}
+                            />
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: 6,
+                                bottom: `${step * 100}%`,
+                                transform: step === 0 ? 'translateY(0)' : step === 1 ? 'translateY(-100%)' : 'translateY(50%)',
+                                color: B_SCOPE_GREEN_DIM,
+                                fontSize: 11,
+                                letterSpacing: 0.3,
+                                pointerEvents: 'none',
+                              }}
+                            >
+                              {`${rangeKm} km`}
+                            </div>
+                          </div>
+                        )
+                      })}
+
+                      {bScopeTracks.map((track) => {
+                        const xPct =
+                          ((track.relBearingDeg - bScopeViewMinDeg) / bScopeViewSpanDeg) * 100
+                        const yPct = (track.rangeM / bScopeMaxRangeM) * 100
+                        const incLabel = `${track.relInclinationDeg >= 0 ? '+' : ''}${Math.round(track.relInclinationDeg)}`
+                        const isHardLocked = ewLockState[track.id] === 'hard'
+                        const trackColor = isHardLocked ? '#f4f7ff' : B_SCOPE_GREEN
+                        const trackGlow = isHardLocked ? '#ffffff' : B_SCOPE_GREEN_DIM
+                        return (
+                          <div key={track.id}>
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: `${xPct}%`,
+                                bottom: `${yPct}%`,
+                                transform: 'translate(-50%, 50%)',
+                                width: 16,
+                                height: 10,
+                                border: `1px solid ${trackColor}`,
+                                background: isHardLocked ? 'rgba(255,255,255,0.12)' : 'rgba(68,255,102,0.17)',
+                                boxShadow: `0 0 8px ${trackGlow}`,
+                                color: trackColor,
+                                fontSize: 9,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'crosshair',
+                              }}
+                              title={`${track.id} | BRG ${track.relBearingDeg.toFixed(0)}° | RNG ${(track.rangeM / 1000).toFixed(1)}km | INC ${incLabel}`}
+                              onContextMenu={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                setEwLockState((prev) => {
+                                  const next = { ...prev }
+                                  Object.keys(next).forEach((id) => {
+                                    if (next[id] === 'hard' && id !== track.id) {
+                                      delete next[id]
+                                    }
+                                  })
+                                  next[track.id] = 'hard'
+                                  return next
+                                })
+                              }}
+                            >
+                              {track.id}
+                            </div>
+                            {isHardLocked ? (
+                              <>
+                                <div style={{ position: 'absolute', left: `calc(${xPct}% - 14px)`, bottom: `calc(${yPct}% - 8px)`, width: 1, height: 16, background: trackColor, boxShadow: `0 0 4px ${trackGlow}` }} />
+                                <div style={{ position: 'absolute', left: `calc(${xPct}% - 14px)`, bottom: `calc(${yPct}% + 8px)`, width: 6, height: 1, background: trackColor, boxShadow: `0 0 4px ${trackGlow}` }} />
+                                <div style={{ position: 'absolute', left: `calc(${xPct}% - 14px)`, bottom: `calc(${yPct}% - 8px)`, width: 6, height: 1, background: trackColor, boxShadow: `0 0 4px ${trackGlow}` }} />
+                                <div style={{ position: 'absolute', left: `calc(${xPct}% + 13px)`, bottom: `calc(${yPct}% - 8px)`, width: 1, height: 16, background: trackColor, boxShadow: `0 0 4px ${trackGlow}` }} />
+                                <div style={{ position: 'absolute', left: `calc(${xPct}% + 8px)`, bottom: `calc(${yPct}% + 8px)`, width: 6, height: 1, background: trackColor, boxShadow: `0 0 4px ${trackGlow}` }} />
+                                <div style={{ position: 'absolute', left: `calc(${xPct}% + 8px)`, bottom: `calc(${yPct}% - 8px)`, width: 6, height: 1, background: trackColor, boxShadow: `0 0 4px ${trackGlow}` }} />
+                              </>
+                            ) : null}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: `calc(${xPct}% + 10px)`,
+                                bottom: `calc(${yPct}% + 10px)`,
+                                color: trackColor,
+                                fontSize: 10,
+                                letterSpacing: 0.2,
+                                pointerEvents: 'none',
+                                textShadow: `0 0 4px ${trackGlow}`,
+                              }}
+                            >
+                              {incLabel}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        color: B_SCOPE_GREEN_DIM,
+                        fontSize: 10,
+                      }}
+                    >
+                      {bScopeBearingMode === 'REL' ? (
+                        <>
+                          <span>{bScopeViewMinDeg < 0 ? `L${Math.round(Math.abs(bScopeViewMinDeg))}` : `R${Math.round(bScopeViewMinDeg)}`}</span>
+                          <span>{`C${Math.round((bScopeViewMinDeg + bScopeViewMaxDeg) / 2)}`}</span>
+                          <span>{bScopeViewMaxDeg < 0 ? `L${Math.round(Math.abs(bScopeViewMaxDeg))}` : `R${Math.round(bScopeViewMaxDeg)}`}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>{String(Math.round(bScopeLeftAbsDeg)).padStart(3, '0')}</span>
+                          <span>{String(Math.round(bScopeCenterAbsDeg)).padStart(3, '0')}</span>
+                          <span>{String(Math.round(bScopeRightAbsDeg)).padStart(3, '0')}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'flex-start',
+                    paddingLeft: 70,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      border: `1px solid ${B_SCOPE_GREEN_DIM}77`,
+                      background: 'rgba(0,0,0,0.35)',
+                      borderRadius: 1,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {(['REL', 'ABS'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setBScopeBearingMode(mode)}
+                        style={{
+                          padding: '3px 10px',
+                          border: 'none',
+                          borderRight: mode === 'REL' ? `1px solid ${B_SCOPE_GREEN_DIM}55` : 'none',
+                          background: bScopeBearingMode === mode ? 'rgba(68,255,102,0.18)' : 'transparent',
+                          color: bScopeBearingMode === mode ? B_SCOPE_GREEN_GLOW : B_SCOPE_GREEN_DIM,
+                          fontFamily: "'Consolas', 'Monaco', monospace",
+                          fontSize: 10,
+                          letterSpacing: 1,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : (
             <div
               style={{

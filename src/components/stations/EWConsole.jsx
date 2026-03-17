@@ -5,6 +5,7 @@ import { EWSystemMap } from "@/components/stations/EWSystemMap";
 import {
   WORLD_UNITS_PER_AU,
   bearingInclinationFromVector,
+  getWorldShipPosition,
   vectorBetweenWorldPoints,
   vectorMagnitude,
   worldPositionForCelestial,
@@ -37,7 +38,8 @@ import {
 } from "@/systems/ew/consoleTheme";
 
 function buildContactsFromGame(enemy) {
-  const playerPos = useGameStore.getState().ship.position;
+  const gameState = useGameStore.getState();
+  const playerPos = gameState.ship.position;
   const dx = -(enemy.position[0] - playerPos[0]);
   const dz = enemy.position[2] - playerPos[2];
   const range = Math.sqrt(dx * dx + dz * dz);
@@ -116,6 +118,41 @@ function buildContactsFromGame(enemy) {
       relDx: dx,
       relDz: dz,
     });
+  }
+
+  if (gameState.debugEwPlanet1TargetEnabled) {
+    const starSystem = gameState.starSystem;
+    const currentCelestial = getCelestialById(gameState.currentCelestialId, starSystem);
+    const planetOne = getCelestialById("planet-1", starSystem);
+    if (currentCelestial && planetOne) {
+      const shipWorld = getWorldShipPosition(playerPos, worldPositionForCelestial(currentCelestial));
+      const planetOneWorld = worldPositionForCelestial(planetOne);
+      const debugTargetWorld = [planetOneWorld[0] + 100000, planetOneWorld[1], planetOneWorld[2]];
+      const toTarget = vectorBetweenWorldPoints(shipWorld, debugTargetWorld);
+      const targetRange = vectorMagnitude(toTarget);
+      const { bearing: targetBearing } = bearingInclinationFromVector(toTarget);
+
+      contacts.push({
+        id: "P1",
+        bearing: targetBearing,
+        range: targetRange,
+        freq: 0.36,
+        sigWidth: 0.022,
+        sigType: "scan",
+        emStrength: 0.66,
+        thermal: 0.12,
+        type: "battleship",
+        driftBearing: 0,
+        driftRange: 0,
+        active: true,
+        jamming: false,
+        rcs: 24,
+        heading: 0,
+        speed: 0,
+        relDx: toTarget[0],
+        relDz: toTarget[2],
+      });
+    }
   }
 
   return contacts;
@@ -1060,7 +1097,6 @@ const GravAnalyzer = ({
       if (isCelestial) {
         // Type-specific celestial signatures:
         // - planet: broad parabolic hump
-        // - moon: narrower/smaller parabolic hump
         // - asteroid belt: weak jagged cluster of micro-bumps
         const signedWellDeltaRaw = t - wellCenter;
         const signedWellDelta = signedWellDeltaRaw > 0.5
@@ -1069,8 +1105,8 @@ const GravAnalyzer = ({
             ? signedWellDeltaRaw + 1
             : signedWellDeltaRaw;
 
-        if (c.type === "planet" || c.type === "moon") {
-          const wellWidth = c.type === "planet" ? 0.062 : 0.036;
+        if (c.type === "planet") {
+          const wellWidth = 0.062;
           if (wellDist < wellWidth) {
             const u = wellDist / wellWidth;
             const parabola = 1 - u * u;
@@ -1078,8 +1114,8 @@ const GravAnalyzer = ({
             const edge = 1 - u;
             const easedEdge = edge * edge * (3 - 2 * edge);
             const shaped = parabola * easedEdge;
-            const amp = c.type === "planet" ? 0.36 : 0.23;
-            const massScale = c.type === "planet" ? 1.0 : 0.82;
+            const amp = 0.36;
+            const massScale = 1.0;
             displacement += shaped * totalMass * massScale * proxFactor * H * amp;
           }
         } else if (c.type === "asteroid_belt") {
@@ -2555,7 +2591,7 @@ export default function EWConsole() {
 
         <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
           <Panel
-            title="Multi-Mode Display"
+            title="Multi-Function Display"
             style={{ flex: 1, minHeight: 160 }}
             headerRight={<span style={{ color: AMBER_DIM, fontSize: 8 }}>MAP ONLINE</span>}
           >

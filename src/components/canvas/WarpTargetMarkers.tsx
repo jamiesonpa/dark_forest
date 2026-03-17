@@ -102,10 +102,15 @@ export function WarpTargetMarkers() {
             : toDestination
         const markerVectorDistance = vectorMagnitude(markerVector)
         const { bearing, inclination } = bearingInclinationFromVector(markerVector)
+        const distanceMeters =
+          suppressNonTargetMarkers && destinationCelestial.id === activeWarpMarkerId
+            ? liveDistance
+            : directionDistance
+
         return {
           destinationId: destinationCelestial.id,
           destinationName: destinationCelestial.name,
-          distanceMeters: liveDistance,
+          distanceMeters,
           bearing,
           inclination,
           direction: new THREE.Vector3(

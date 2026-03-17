@@ -11,7 +11,6 @@ export const WORLD_UNITS_PER_AU = 140
 export const DEFAULT_STAR_SYSTEM_CONFIG: StarSystemGenerationConfig = {
   seed: 1337,
   planetCount: 2,
-  moonCount: 0,
   asteroidBeltCount: 1,
   minOrbitAu: 60,
   maxOrbitAu: 220,
@@ -20,23 +19,22 @@ export const DEFAULT_STAR_SYSTEM_CONFIG: StarSystemGenerationConfig = {
 
 const CELESTIAL_NAMES: Record<Exclude<CelestialType, 'star'>, string> = {
   planet: 'Planet',
-  moon: 'Moon',
   asteroid_belt: 'Belt',
 }
 
 const GRID_RADIUS_BY_TYPE: Record<Exclude<CelestialType, 'star'>, number> = {
   planet: 2000,
-  moon: 1200,
   asteroid_belt: 3000,
 }
 
 const RADIUS_BY_TYPE: Record<Exclude<CelestialType, 'star'>, number> = {
   planet: 360,
-  moon: 180,
   asteroid_belt: 220,
 }
 
-const MAX_SHARED_ORBIT_PLANE_TILT_DEG = 10
+const MAX_PLANET_INCLINATION_DEG = 18
+const MAX_BELT_INCLINATION_DEG = 12
+const MAX_INCLINATION_OFFSET_FROM_REFERENCE_DEG = 30
 
 function clampInt(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Math.round(value)))
@@ -83,7 +81,6 @@ export function normalizeGenerationConfig(
   return {
     seed: clampInt(safeNumber(merged.seed, DEFAULT_STAR_SYSTEM_CONFIG.seed), 1, 2_147_483_647),
     planetCount: clampInt(safeNumber(merged.planetCount, DEFAULT_STAR_SYSTEM_CONFIG.planetCount), 0, 10),
-    moonCount: clampInt(safeNumber(merged.moonCount, DEFAULT_STAR_SYSTEM_CONFIG.moonCount), 0, 12),
     asteroidBeltCount: clampInt(safeNumber(merged.asteroidBeltCount, DEFAULT_STAR_SYSTEM_CONFIG.asteroidBeltCount), 0, 8),
     minOrbitAu: clampFloat(safeNumber(merged.minOrbitAu, DEFAULT_STAR_SYSTEM_CONFIG.minOrbitAu), 10, 5000),
     maxOrbitAu: clampFloat(safeNumber(merged.maxOrbitAu, DEFAULT_STAR_SYSTEM_CONFIG.maxOrbitAu), 20, 7000),
@@ -94,7 +91,6 @@ export function normalizeGenerationConfig(
 function buildWarpableTypeList(config: StarSystemGenerationConfig) {
   const list: Array<Exclude<CelestialType, 'star'>> = []
   for (let i = 0; i < config.planetCount; i += 1) list.push('planet')
-  for (let i = 0; i < config.moonCount; i += 1) list.push('moon')
   for (let i = 0; i < config.asteroidBeltCount; i += 1) list.push('asteroid_belt')
   return list
 }
@@ -130,21 +126,33 @@ function sampleSeparatedOrbits(
   return sorted
 }
 
-function projectOrbitPointToSharedPlane(
-  orbitUnits: number,
-  azimuth: number,
+function computeOrbitRadiusUnits(
+  semiMajorAxisUnits: number,
+  eccentricity: number,
+  trueAnomaly: number
+) {
+  const denominator = 1 + eccentricity * Math.cos(trueAnomaly)
+  if (Math.abs(denominator) < 1e-6) return semiMajorAxisUnits
+  return (semiMajorAxisUnits * (1 - eccentricity * eccentricity)) / denominator
+}
+
+function projectOrbitPoint(
+  orbitRadiusUnits: number,
+  trueAnomaly: number,
   ascendingNode: number,
-  inclinationRad: number
+  inclinationRad: number,
+  argumentOfPeriapsis: number
 ): [number, number, number] {
-  const cosAz = Math.cos(azimuth)
-  const sinAz = Math.sin(azimuth)
+  const argumentOfLatitude = argumentOfPeriapsis + trueAnomaly
+  const cosAz = Math.cos(argumentOfLatitude)
+  const sinAz = Math.sin(argumentOfLatitude)
   const cosNode = Math.cos(ascendingNode)
   const sinNode = Math.sin(ascendingNode)
   const cosIncl = Math.cos(inclinationRad)
   const sinIncl = Math.sin(inclinationRad)
-  const x = orbitUnits * (cosNode * cosAz - sinNode * sinAz * cosIncl)
-  const y = orbitUnits * (sinAz * sinIncl)
-  const z = orbitUnits * (sinNode * cosAz + cosNode * sinAz * cosIncl)
+  const x = orbitRadiusUnits * (cosNode * cosAz - sinNode * sinAz * cosIncl)
+  const y = orbitRadiusUnits * (sinAz * sinIncl)
+  const z = orbitRadiusUnits * (sinNode * cosAz + cosNode * sinAz * cosIncl)
   return [x, y, z]
 }
 
@@ -162,9 +170,6 @@ export function generateStarSystemSnapshot(
 
   const minOrbit = Math.min(normalized.minOrbitAu, normalized.maxOrbitAu)
   const maxOrbit = Math.max(normalized.minOrbitAu, normalized.maxOrbitAu)
-  const ascendingNode = randomRange(rand, 0, Math.PI * 2)
-  const maxTiltRad = (MAX_SHARED_ORBIT_PLANE_TILT_DEG * Math.PI) / 180
-  const sharedInclinationRad = randomRange(rand, -maxTiltRad, maxTiltRad)
   const orbitsAu = sampleSeparatedOrbits(
     warpableTypes.length,
     minOrbit,
@@ -185,20 +190,33 @@ export function generateStarSystemSnapshot(
 
   const counters: Record<Exclude<CelestialType, 'star'>, number> = {
     planet: 0,
-    moon: 0,
     asteroid_belt: 0,
   }
 
   warpableTypes.forEach((type, index) => {
     counters[type] += 1
-    const orbitAu = orbitsAu[index] ?? (minOrbit + maxOrbit) / 2
-    const azimuth = randomRange(rand, 0, Math.PI * 2)
-    const orbitUnits = orbitAu * WORLD_UNITS_PER_AU
-    const [x, y, z] = projectOrbitPointToSharedPlane(
-      orbitUnits,
-      azimuth,
+    const semiMajorAxisAu = orbitsAu[index] ?? (minOrbit + maxOrbit) / 2
+    const semiMajorAxisUnits = semiMajorAxisAu * WORLD_UNITS_PER_AU
+    const maxInclinationDeg = Math.min(
+      type === 'planet' ? MAX_PLANET_INCLINATION_DEG : MAX_BELT_INCLINATION_DEG,
+      MAX_INCLINATION_OFFSET_FROM_REFERENCE_DEG
+    )
+    const inclinationDeg =
+      type === 'planet' && counters[type] === 1
+        ? 0
+        : (rand() < 0.5 ? -1 : 1) * randomRange(rand, 0.6, maxInclinationDeg)
+    const inclinationRad = (inclinationDeg * Math.PI) / 180
+    const ascendingNode = randomRange(rand, 0, Math.PI * 2)
+    const argumentOfPeriapsis = randomRange(rand, 0, Math.PI * 2)
+    const eccentricity = 0
+    const trueAnomaly = randomRange(rand, 0, Math.PI * 2)
+    const orbitRadiusUnits = computeOrbitRadiusUnits(semiMajorAxisUnits, eccentricity, trueAnomaly)
+    const [x, y, z] = projectOrbitPoint(
+      orbitRadiusUnits,
+      trueAnomaly,
       ascendingNode,
-      sharedInclinationRad
+      inclinationRad,
+      argumentOfPeriapsis
     )
     const typePrefix = type === 'asteroid_belt' ? 'belt' : type
     const id = `${typePrefix}-${counters[type]}`
@@ -209,6 +227,14 @@ export function generateStarSystemSnapshot(
       position: [Math.round(x), Math.round(y), Math.round(z)],
       gridRadius: GRID_RADIUS_BY_TYPE[type],
       radius: RADIUS_BY_TYPE[type],
+      orbitalElements: {
+        semiMajorAxisAu,
+        eccentricity,
+        inclinationDeg,
+        ascendingNodeDeg: (ascendingNode * 180) / Math.PI,
+        argumentOfPeriapsisDeg: (argumentOfPeriapsis * 180) / Math.PI,
+        trueAnomalyDeg: (trueAnomaly * 180) / Math.PI,
+      },
     })
   })
 

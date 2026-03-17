@@ -9,7 +9,6 @@ describe('spawnPolicy', () => {
     const snapshot = generateStarSystemSnapshot({
       seed: 99,
       planetCount: 3,
-      moonCount: 1,
       asteroidBeltCount: 1,
       minOrbitAu: 60,
       maxOrbitAu: 200,
@@ -27,7 +26,6 @@ describe('spawnPolicy', () => {
     const snapshot = generateStarSystemSnapshot({
       seed: 101,
       planetCount: 4,
-      moonCount: 0,
       asteroidBeltCount: 1,
       minOrbitAu: 50,
       maxOrbitAu: 180,

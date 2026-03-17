@@ -4,7 +4,6 @@ import type { MultiplayerStatus } from '@/network/colyseusClient'
 export interface StarSystemFormState {
   seed: number
   planetCount: number
-  moonCount: number
   asteroidBeltCount: number
   minOrbitAu: number
   maxOrbitAu: number
@@ -49,12 +48,6 @@ export function StarSystemConfigWindow({
           type="number"
           value={formState.planetCount}
           onChange={(event) => updateField('planetCount', Number(event.target.value) || 0)}
-        />
-        <span>Moons</span>
-        <input
-          type="number"
-          value={formState.moonCount}
-          onChange={(event) => updateField('moonCount', Number(event.target.value) || 0)}
         />
         <span>Belts</span>
         <input

@@ -28,7 +28,6 @@ function toFormState(seed: number, config: ReturnType<typeof selectStarSystemCon
   return {
     seed,
     planetCount: config.planetCount,
-    moonCount: config.moonCount,
     asteroidBeltCount: config.asteroidBeltCount,
     minOrbitAu: config.minOrbitAu,
     maxOrbitAu: config.maxOrbitAu,

@@ -13,8 +13,6 @@ function getColor(type: CelestialType): number {
       return 0xffdd88
     case 'planet':
       return 0x4488cc
-    case 'moon':
-      return 0x888888
     case 'asteroid_belt':
       return 0x8b7355
     default:
@@ -26,7 +24,6 @@ export function CelestialBody({ celestial, isDistant }: CelestialBodyProps) {
   const isSphericalCelestial =
     celestial.type === 'star' ||
     celestial.type === 'planet' ||
-    celestial.type === 'moon' ||
     celestial.type === 'asteroid_belt'
   const radius = celestial.radius ?? 100
   const color = getColor(celestial.type)

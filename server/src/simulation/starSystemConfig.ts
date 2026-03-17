@@ -15,7 +15,6 @@ export function getStartupStarSystemConfig(): StarSystemGenerationConfig {
     ...DEFAULT_STAR_SYSTEM_CONFIG,
     seed: parseEnvInt(process.env.DF_STAR_SYSTEM_SEED, DEFAULT_STAR_SYSTEM_CONFIG.seed, 0, 9999),
     planetCount: parseEnvInt(process.env.DF_STAR_SYSTEM_PLANETS, DEFAULT_STAR_SYSTEM_CONFIG.planetCount, 0, 3),
-    moonCount: parseEnvInt(process.env.DF_STAR_SYSTEM_MOONS, DEFAULT_STAR_SYSTEM_CONFIG.moonCount, 0, 3),
     asteroidBeltCount: parseEnvInt(
       process.env.DF_STAR_SYSTEM_BELTS,
       DEFAULT_STAR_SYSTEM_CONFIG.asteroidBeltCount,
