@@ -691,6 +691,7 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
 export function LaunchedCylinders() {
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const launchedCylinders = useGameStore((s) => s.launchedCylinders)
+  const remoteLaunchedCylinders = useGameStore((s) => s.remoteLaunchedCylinders)
   const advanceLaunchedCylinders = useGameStore((s) => s.advanceLaunchedCylinders)
 
   useFrame((_state, deltaSeconds) => {
@@ -698,8 +699,9 @@ export function LaunchedCylinders() {
   })
 
   const visibleCylinders = useMemo(
-    () => launchedCylinders.filter((cylinder) => cylinder.currentCelestialId === currentCelestialId),
-    [currentCelestialId, launchedCylinders]
+    () => [...launchedCylinders, ...remoteLaunchedCylinders]
+      .filter((cylinder) => cylinder.currentCelestialId === currentCelestialId),
+    [currentCelestialId, launchedCylinders, remoteLaunchedCylinders]
   )
 
   if (visibleCylinders.length === 0) return null

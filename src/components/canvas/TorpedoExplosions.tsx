@@ -471,6 +471,7 @@ function ExplosionInstance({ explosion }: { explosion: TorpedoExplosion }) {
 export function TorpedoExplosions() {
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const torpedoExplosions = useGameStore((s) => s.torpedoExplosions)
+  const remoteTorpedoExplosions = useGameStore((s) => s.remoteTorpedoExplosions)
   const advanceTorpedoExplosions = useGameStore((s) => s.advanceTorpedoExplosions)
 
   useFrame((_state, deltaSeconds) => {
@@ -478,8 +479,9 @@ export function TorpedoExplosions() {
   })
 
   const visibleExplosions = useMemo(
-    () => torpedoExplosions.filter((explosion) => explosion.currentCelestialId === currentCelestialId),
-    [currentCelestialId, torpedoExplosions]
+    () => [...torpedoExplosions, ...remoteTorpedoExplosions]
+      .filter((explosion) => explosion.currentCelestialId === currentCelestialId),
+    [currentCelestialId, torpedoExplosions, remoteTorpedoExplosions]
   )
 
   if (visibleExplosions.length === 0) return null

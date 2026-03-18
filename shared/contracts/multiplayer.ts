@@ -28,11 +28,49 @@ export interface WireShipSnapshot {
 
 export type ShipsSnapshotMessage = Record<string, WireShipSnapshot>
 
+export interface WireLaunchedCylinder {
+  id: string
+  currentCelestialId: string
+  position: [number, number, number]
+  velocity: [number, number, number]
+  radius: number
+  length: number
+  direction: [number, number, number]
+  targetLockId: string | null
+  flightTimeSeconds: number
+}
+
+export interface WireLaunchedFlare {
+  id: string
+  currentCelestialId: string
+  position: [number, number, number]
+  velocity: [number, number, number]
+  flightTimeSeconds: number
+}
+
+export interface WireTorpedoExplosion {
+  id: string
+  currentCelestialId: string
+  position: [number, number, number]
+  flightTimeSeconds: number
+}
+
+export interface WireOrdnanceSnapshot {
+  launchedCylinders: WireLaunchedCylinder[]
+  launchedFlares: WireLaunchedFlare[]
+  torpedoExplosions: WireTorpedoExplosion[]
+}
+
+export type OrdnanceSnapshotMessage = Record<string, WireOrdnanceSnapshot>
+
 export interface MoveMessage {
   x: number
   y: number
   z: number
   revealedCelestialIds?: string[]
+  launchedCylinders?: WireLaunchedCylinder[]
+  launchedFlares?: WireLaunchedFlare[]
+  torpedoExplosions?: WireTorpedoExplosion[]
   inWarpTransit?: boolean
   targetSpeed?: number
   mwdActive?: boolean
@@ -50,6 +88,9 @@ export interface MoveMessage {
 export interface ShipMoveUpdate {
   position: [number, number, number]
   revealedCelestialIds: string[]
+  launchedCylinders: WireLaunchedCylinder[]
+  launchedFlares: WireLaunchedFlare[]
+  torpedoExplosions: WireTorpedoExplosion[]
   inWarpTransit: boolean
   targetSpeed: number
   mwdActive: boolean

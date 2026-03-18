@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { multiplayerClient, type MultiplayerStatus } from '@/network/colyseusClient'
 import { useGameStore } from '@/state/gameStore'
+import type { OrdnanceSnapshotMessage } from '../../shared/contracts/multiplayer'
 
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 
@@ -15,6 +16,8 @@ export function useMultiplayerLifecycle({
 }: UseMultiplayerLifecycleOptions) {
   const setLocalPlayerId = useGameStore((state) => state.setLocalPlayerId)
   const upsertRemoteShips = useGameStore((state) => state.upsertRemoteShips)
+  const setRemoteOrdnanceSnapshot = useGameStore((state) => state.setRemoteOrdnanceSnapshot)
+  const clearRemoteOrdnance = useGameStore((state) => state.clearRemoteOrdnance)
   const setCurrentCelestial = useGameStore((state) => state.setCurrentCelestial)
   const setEwRevealedCelestialIds = useGameStore((state) => state.setEwRevealedCelestialIds)
   const setStarSystemSnapshot = useGameStore((state) => state.setStarSystemSnapshot)
@@ -27,6 +30,7 @@ export function useMultiplayerLifecycle({
         if (nextStatus !== 'connected') {
           setLocalPlayerId(OFFLINE_LOCAL_PLAYER_ID)
           upsertRemoteShips({})
+          clearRemoteOrdnance()
         }
       },
       onJoined: (sessionId) => {
@@ -59,6 +63,13 @@ export function useMultiplayerLifecycle({
           setCurrentCelestial(localShip.currentCelestialId)
         }
       },
+      onOrdnanceUpdate: (snapshot) => {
+        const localPlayerId = useGameStore.getState().localPlayerId
+        const remoteOnlySnapshot = Object.fromEntries(
+          Object.entries(snapshot).filter(([sessionId]) => sessionId !== localPlayerId)
+        ) as OrdnanceSnapshotMessage
+        setRemoteOrdnanceSnapshot(remoteOnlySnapshot)
+      },
       onStarSystemUpdate: (snapshot) => {
         setStarSystemSnapshot(snapshot)
       },
@@ -67,5 +78,5 @@ export function useMultiplayerLifecycle({
     return () => {
       multiplayerClient.disconnect()
     }
-  }, [setCurrentCelestial, setEwRevealedCelestialIds, setLocalPlayerId, setStarSystemSnapshot, setStatus, setStatusDetail, upsertRemoteShips])
+  }, [clearRemoteOrdnance, setCurrentCelestial, setEwRevealedCelestialIds, setLocalPlayerId, setRemoteOrdnanceSnapshot, setStarSystemSnapshot, setStatus, setStatusDetail, upsertRemoteShips])
 }

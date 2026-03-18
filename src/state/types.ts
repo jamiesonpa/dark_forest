@@ -6,7 +6,7 @@ import type {
   StarSystemSnapshot,
   WarpState,
 } from '@/types/game'
-import type { WireShipSnapshot } from '../../shared/contracts/multiplayer'
+import type { OrdnanceSnapshotMessage, WireShipSnapshot } from '../../shared/contracts/multiplayer'
 
 export interface ShipState {
   currentCelestialId: string
@@ -205,6 +205,9 @@ export interface GameStore {
   launchedCylinders: LaunchedCylinder[]
   launchedFlares: LaunchedFlare[]
   torpedoExplosions: TorpedoExplosion[]
+  remoteLaunchedCylinders: LaunchedCylinder[]
+  remoteLaunchedFlares: LaunchedFlare[]
+  remoteTorpedoExplosions: TorpedoExplosion[]
   planetTextureRandomizeNonce: number
   setAsteroidBeltSettings: (partial: Partial<{
     thickness: number
@@ -229,6 +232,9 @@ export interface GameStore {
   launchFlares: (shipBoundingLength: number) => void
   advanceLaunchedFlares: (deltaSeconds: number) => void
   advanceTorpedoExplosions: (deltaSeconds: number) => void
+  addTorpedoExplosion: (explosion: TorpedoExplosion) => void
+  setRemoteOrdnanceSnapshot: (snapshot: OrdnanceSnapshotMessage) => void
+  clearRemoteOrdnance: () => void
   randomizePlanetTextures: () => void
   setLocalPlayerId: (id: string) => void
   setLocalShipState: (partial: Partial<ShipState>) => void

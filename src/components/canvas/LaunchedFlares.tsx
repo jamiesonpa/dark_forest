@@ -101,6 +101,7 @@ function randomSigned(magnitude: number) {
 export function LaunchedFlares() {
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const launchedFlares = useGameStore((s) => s.launchedFlares)
+  const remoteLaunchedFlares = useGameStore((s) => s.remoteLaunchedFlares)
   const advanceLaunchedFlares = useGameStore((s) => s.advanceLaunchedFlares)
   const lensFlareTexture = useMemo(() => createLensFlareTexture(), [])
   const smokeTexture = useMemo(() => createSmokeParticleTexture(), [])
@@ -171,7 +172,7 @@ export function LaunchedFlares() {
     advanceLaunchedFlares(deltaSeconds)
 
     const latestState = useGameStore.getState()
-    const activeFlares = latestState.launchedFlares.filter(
+    const activeFlares = [...latestState.launchedFlares, ...latestState.remoteLaunchedFlares].filter(
       (flare) => flare.currentCelestialId === latestState.currentCelestialId
     )
     const activeFlareIds = new Set(activeFlares.map((flare) => flare.id))
@@ -259,8 +260,9 @@ export function LaunchedFlares() {
   })
 
   const visibleFlares = useMemo(
-    () => launchedFlares.filter((flare) => flare.currentCelestialId === currentCelestialId),
-    [currentCelestialId, launchedFlares]
+    () => [...launchedFlares, ...remoteLaunchedFlares]
+      .filter((flare) => flare.currentCelestialId === currentCelestialId),
+    [currentCelestialId, launchedFlares, remoteLaunchedFlares]
   )
 
   return (

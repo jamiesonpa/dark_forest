@@ -90,6 +90,9 @@ const ORIENT_DEBUG_COMMAND_RATE_MULTIPLIER = 5
 const DAC_DIRECT_BEARING_RATE_MULTIPLIER = 0.38
 const DAC_DIRECT_INCLINATION_RATE_MULTIPLIER = 0.55
 const DAC_ROLL_RATE_MULTIPLIER = 0.9
+const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
+const TORPEDO_HIT_RADIUS = 50
+const TORPEDO_DAMAGE = 7000
 
 const EMPTY_KEY_STATE: Record<SimControlKey, boolean> = {
   KeyA: false,
@@ -133,6 +136,7 @@ export function SimulationLoop() {
   const prevDampenersActiveRef = useRef(useGameStore.getState().ship.dampenersActive)
   const dampenersRecoveryActiveRef = useRef(false)
   const dampenersRecoveryCapDebtRef = useRef(0)
+  const remoteTorpedoHitIdsRef = useRef(new Set<string>())
 
   useEffect(() => {
     const thrustEuler = new THREE.Euler(0, 0, 0, 'YXZ')
@@ -809,9 +813,54 @@ export function SimulationLoop() {
       }
 
       state.setShipState(shipPatch)
+      const latestState = useGameStore.getState()
+      const localShipId = latestState.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      for (const remoteCylinder of latestState.remoteLaunchedCylinders) {
+        if (remoteCylinder.currentCelestialId !== latestState.currentCelestialId) continue
+        const dx = remoteCylinder.position[0] - latestState.ship.position[0]
+        const dy = remoteCylinder.position[1] - latestState.ship.position[1]
+        const dz = remoteCylinder.position[2] - latestState.ship.position[2]
+        const withinHitRadius = Math.hypot(dx, dy, dz) <= TORPEDO_HIT_RADIUS
+        if (!withinHitRadius || remoteTorpedoHitIdsRef.current.has(remoteCylinder.id)) continue
+        remoteTorpedoHitIdsRef.current.add(remoteCylinder.id)
+        const localShip = latestState.shipsById[localShipId] ?? latestState.ship
+        let remaining = TORPEDO_DAMAGE
+        let shield = localShip.shield
+        let armor = localShip.armor
+        let hull = localShip.hull
+        if (localShip.shieldsUp && shield > 0) {
+          const absorbed = Math.min(shield, remaining)
+          shield -= absorbed
+          remaining -= absorbed
+        }
+        if (remaining > 0 && armor > 0) {
+          const absorbed = Math.min(armor, remaining)
+          armor -= absorbed
+          remaining -= absorbed
+        }
+        if (remaining > 0) {
+          hull = Math.max(0, hull - remaining)
+        }
+        latestState.setShipState({ shield, armor, hull })
+        latestState.addTorpedoExplosion({
+          id: `remote-hit-${remoteCylinder.id}`,
+          currentCelestialId: remoteCylinder.currentCelestialId,
+          position: [...remoteCylinder.position] as [number, number, number],
+          flightTimeSeconds: 0,
+        })
+      }
+      const activeRemoteIds = new Set(latestState.remoteLaunchedCylinders.map((cylinder) => cylinder.id))
+      for (const consumedId of remoteTorpedoHitIdsRef.current) {
+        if (!activeRemoteIds.has(consumedId)) {
+          remoteTorpedoHitIdsRef.current.delete(consumedId)
+        }
+      }
       sendMoveIfDue(lastMoveSendMsRef, {
         position: newPos,
-        revealedCelestialIds: state.ewRevealedCelestialIds,
+        revealedCelestialIds: latestState.ewRevealedCelestialIds,
+        launchedCylinders: latestState.launchedCylinders,
+        launchedFlares: latestState.launchedFlares,
+        torpedoExplosions: latestState.torpedoExplosions,
         inWarpTransit: shipPatch.inWarpTransit ?? ship.inWarpTransit,
         targetSpeed: shipPatch.targetSpeed ?? ship.targetSpeed,
         mwdActive: shipPatch.mwdActive ?? ship.mwdActive,

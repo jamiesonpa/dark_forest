@@ -1,5 +1,10 @@
 import colyseus, { type Client } from 'colyseus'
-import type { MoveMessage, WarpMessage } from '../../../shared/contracts/multiplayer.js'
+import type {
+  MoveMessage,
+  OrdnanceSnapshotMessage,
+  WarpMessage,
+  WireOrdnanceSnapshot,
+} from '../../../shared/contracts/multiplayer.js'
 import { ROOM_MESSAGES } from '../net/messages.js'
 import { applyMoveMessage, applyWarpMessage, buildShipsSnapshot } from '../net/shipSnapshots.js'
 import { createShipForJoin } from '../rooms/roomLifecycle.js'
@@ -14,12 +19,40 @@ import type { StarSystemGenerationConfig, StarSystemSnapshot } from '../types/st
 
 const { Room } = colyseus
 
+const MAX_ORDNANCE_ITEMS_PER_CATEGORY = 512
+
+function emptyOrdnanceSnapshot(): WireOrdnanceSnapshot {
+  return {
+    launchedCylinders: [],
+    launchedFlares: [],
+    torpedoExplosions: [],
+  }
+}
+
+function toOrdnanceSnapshotFromMove(message: MoveMessage): WireOrdnanceSnapshot {
+  const launchedCylinders = (message.launchedCylinders ?? [])
+    .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
+    .map((cylinder) => ({ ...cylinder }))
+  const launchedFlares = (message.launchedFlares ?? [])
+    .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
+    .map((flare) => ({ ...flare }))
+  const torpedoExplosions = (message.torpedoExplosions ?? [])
+    .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
+    .map((explosion) => ({ ...explosion }))
+  return {
+    launchedCylinders,
+    launchedFlares,
+    torpedoExplosions,
+  }
+}
+
 export class StarSystemRoom extends Room<StarSystemRoomState> {
   maxClients = 20
   private moveDebugLastLogMs = new Map<string, number>()
   private moveDebugLastPos = new Map<string, { x: number; y: number; z: number }>()
   private starSystemSnapshot: StarSystemSnapshot = buildStarSystemSnapshot(getStartupStarSystemConfig())
   private spawnAnchorIds: SpawnAnchorIds = computeSpawnAnchorIds(this.starSystemSnapshot)
+  private ordnanceBySession: OrdnanceSnapshotMessage = {}
 
   private setStarSystemFromConfig(input: Partial<StarSystemGenerationConfig> | undefined) {
     this.starSystemSnapshot = buildStarSystemSnapshot(input)
@@ -46,6 +79,14 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
 
   private broadcastSnapshot() {
     this.broadcast(ROOM_MESSAGES.shipsSnapshot, buildShipsSnapshot(this.state.ships))
+  }
+
+  private broadcastOrdnanceSnapshot(client?: Client) {
+    if (client) {
+      client.send(ROOM_MESSAGES.ordnanceSnapshot, this.ordnanceBySession)
+      return
+    }
+    this.broadcast(ROOM_MESSAGES.ordnanceSnapshot, this.ordnanceBySession)
   }
 
   private logMoveDebug(client: Client, message: MoveMessage) {
@@ -92,7 +133,9 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
       if (ship) {
         applyMoveMessage(ship, message)
       }
+      this.ordnanceBySession[client.sessionId] = toOrdnanceSnapshotFromMove(message)
       this.broadcastSnapshot()
+      this.broadcastOrdnanceSnapshot()
       this.logMoveDebug(client, message)
     })
   }
@@ -107,7 +150,9 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
       this.maxClients
     )
     this.state.ships.set(client.sessionId, ship)
+    this.ordnanceBySession[client.sessionId] = emptyOrdnanceSnapshot()
     this.broadcastStarSystemSnapshot(client)
+    this.broadcastOrdnanceSnapshot(client)
     this.broadcastSnapshot()
     console.log(
       `[room:${this.roomId}] join session=${client.sessionId} players=${this.state.ships.size}`
@@ -116,7 +161,9 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
 
   onLeave(client: Client) {
     this.state.ships.delete(client.sessionId)
+    delete this.ordnanceBySession[client.sessionId]
     this.broadcastSnapshot()
+    this.broadcastOrdnanceSnapshot()
     this.moveDebugLastLogMs.delete(client.sessionId)
     this.moveDebugLastPos.delete(client.sessionId)
     console.log(

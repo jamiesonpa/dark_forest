@@ -1,5 +1,6 @@
 import type { StateCreator } from 'zustand'
 import type { GameStore } from '@/state/types'
+import type { OrdnanceSnapshotMessage } from '../../../shared/contracts/multiplayer'
 import { DEFAULT_STAR_SYSTEM_SNAPSHOT, getCelestialById } from '@/utils/systemData'
 import {
   getWarpCapacitorRequiredAmount,
@@ -30,6 +31,7 @@ const FLARE_ANGLE_RANDOM_JITTER_DEG = 5
 const FLARE_SPREAD_DEGREES = [0, -20, 20, -40, 40] as const
 const TORPEDO_HIT_RADIUS = 50
 const TORPEDO_EXPLOSION_LIFETIME_SECONDS = 7.2
+const NETWORK_ORDNANCE_MAX_PER_CATEGORY = 512
 
 function mergeKnownCelestialId(existingIds: string[], celestialId: string, starSystem = DEFAULT_STAR_SYSTEM_SNAPSHOT.system) {
   const celestial = getCelestialById(celestialId, starSystem)
@@ -143,6 +145,99 @@ function resolveLockTargetVelocity(
   return [ship.actualVelocity[0], ship.actualVelocity[1], ship.actualVelocity[2]]
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function sanitizeVector3(input: unknown): [number, number, number] | null {
+  if (!Array.isArray(input) || input.length < 3) return null
+  const x = input[0]
+  const y = input[1]
+  const z = input[2]
+  if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(z)) return null
+  return [x, y, z]
+}
+
+function sanitizeNetworkCylinders(
+  snapshot: OrdnanceSnapshotMessage
+): GameStore['remoteLaunchedCylinders'] {
+  const next: GameStore['remoteLaunchedCylinders'] = []
+  for (const [ownerId, ordnance] of Object.entries(snapshot)) {
+    for (const cylinder of ordnance?.launchedCylinders ?? []) {
+      if (!cylinder || typeof cylinder.id !== 'string') continue
+      const position = sanitizeVector3(cylinder.position)
+      const velocity = sanitizeVector3(cylinder.velocity)
+      const direction = sanitizeVector3(cylinder.direction)
+      if (
+        !position
+        || !velocity
+        || !direction
+        || !isFiniteNumber(cylinder.radius)
+        || !isFiniteNumber(cylinder.length)
+        || !isFiniteNumber(cylinder.flightTimeSeconds)
+        || typeof cylinder.currentCelestialId !== 'string'
+      ) {
+        continue
+      }
+      next.push({
+        id: `${ownerId}::${cylinder.id}`,
+        currentCelestialId: cylinder.currentCelestialId,
+        position,
+        velocity,
+        radius: Math.max(0.1, cylinder.radius),
+        length: Math.max(0.1, cylinder.length),
+        direction,
+        targetLockId: cylinder.targetLockId ?? null,
+        flightTimeSeconds: Math.max(0, cylinder.flightTimeSeconds),
+      })
+      if (next.length >= NETWORK_ORDNANCE_MAX_PER_CATEGORY) return next
+    }
+  }
+  return next
+}
+
+function sanitizeNetworkFlares(snapshot: OrdnanceSnapshotMessage): GameStore['remoteLaunchedFlares'] {
+  const next: GameStore['remoteLaunchedFlares'] = []
+  for (const [ownerId, ordnance] of Object.entries(snapshot)) {
+    for (const flare of ordnance?.launchedFlares ?? []) {
+      if (!flare || typeof flare.id !== 'string' || typeof flare.currentCelestialId !== 'string') continue
+      const position = sanitizeVector3(flare.position)
+      const velocity = sanitizeVector3(flare.velocity)
+      if (!position || !velocity || !isFiniteNumber(flare.flightTimeSeconds)) continue
+      next.push({
+        id: `${ownerId}::${flare.id}`,
+        currentCelestialId: flare.currentCelestialId,
+        position,
+        velocity,
+        flightTimeSeconds: Math.max(0, flare.flightTimeSeconds),
+      })
+      if (next.length >= NETWORK_ORDNANCE_MAX_PER_CATEGORY) return next
+    }
+  }
+  return next
+}
+
+function sanitizeNetworkExplosions(
+  snapshot: OrdnanceSnapshotMessage
+): GameStore['remoteTorpedoExplosions'] {
+  const next: GameStore['remoteTorpedoExplosions'] = []
+  for (const [ownerId, ordnance] of Object.entries(snapshot)) {
+    for (const explosion of ordnance?.torpedoExplosions ?? []) {
+      if (!explosion || typeof explosion.id !== 'string' || typeof explosion.currentCelestialId !== 'string') continue
+      const position = sanitizeVector3(explosion.position)
+      if (!position || !isFiniteNumber(explosion.flightTimeSeconds)) continue
+      next.push({
+        id: `${ownerId}::${explosion.id}`,
+        currentCelestialId: explosion.currentCelestialId,
+        position,
+        flightTimeSeconds: Math.max(0, explosion.flightTimeSeconds),
+      })
+      if (next.length >= NETWORK_ORDNANCE_MAX_PER_CATEGORY) return next
+    }
+  }
+  return next
+}
+
 export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<GameStore>> = (set) => ({
   starSystem: DEFAULT_STAR_SYSTEM_SNAPSHOT.system,
   starSystemSeed: DEFAULT_STAR_SYSTEM_SNAPSHOT.seed,
@@ -184,6 +279,9 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   launchedCylinders: [],
   launchedFlares: [],
   torpedoExplosions: [],
+  remoteLaunchedCylinders: [],
+  remoteLaunchedFlares: [],
+  remoteTorpedoExplosions: [],
   planetTextureRandomizeNonce: 0,
   setStarSystemSnapshot: (snapshot) =>
     set((s) => {
@@ -645,6 +743,28 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
           }))
           .filter((explosion) => explosion.flightTimeSeconds <= TORPEDO_EXPLOSION_LIFETIME_SECONDS),
       }
+    }),
+  addTorpedoExplosion: (explosion) =>
+    set((s) => ({
+      torpedoExplosions: [
+        ...s.torpedoExplosions,
+        {
+          ...explosion,
+          flightTimeSeconds: Math.max(0, explosion.flightTimeSeconds),
+        },
+      ],
+    })),
+  setRemoteOrdnanceSnapshot: (snapshot) =>
+    set({
+      remoteLaunchedCylinders: sanitizeNetworkCylinders(snapshot),
+      remoteLaunchedFlares: sanitizeNetworkFlares(snapshot),
+      remoteTorpedoExplosions: sanitizeNetworkExplosions(snapshot),
+    }),
+  clearRemoteOrdnance: () =>
+    set({
+      remoteLaunchedCylinders: [],
+      remoteLaunchedFlares: [],
+      remoteTorpedoExplosions: [],
     }),
   randomizePlanetTextures: () =>
     set((s) => ({

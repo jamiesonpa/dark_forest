@@ -283,6 +283,9 @@ export function WarpDriver() {
             sendMoveIfDue(lastMoveSendMsRef, {
               position: nextLocal,
               revealedCelestialIds: state.ewRevealedCelestialIds,
+              launchedCylinders: state.launchedCylinders,
+              launchedFlares: state.launchedFlares,
+              torpedoExplosions: state.torpedoExplosions,
               inWarpTransit: false,
               targetSpeed: 0,
               mwdActive: false,
@@ -319,6 +322,9 @@ export function WarpDriver() {
               multiplayerClient.sendMove({
                 position: [0, 0, 0],
                 revealedCelestialIds: state.ewRevealedCelestialIds,
+                launchedCylinders: state.launchedCylinders,
+                launchedFlares: state.launchedFlares,
+                torpedoExplosions: state.torpedoExplosions,
                 inWarpTransit: true,
                 targetSpeed: 0,
                 mwdActive: false,
@@ -355,6 +361,9 @@ export function WarpDriver() {
           sendMoveIfDue(lastMoveSendMsRef, {
             position: [0, 0, 0],
             revealedCelestialIds: state.ewRevealedCelestialIds,
+            launchedCylinders: state.launchedCylinders,
+            launchedFlares: state.launchedFlares,
+            torpedoExplosions: state.torpedoExplosions,
             inWarpTransit: true,
             targetSpeed: 0,
             mwdActive: false,
@@ -402,6 +411,9 @@ export function WarpDriver() {
             multiplayerClient.sendMove({
               position: session.arrivalStartOffsetAtDestination,
               revealedCelestialIds: state.ewRevealedCelestialIds,
+              launchedCylinders: state.launchedCylinders,
+              launchedFlares: state.launchedFlares,
+              torpedoExplosions: state.torpedoExplosions,
               inWarpTransit: false,
               targetSpeed: 0,
               mwdActive: false,
@@ -462,6 +474,9 @@ export function WarpDriver() {
         sendMoveIfDue(lastMoveSendMsRef, {
           position: nextLocal,
           revealedCelestialIds: state.ewRevealedCelestialIds,
+          launchedCylinders: state.launchedCylinders,
+          launchedFlares: state.launchedFlares,
+          torpedoExplosions: state.torpedoExplosions,
           inWarpTransit: false,
           targetSpeed: 0,
           mwdActive: false,

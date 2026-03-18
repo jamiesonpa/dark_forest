@@ -1,6 +1,7 @@
 import { Client, type Room } from 'colyseus.js'
 import type { StarSystemGenerationConfig, StarSystemSnapshot } from '@/types/game'
 import type {
+  OrdnanceSnapshotMessage,
   ShipMoveUpdate,
   ShipsSnapshotMessage,
   WarpIntentPayload,
@@ -16,6 +17,7 @@ type Handlers = {
   onStatusChange?: (status: MultiplayerStatus, detail?: string) => void
   onJoined?: (sessionId: string) => void
   onShipsUpdate?: (shipsById: Record<string, NetworkShipSnapshot>) => void
+  onOrdnanceUpdate?: (snapshot: OrdnanceSnapshotMessage) => void
   onStarSystemUpdate?: (snapshot: StarSystemSnapshot) => void
 }
 
@@ -57,6 +59,9 @@ class ColyseusMultiplayerClient {
       room.onMessage('ships_snapshot', (snapshot: ShipsSnapshotMessage) => {
         this.preferWireSnapshots = true
         this.handlers.onShipsUpdate?.(snapshot)
+      })
+      room.onMessage('ordnance_snapshot', (snapshot: OrdnanceSnapshotMessage) => {
+        this.handlers.onOrdnanceUpdate?.(snapshot)
       })
       room.onMessage('star_system_snapshot', (snapshot: StarSystemSnapshot) => {
         this.handlers.onStarSystemUpdate?.(snapshot)
@@ -102,6 +107,9 @@ class ColyseusMultiplayerClient {
       y: update.position[1],
       z: update.position[2],
       revealedCelestialIds: update.revealedCelestialIds,
+      launchedCylinders: update.launchedCylinders,
+      launchedFlares: update.launchedFlares,
+      torpedoExplosions: update.torpedoExplosions,
       inWarpTransit: update.inWarpTransit,
       targetSpeed: update.targetSpeed,
       mwdActive: update.mwdActive,
