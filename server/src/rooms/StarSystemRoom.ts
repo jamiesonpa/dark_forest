@@ -29,14 +29,22 @@ function emptyOrdnanceSnapshot(): WireOrdnanceSnapshot {
   }
 }
 
+function asMessageArray<T>(value: unknown): T[] {
+  if (!value) return []
+  if (Array.isArray(value)) return value as T[]
+  if (value instanceof Map) return Array.from(value.values()) as T[]
+  if (typeof value === 'object') return Object.values(value as Record<string, T>)
+  return []
+}
+
 function toOrdnanceSnapshotFromMove(message: MoveMessage): WireOrdnanceSnapshot {
-  const launchedCylinders = (message.launchedCylinders ?? [])
+  const launchedCylinders = asMessageArray(message.launchedCylinders)
     .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
     .map((cylinder) => ({ ...cylinder }))
-  const launchedFlares = (message.launchedFlares ?? [])
+  const launchedFlares = asMessageArray(message.launchedFlares)
     .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
     .map((flare) => ({ ...flare }))
-  const torpedoExplosions = (message.torpedoExplosions ?? [])
+  const torpedoExplosions = asMessageArray(message.torpedoExplosions)
     .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
     .map((explosion) => ({ ...explosion }))
   return {

@@ -1,6 +1,11 @@
 import type { StateCreator } from 'zustand'
 import type { GameStore } from '@/state/types'
-import type { OrdnanceSnapshotMessage } from '../../../shared/contracts/multiplayer'
+import type {
+  OrdnanceSnapshotMessage,
+  WireLaunchedCylinder,
+  WireLaunchedFlare,
+  WireTorpedoExplosion,
+} from '../../../shared/contracts/multiplayer'
 import { DEFAULT_STAR_SYSTEM_SNAPSHOT, getCelestialById } from '@/utils/systemData'
 import {
   getWarpCapacitorRequiredAmount,
@@ -149,13 +154,46 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  if (isFiniteNumber(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
 function sanitizeVector3(input: unknown): [number, number, number] | null {
-  if (!Array.isArray(input) || input.length < 3) return null
-  const x = input[0]
-  const y = input[1]
-  const z = input[2]
-  if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(z)) return null
+  if (!input) return null
+  let xRaw: unknown
+  let yRaw: unknown
+  let zRaw: unknown
+  if (Array.isArray(input)) {
+    if (input.length < 3) return null
+    xRaw = input[0]
+    yRaw = input[1]
+    zRaw = input[2]
+  } else if (typeof input === 'object') {
+    const vectorLike = input as Record<string, unknown>
+    xRaw = vectorLike.x ?? vectorLike[0]
+    yRaw = vectorLike.y ?? vectorLike[1]
+    zRaw = vectorLike.z ?? vectorLike[2]
+  } else {
+    return null
+  }
+  const x = toFiniteNumber(xRaw)
+  const y = toFiniteNumber(yRaw)
+  const z = toFiniteNumber(zRaw)
+  if (x === null || y === null || z === null) return null
   return [x, y, z]
+}
+
+function asCollection<T>(value: unknown): T[] {
+  if (!value) return []
+  if (Array.isArray(value)) return value as T[]
+  if (value instanceof Map) return Array.from(value.values()) as T[]
+  if (typeof value === 'object') return Object.values(value as Record<string, T>)
+  return []
 }
 
 function sanitizeNetworkCylinders(
@@ -163,7 +201,7 @@ function sanitizeNetworkCylinders(
 ): GameStore['remoteLaunchedCylinders'] {
   const next: GameStore['remoteLaunchedCylinders'] = []
   for (const [ownerId, ordnance] of Object.entries(snapshot)) {
-    for (const cylinder of ordnance?.launchedCylinders ?? []) {
+    for (const cylinder of asCollection<WireLaunchedCylinder>(ordnance?.launchedCylinders)) {
       if (!cylinder || typeof cylinder.id !== 'string') continue
       const position = sanitizeVector3(cylinder.position)
       const velocity = sanitizeVector3(cylinder.velocity)
@@ -199,7 +237,7 @@ function sanitizeNetworkCylinders(
 function sanitizeNetworkFlares(snapshot: OrdnanceSnapshotMessage): GameStore['remoteLaunchedFlares'] {
   const next: GameStore['remoteLaunchedFlares'] = []
   for (const [ownerId, ordnance] of Object.entries(snapshot)) {
-    for (const flare of ordnance?.launchedFlares ?? []) {
+    for (const flare of asCollection<WireLaunchedFlare>(ordnance?.launchedFlares)) {
       if (!flare || typeof flare.id !== 'string' || typeof flare.currentCelestialId !== 'string') continue
       const position = sanitizeVector3(flare.position)
       const velocity = sanitizeVector3(flare.velocity)
@@ -222,7 +260,7 @@ function sanitizeNetworkExplosions(
 ): GameStore['remoteTorpedoExplosions'] {
   const next: GameStore['remoteTorpedoExplosions'] = []
   for (const [ownerId, ordnance] of Object.entries(snapshot)) {
-    for (const explosion of ordnance?.torpedoExplosions ?? []) {
+    for (const explosion of asCollection<WireTorpedoExplosion>(ordnance?.torpedoExplosions)) {
       if (!explosion || typeof explosion.id !== 'string' || typeof explosion.currentCelestialId !== 'string') continue
       const position = sanitizeVector3(explosion.position)
       if (!position || !isFiniteNumber(explosion.flightTimeSeconds)) continue

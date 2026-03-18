@@ -65,8 +65,11 @@ export function useMultiplayerLifecycle({
       },
       onOrdnanceUpdate: (snapshot) => {
         const localPlayerId = useGameStore.getState().localPlayerId
+        const snapshotEntries = snapshot instanceof Map
+          ? Array.from(snapshot.entries())
+          : Object.entries(snapshot)
         const remoteOnlySnapshot = Object.fromEntries(
-          Object.entries(snapshot).filter(([sessionId]) => sessionId !== localPlayerId)
+          snapshotEntries.filter(([sessionId]) => sessionId !== localPlayerId)
         ) as OrdnanceSnapshotMessage
         setRemoteOrdnanceSnapshot(remoteOnlySnapshot)
       },
