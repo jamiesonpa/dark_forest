@@ -162,6 +162,7 @@ export interface GameStore {
   completeEwGravAnalysis: () => void
   cancelEwGravAnalysis: () => void
   revealEwCelestial: (celestialId: string) => void
+  setEwRevealedCelestialIds: (celestialIds: string[]) => void
   setEwLockState: (updater: (prev: Record<string, 'soft' | 'hard'>) => Record<string, 'soft' | 'hard'>) => void
   setEwIffState: (updater: (prev: Record<string, string>) => Record<string, string>) => void
   setEwRadar: (partial: Partial<{ radarOn: boolean; radarMode: string; radarPower: number; radarFreq: number; radarPRF: string }>) => void

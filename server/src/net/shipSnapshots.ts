@@ -15,6 +15,7 @@ export function toWireShipSnapshot(ship: ShipState): WireShipSnapshot {
     id: ship.id,
     name: ship.name,
     currentCelestialId: ship.currentCelestialId,
+    revealedCelestialIds: Array.from(ship.revealedCelestialIds),
     inWarpTransit: ship.inWarpTransit,
     position: [ship.x, ship.y, ship.z],
     targetSpeed: ship.targetSpeed,
@@ -51,6 +52,9 @@ export function applyMoveMessage(ship: ShipState, message: MoveMessage) {
   ship.x = message.x
   ship.y = message.y
   ship.z = message.z
+  if (Array.isArray(message.revealedCelestialIds)) {
+    ship.revealedCelestialIds.splice(0, ship.revealedCelestialIds.length, ...message.revealedCelestialIds)
+  }
   if (typeof message.inWarpTransit === 'boolean') ship.inWarpTransit = message.inWarpTransit
   if (typeof message.targetSpeed === 'number') ship.targetSpeed = message.targetSpeed
   if (typeof message.mwdActive === 'boolean') ship.mwdActive = message.mwdActive
@@ -69,4 +73,7 @@ export function applyMoveMessage(ship: ShipState, message: MoveMessage) {
 
 export function applyWarpMessage(ship: ShipState, message: WarpMessage) {
   ship.currentCelestialId = message.celestialId
+  if (!ship.revealedCelestialIds.includes(message.celestialId)) {
+    ship.revealedCelestialIds.push(message.celestialId)
+  }
 }

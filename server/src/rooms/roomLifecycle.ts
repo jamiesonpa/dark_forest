@@ -15,6 +15,7 @@ export function createShipForJoin(
   ship.id = sessionId
   ship.name = 'Raven'
   ship.currentCelestialId = spawn.celestialId
+  ship.revealedCelestialIds.push(spawn.celestialId)
   ship.x = spawn.localPosition[0]
   ship.y = spawn.localPosition[1]
   ship.z = spawn.localPosition[2]

@@ -811,6 +811,7 @@ export function SimulationLoop() {
       state.setShipState(shipPatch)
       sendMoveIfDue(lastMoveSendMsRef, {
         position: newPos,
+        revealedCelestialIds: state.ewRevealedCelestialIds,
         inWarpTransit: shipPatch.inWarpTransit ?? ship.inWarpTransit,
         targetSpeed: shipPatch.targetSpeed ?? ship.targetSpeed,
         mwdActive: shipPatch.mwdActive ?? ship.mwdActive,

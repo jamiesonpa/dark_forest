@@ -1,4 +1,4 @@
-import { Schema, type, MapSchema } from '@colyseus/schema'
+import { ArraySchema, MapSchema, Schema, type } from '@colyseus/schema'
 
 export class ShipState extends Schema {
   @type('string') id = ''
@@ -7,6 +7,7 @@ export class ShipState extends Schema {
   @type('number') y = 0
   @type('number') z = 0
   @type('string') currentCelestialId = 'planet-1'
+  @type(['string']) revealedCelestialIds = new ArraySchema<string>()
   @type('boolean') inWarpTransit = false
   @type('number') targetSpeed = 0
   @type('boolean') mwdActive = false

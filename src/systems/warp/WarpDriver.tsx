@@ -282,6 +282,7 @@ export function WarpDriver() {
 
             sendMoveIfDue(lastMoveSendMsRef, {
               position: nextLocal,
+              revealedCelestialIds: state.ewRevealedCelestialIds,
               inWarpTransit: false,
               targetSpeed: 0,
               mwdActive: false,
@@ -317,6 +318,7 @@ export function WarpDriver() {
               })
               multiplayerClient.sendMove({
                 position: [0, 0, 0],
+                revealedCelestialIds: state.ewRevealedCelestialIds,
                 inWarpTransit: true,
                 targetSpeed: 0,
                 mwdActive: false,
@@ -352,6 +354,7 @@ export function WarpDriver() {
 
           sendMoveIfDue(lastMoveSendMsRef, {
             position: [0, 0, 0],
+            revealedCelestialIds: state.ewRevealedCelestialIds,
             inWarpTransit: true,
             targetSpeed: 0,
             mwdActive: false,
@@ -398,6 +401,7 @@ export function WarpDriver() {
             state.setWarpState('landing', session.destinationCelestialId)
             multiplayerClient.sendMove({
               position: session.arrivalStartOffsetAtDestination,
+              revealedCelestialIds: state.ewRevealedCelestialIds,
               inWarpTransit: false,
               targetSpeed: 0,
               mwdActive: false,
@@ -457,6 +461,7 @@ export function WarpDriver() {
         )
         sendMoveIfDue(lastMoveSendMsRef, {
           position: nextLocal,
+          revealedCelestialIds: state.ewRevealedCelestialIds,
           inWarpTransit: false,
           targetSpeed: 0,
           mwdActive: false,

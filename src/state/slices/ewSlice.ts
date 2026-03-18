@@ -1,6 +1,19 @@
 import type { StateCreator } from 'zustand'
 import type { GameStore } from '@/state/types'
 
+function dedupeCelestialIds(ids: string[]) {
+  const seen = new Set<string>()
+  const next: string[] = []
+  for (const id of ids) {
+    if (typeof id !== 'string') continue
+    const trimmed = id.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    next.push(trimmed)
+  }
+  return next
+}
+
 export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> = (set) => ({
   rwrContacts: [],
   ewLockState: {},
@@ -54,6 +67,10 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
         ? s.ewRevealedCelestialIds
         : [...s.ewRevealedCelestialIds, celestialId],
     })),
+  setEwRevealedCelestialIds: (celestialIds) =>
+    set({
+      ewRevealedCelestialIds: dedupeCelestialIds(celestialIds),
+    }),
   setEwLockState: (updater) =>
     set((s) => ({ ewLockState: updater(s.ewLockState) })),
   setEwIffState: (updater) =>

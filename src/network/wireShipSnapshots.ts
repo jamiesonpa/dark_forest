@@ -4,6 +4,7 @@ type ColyseusShip = {
   id: string
   name: string
   currentCelestialId: string
+  revealedCelestialIds: string[]
   inWarpTransit: boolean
   x: number
   y: number
@@ -36,10 +37,14 @@ export type ColyseusRoomState = {
 }
 
 export function toWireShipSnapshot(ship: ColyseusShip): WireShipSnapshot {
+  const revealedCelestialIds = ship.revealedCelestialIds
+    ? Array.from(ship.revealedCelestialIds)
+    : []
   return {
     id: ship.id,
     name: ship.name,
     currentCelestialId: ship.currentCelestialId,
+    revealedCelestialIds,
     inWarpTransit: ship.inWarpTransit,
     position: [ship.x, ship.y, ship.z],
     targetSpeed: ship.targetSpeed,

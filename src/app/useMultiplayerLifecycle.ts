@@ -16,6 +16,7 @@ export function useMultiplayerLifecycle({
   const setLocalPlayerId = useGameStore((state) => state.setLocalPlayerId)
   const upsertRemoteShips = useGameStore((state) => state.upsertRemoteShips)
   const setCurrentCelestial = useGameStore((state) => state.setCurrentCelestial)
+  const setEwRevealedCelestialIds = useGameStore((state) => state.setEwRevealedCelestialIds)
   const setStarSystemSnapshot = useGameStore((state) => state.setStarSystemSnapshot)
 
   useEffect(() => {
@@ -35,6 +36,21 @@ export function useMultiplayerLifecycle({
         upsertRemoteShips(ships)
         const state = useGameStore.getState()
         const localShip = ships[state.localPlayerId]
+        if (Array.isArray(localShip?.revealedCelestialIds)) {
+          const mergedRevealedCelestialIds = Array.from(
+            new Set([
+              ...state.ewRevealedCelestialIds,
+              ...localShip.revealedCelestialIds,
+              localShip.currentCelestialId,
+            ])
+          )
+          const revealChanged =
+            mergedRevealedCelestialIds.length !== state.ewRevealedCelestialIds.length
+            || mergedRevealedCelestialIds.some((id, index) => state.ewRevealedCelestialIds[index] !== id)
+          if (revealChanged) {
+            setEwRevealedCelestialIds(mergedRevealedCelestialIds)
+          }
+        }
         if (
           localShip?.currentCelestialId &&
           state.warpState === 'idle' &&
@@ -51,5 +67,5 @@ export function useMultiplayerLifecycle({
     return () => {
       multiplayerClient.disconnect()
     }
-  }, [setCurrentCelestial, setLocalPlayerId, setStarSystemSnapshot, setStatus, setStatusDetail, upsertRemoteShips])
+  }, [setCurrentCelestial, setEwRevealedCelestialIds, setLocalPlayerId, setStarSystemSnapshot, setStatus, setStatusDetail, upsertRemoteShips])
 }

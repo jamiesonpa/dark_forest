@@ -101,6 +101,7 @@ class ColyseusMultiplayerClient {
       x: update.position[0],
       y: update.position[1],
       z: update.position[2],
+      revealedCelestialIds: update.revealedCelestialIds,
       inWarpTransit: update.inWarpTransit,
       targetSpeed: update.targetSpeed,
       mwdActive: update.mwdActive,

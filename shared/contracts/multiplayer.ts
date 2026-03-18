@@ -2,6 +2,7 @@ export interface WireShipSnapshot {
   id: string
   name: string
   currentCelestialId: string
+  revealedCelestialIds: string[]
   inWarpTransit: boolean
   position: [number, number, number]
   targetSpeed: number
@@ -31,6 +32,7 @@ export interface MoveMessage {
   x: number
   y: number
   z: number
+  revealedCelestialIds?: string[]
   inWarpTransit?: boolean
   targetSpeed?: number
   mwdActive?: boolean
@@ -47,6 +49,7 @@ export interface MoveMessage {
 
 export interface ShipMoveUpdate {
   position: [number, number, number]
+  revealedCelestialIds: string[]
   inWarpTransit: boolean
   targetSpeed: number
   mwdActive: boolean

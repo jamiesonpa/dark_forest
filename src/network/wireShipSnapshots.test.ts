@@ -11,6 +11,7 @@ describe('wireShipSnapshots', () => {
             id: 'local',
             name: 'Raven',
             currentCelestialId: 'planet-1',
+            revealedCelestialIds: ['planet-1'],
             x: 1,
             y: 2,
             z: 3,
@@ -44,6 +45,7 @@ describe('wireShipSnapshots', () => {
         position: [1, 2, 3],
         actualSpeed: 38,
         capacitorMax: 80,
+        revealedCelestialIds: ['planet-1'],
       })
     )
   })
