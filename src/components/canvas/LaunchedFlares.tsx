@@ -8,6 +8,8 @@ const FLARE_RADIUS = 6
 const FLARE_EMISSIVE_INTENSITY = 14
 const FLARE_CORE_SCALE = 72
 const FLARE_HALO_SCALE = 130
+const FLARE_INTENSITY_RAMP_SECONDS = 0.5
+const FLARE_INTENSITY_RAMP_EXPONENT = 2.6
 const MAX_SMOKE_PARTICLES = 3200
 const SMOKE_BURST_PARTICLE_COUNT = 44
 const SMOKE_START_RATE_PER_SECOND = 95
@@ -84,6 +86,12 @@ function clamp01(value: number) {
 
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t
+}
+
+function getFlareIntensityRampMultiplier(flightTimeSeconds: number) {
+  const t = clamp01(flightTimeSeconds / FLARE_INTENSITY_RAMP_SECONDS)
+  // Keep launch brightness subdued, then visibly kick into full intensity.
+  return Math.pow(t, FLARE_INTENSITY_RAMP_EXPONENT)
 }
 
 function randomSigned(magnitude: number) {
@@ -296,43 +304,46 @@ export function LaunchedFlares() {
           `}
         />
       </points>
-      {visibleFlares.map((flare) => (
-        <group key={flare.id} position={flare.position}>
-          <mesh>
-            <sphereGeometry args={[FLARE_RADIUS, 8, 8]} />
-            <meshStandardMaterial
-              color={0xffffff}
-              emissive={0xffffff}
-              emissiveIntensity={FLARE_EMISSIVE_INTENSITY}
-              roughness={0.05}
-              metalness={0}
-              toneMapped={false}
-            />
-          </mesh>
-          <sprite scale={[FLARE_CORE_SCALE, FLARE_CORE_SCALE, 1]}>
-            <spriteMaterial
-              map={lensFlareTexture}
-              color={0xffffff}
-              transparent
-              opacity={0.95}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-              toneMapped={false}
-            />
-          </sprite>
-          <sprite scale={[FLARE_HALO_SCALE, FLARE_HALO_SCALE, 1]}>
-            <spriteMaterial
-              map={lensFlareTexture}
-              color={0xffffff}
-              transparent
-              opacity={0.55}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-              toneMapped={false}
-            />
-          </sprite>
-        </group>
-      ))}
+      {visibleFlares.map((flare) => {
+        const intensityRampMultiplier = getFlareIntensityRampMultiplier(flare.flightTimeSeconds)
+        return (
+          <group key={flare.id} position={flare.position}>
+            <mesh>
+              <sphereGeometry args={[FLARE_RADIUS, 8, 8]} />
+              <meshStandardMaterial
+                color={0xffffff}
+                emissive={0xffffff}
+                emissiveIntensity={FLARE_EMISSIVE_INTENSITY * intensityRampMultiplier}
+                roughness={0.05}
+                metalness={0}
+                toneMapped={false}
+              />
+            </mesh>
+            <sprite scale={[FLARE_CORE_SCALE, FLARE_CORE_SCALE, 1]}>
+              <spriteMaterial
+                map={lensFlareTexture}
+                color={0xffffff}
+                transparent
+                opacity={0.95 * intensityRampMultiplier}
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </sprite>
+            <sprite scale={[FLARE_HALO_SCALE, FLARE_HALO_SCALE, 1]}>
+              <spriteMaterial
+                map={lensFlareTexture}
+                color={0xffffff}
+                transparent
+                opacity={0.55 * intensityRampMultiplier}
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </sprite>
+          </group>
+        )
+      })}
     </>
   )
 }

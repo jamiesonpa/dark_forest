@@ -36,45 +36,63 @@ import {
   RED_ALERT,
 } from "@/systems/ew/consoleTheme";
 
-function buildContactsFromGame(enemy) {
+function buildContactsFromGame() {
   const gameState = useGameStore.getState();
   const playerPos = gameState.ship.position;
-  const dx = enemy.position[0] - playerPos[0];
-  const dz = enemy.position[2] - playerPos[2];
-  const range = Math.sqrt(dx * dx + dz * dz);
-  const bearing = ((Math.atan2(dx, dz) * 180 / Math.PI) + 360) % 360;
-  const radarMode = enemy.radarMode;
+  const localId = gameState.localPlayerId;
+  const npcShips = gameState.npcShips;
+  const contacts = [];
 
-  const thermal = enemy.thrustersOn ? 0.3 + (enemy.speed / 215) * 0.4 : 0.08;
-  const type = radarMode === "off" ? "unknown" : "battleship";
+  for (const [id, ship] of Object.entries(gameState.shipsById)) {
+    if (id === localId) continue;
+    if (ship.currentCelestialId !== gameState.currentCelestialId) continue;
 
-  // Different radar modes produce different spectrum signatures
-  let emStrength, freq, sigWidth, sigType;
-  if (radarMode === "stt") {
-    emStrength = 0.85;
-    freq = 0.48;
-    sigWidth = 0.015;
-    sigType = "stt";
-  } else if (radarMode === "scan") {
-    emStrength = 0.5;
-    freq = 0.42;
-    sigWidth = 0.035;
-    sigType = "scan";
-  } else if (radarMode === "deception") {
-    emStrength = 0.7;
-    freq = 0.42;
-    sigWidth = 0.06;
-    sigType = "deception";
-  } else {
-    emStrength = 0.0;
-    freq = 0.42;
-    sigWidth = 0.08;
-    sigType = "none";
-  }
+    const npcConfig = npcShips[id];
+    const radarMode = npcConfig?.radarMode ?? "off";
+    const mwdActive = npcConfig?.mwdActive ?? ship.mwdActive ?? false;
 
-  const contacts = [
-    {
-      id: "Σ",
+    const dx = ship.position[0] - playerPos[0];
+    const dy = ship.position[1] - playerPos[1];
+    const dz = ship.position[2] - playerPos[2];
+    const range = Math.sqrt(dx * dx + dz * dz);
+    const { bearing, inclination } = bearingInclinationFromVector([dx, dy, dz]);
+
+    const usingThrusters = ship.actualSpeed > 0.1;
+    // IR model:
+    // - idle + shields down => near invisible
+    // - shields up => noticeably hotter
+    // - active thrust => hottest, scaled by speed
+    let thermal = 0.002;
+    if (ship.shieldsUp) {
+      thermal += 52;
+    }
+    if (usingThrusters) {
+      // Enemy MWD must not make IR brighter: cap thrust heating at subwarp envelope.
+      const speedNorm = Math.max(0, Math.min(1, Math.min(ship.actualSpeed, 215) / 215));
+      thermal += 11 + speedNorm * 22;
+    }
+    const type = radarMode === "off" ? "unknown" : "battleship";
+
+    let emStrength, freq, sigWidth, sigType;
+    if (radarMode === "stt") {
+      emStrength = 0.85;
+      freq = 0.48;
+      sigWidth = 0.015;
+      sigType = "stt";
+    } else if (radarMode === "scan") {
+      emStrength = 0.5;
+      freq = 0.42;
+      sigWidth = 0.035;
+      sigType = "scan";
+    } else {
+      emStrength = 0.0;
+      freq = 0.42;
+      sigWidth = 0.08;
+      sigType = "none";
+    }
+
+    contacts.push({
+      id,
       bearing,
       range,
       freq,
@@ -86,36 +104,15 @@ function buildContactsFromGame(enemy) {
       driftBearing: 0,
       driftRange: 0,
       active: radarMode !== "off",
-      jamming: radarMode === "deception",
-      rcs: type === "battleship" ? 22 : 2,
-      heading: enemy.heading,
-      speed: enemy.speed,
-      relDx: dx,
-      relDz: dz,
-    },
-  ];
-
-  // Add missile seeker as separate contact if launched
-  if (enemy.missileLaunched) {
-    contacts.push({
-      id: "M",
-      bearing,
-      range: Math.max(0, range - 2000),
-      freq: 0.72,
-      sigWidth: 0.01,
-      sigType: "missile",
-      emStrength: 0.95,
-      thermal: 0.9,
-      type: "missile",
-      driftBearing: 0,
-      driftRange: 0,
-      active: true,
       jamming: false,
-      rcs: 0.5,
-      heading: enemy.heading,
-      speed: 800,
+      rcs: type === "battleship" ? 22 : 2,
+      heading: ship.actualHeading,
+      speed: ship.actualSpeed,
       relDx: dx,
+      relDy: dy,
       relDz: dz,
+      inclination,
+      mwdActive,
     });
   }
 
@@ -155,6 +152,44 @@ function buildGravAnomaliesFromEnvironment(starSystem, currentCelestialId, gain 
       };
     })
     .filter((entry) => entry !== null);
+}
+
+function buildIrSourcesFromEnvironment(starSystem, currentCelestialId) {
+  if (!starSystem?.celestials?.length) return [];
+  const currentCelestial = getCelestialById(currentCelestialId, starSystem);
+  if (!currentCelestial) return [];
+  const star =
+    getCelestialById("star", starSystem)
+    || starSystem.celestials.find((c) => c.type === "star")
+    || null;
+  if (!star) return [];
+
+  const currentCelestialWorld = worldPositionForCelestial(currentCelestial);
+  const starWorld = worldPositionForCelestial(star);
+  const toStar = vectorBetweenWorldPoints(currentCelestialWorld, starWorld);
+  const rangeWorld = Math.max(1, vectorMagnitude(toStar));
+  const { bearing, inclination } = bearingInclinationFromVector(toStar);
+
+  return [{
+    id: `IR-${star.id}`,
+    bearing,
+    inclination,
+    range: rangeWorld,
+    irProfile: "solar",
+    thermal: 4,
+    type: "star",
+    active: true,
+  }];
+}
+
+const IR_SHIP_REFERENCE_RANGE_KM = 12;
+const MWD_GRAV_WELL_PER_KM_CUBED = 0.00015;
+const MWD_GRAV_WELL_MIN = 0.05;
+const MWD_GRAV_WELL_MAX = 10;
+function inverseCubeAttenuation(distance, referenceDistance, minDistanceFraction = 0.5) {
+  const minDistance = Math.max(0.0001, referenceDistance * minDistanceFraction);
+  const safeDistance = Math.max(minDistance, distance);
+  return Math.pow(referenceDistance / safeDistance, 3);
 }
 
 // Noise generator
@@ -466,6 +501,32 @@ function drawCursor(ctx, W, H, cursorPos, color, brightColor, label) {
   ctx.lineTo(cx + 5, H - 7);
   ctx.closePath();
   ctx.fill();
+}
+
+function drawShipForwardReference(ctx, W, H, viewL, viewR, bearingOffsetDeg, color, label = "FWD") {
+  const viewW = Math.max(0.0001, viewR - viewL);
+  const forwardNormRaw = 0.5 - (bearingOffsetDeg / 360);
+  const forwardNorm = ((forwardNormRaw % 1) + 1) % 1;
+  if (forwardNorm < viewL || forwardNorm > viewR) return;
+
+  const x = ((forwardNorm - viewL) / viewW) * W;
+  ctx.save();
+  ctx.setLineDash([3, 5]);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.62;
+  ctx.beginPath();
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  ctx.font = "11px Consolas, Monaco, monospace";
+  ctx.textAlign = "center";
+  ctx.fillText(label, x, 12);
+  ctx.textAlign = "start";
+  ctx.restore();
 }
 
 function spectrumLockState(contacts, selectedBearing, gateL, gateR) {
@@ -903,6 +964,9 @@ const SpectrumAnalyzer = ({ contacts, time, selectedBearing, onLockQualityChange
 const GRAV_CYAN = "#00ccaa";
 const GRAV_CYAN_DIM = "#005544";
 const GRAV_CYAN_GLOW = "#44ffcc";
+const IR_ORANGE = "#ff9a3c";
+const IR_ORANGE_DIM = "#6e3f12";
+const IR_ORANGE_GLOW = "#ffb86f";
 
 const GravAnalyzer = ({
   contacts,
@@ -1010,8 +1074,6 @@ const GravAnalyzer = ({
     const shipHdg = useGameStore.getState().ship.actualHeading;
     contacts.forEach(c => {
       let relBrg = ((c.bearing - shipHdg + 540) % 360) - 180;
-      const bDist = Math.abs(relBrg);
-      if (bDist > 180) return;
 
       const isCelestial = c.gravProfile === "celestial";
       let totalMass = 0;
@@ -1051,9 +1113,17 @@ const GravAnalyzer = ({
           rangeFactor *= 0.1;
         }
         totalMass = gravStrength * rangeFactor;
+        if (c.mwdActive) {
+          // Keep the MWD effect as a stronger grav well (not a peak), scaled by distance^3.
+          const mwdWellMass = clamp(
+            Math.pow(Math.max(0, rangeKm), 3) * MWD_GRAV_WELL_PER_KM_CUBED,
+            MWD_GRAV_WELL_MIN,
+            MWD_GRAV_WELL_MAX
+          );
+          totalMass += mwdWellMass;
+        }
       }
 
-      const proxFactor = 1 - bDist / 180;
       const wellCenterRaw = 0.5 + ((relBrg - gate.bearingOffsetDeg) / 360);
       const wellCenter = ((wellCenterRaw % 1) + 1) % 1;
       const directDist = Math.abs(t - wellCenter);
@@ -1080,7 +1150,7 @@ const GravAnalyzer = ({
             const shaped = parabola * easedEdge;
             const amp = 0.36;
             const massScale = 1.0;
-            displacement += shaped * totalMass * massScale * proxFactor * H * amp;
+            displacement += shaped * totalMass * massScale * H * amp;
           }
         } else if (c.type === "asteroid_belt") {
           const beltSpan = 0.085;
@@ -1100,25 +1170,25 @@ const GravAnalyzer = ({
                 beltContribution += edge * edge * jitter * (0.18 + n0 * 0.22);
               }
             }
-            displacement += beltContribution * totalMass * proxFactor * H * 0.26;
+            displacement += beltContribution * totalMass * H * 0.26;
           }
         } else {
           const fallbackWidth = 0.045;
           if (wellDist < fallbackWidth) {
-            const wellDepth = (1 - wellDist / fallbackWidth) * totalMass * proxFactor;
+            const wellDepth = (1 - wellDist / fallbackWidth) * totalMass;
             displacement += wellDepth * H * 0.3;
           }
         }
       } else {
         const wellWidth = 0.06;
         if (wellDist < wellWidth) {
-          const wellDepth = (1 - wellDist / wellWidth) * totalMass * proxFactor;
+          const wellDepth = (1 - wellDist / wellWidth) * totalMass;
           displacement -= wellDepth * wellDepth * H * 0.25;
         }
       }
       if (!isCelestial && wellDist < 0.03) {
         const dragFreq = 40 + c.range * 0.002;
-        displacement += Math.sin(t * dragFreq + time * 2) * totalMass * proxFactor * 5;
+        displacement += Math.sin(t * dragFreq + time * 2) * totalMass * 5;
       }
     });
     return displacement;
@@ -1154,6 +1224,7 @@ const GravAnalyzer = ({
       ctx.strokeStyle = "rgba(0,204,170,0.2)";
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+      drawShipForwardReference(ctx, W, H, viewL, viewR, gate.bearingOffsetDeg, "rgba(136,255,170,0.9)");
 
       ctx.beginPath();
       ctx.strokeStyle = GRAV_CYAN;
@@ -1203,6 +1274,7 @@ const GravAnalyzer = ({
       ctx.strokeStyle = "rgba(150,150,150,0.22)";
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+      drawShipForwardReference(ctx, W, H, viewL, viewR, gate.bearingOffsetDeg, "rgba(190,190,190,0.75)");
       ctx.font = "20px Consolas, Monaco, monospace";
       ctx.fillStyle = "rgba(170,170,170,0.75)";
       ctx.fillText("SCANNER OFFLINE", 8, 22);
@@ -1223,6 +1295,7 @@ const GravAnalyzer = ({
     ctx.strokeStyle = "rgba(0,204,170,0.2)";
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+    drawShipForwardReference(ctx, W, H, viewL, viewR, gate.bearingOffsetDeg, "rgba(136,255,170,0.95)");
 
     // Check if gravitational well is enclosed by gates
     let hasWellInGate = false;
@@ -1637,6 +1710,512 @@ const GravAnalyzer = ({
   );
 };
 
+const IrAnalyzer = ({
+  contacts,
+  time,
+  selectedBearing,
+  onBearingChange,
+  resetToken = 0,
+  scannerOn = true,
+}) => {
+  const canvasRef = useRef(null);
+  const gate = useGate();
+  const prevCursor = useRef(gate.cursor);
+  const [gain, setGain] = useState(1.0);
+  const [hasQualifiedThermalInGate, setHasQualifiedThermalInGate] = useState(false);
+  const starSystem = useGameStore((s) => s.starSystem);
+  const currentCelestialId = useGameStore((s) => s.currentCelestialId);
+  const shipHeadingDeg = useGameStore((s) => s.ship.actualHeading);
+  const setShipState = useGameStore((s) => s.setShipState);
+  const warpState = useGameStore((s) => s.warpState);
+  const warpInterference = warpState === "warping" || warpState === "landing";
+  const scannerUsable = scannerOn && !warpInterference;
+
+  const irSources = useMemo(() => {
+    const shipSources = contacts.map((c) => ({
+      ...c,
+      irProfile: "ship",
+      thermal: Math.max(0.05, c.thermal ?? 0.08),
+      inclination: c.inclination ?? 0,
+    }));
+    return [...shipSources, ...buildIrSourcesFromEnvironment(starSystem, currentCelestialId)];
+  }, [contacts, starSystem, currentCelestialId]);
+
+  const inGateThermalTarget = useMemo(() => {
+    if (!gate.isGated) return null;
+    let bestTarget = null;
+    let bestSignal = -Infinity;
+    for (const c of irSources) {
+      if (c.irProfile !== "ship") continue;
+      const relBrg = ((c.bearing - shipHeadingDeg + 540) % 360) - 180;
+      const wellNormRaw = 0.5 + ((relBrg - gate.bearingOffsetDeg) / 360);
+      const wellNorm = ((wellNormRaw % 1) + 1) % 1;
+      if (wellNorm < gate.gateL || wellNorm > gate.gateR) continue;
+      const thermalStrength = Math.max(0.04, c.thermal ?? 0.08);
+      const rangeKm = c.range / 1000;
+      const rangeAttenuation = inverseCubeAttenuation(rangeKm, IR_SHIP_REFERENCE_RANGE_KM);
+      const signalScore = thermalStrength * rangeAttenuation;
+      if (signalScore > bestSignal) {
+        bestSignal = signalScore;
+        bestTarget = c;
+      }
+    }
+    return bestTarget;
+  }, [irSources, gate.isGated, gate.gateL, gate.gateR, gate.bearingOffsetDeg, shipHeadingDeg]);
+
+  useEffect(() => {
+    if (!scannerUsable) return;
+    if (gate.cursor !== prevCursor.current && onBearingChange) {
+      const viewL = gate.gateL;
+      const viewW = gate.gateR - gate.gateL;
+      const cursorT = viewL + gate.cursor * viewW;
+      const shipHdg = useGameStore.getState().ship.actualHeading;
+      const newBearing = Math.round(shipHdg - 180 + cursorT * 360 + gate.bearingOffsetDeg);
+      onBearingChange(((newBearing % 360) + 360) % 360);
+    }
+    prevCursor.current = gate.cursor;
+  }, [gate.cursor, onBearingChange, gate.gateL, gate.gateR, gate.bearingOffsetDeg, scannerUsable]);
+
+  useEffect(() => {
+    gate.reset();
+  }, [resetToken]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width;
+    const H = canvas.height;
+    const midY = H / 2;
+    const viewL = gate.gateL;
+    const viewR = gate.gateR;
+    const viewW = viewR - viewL;
+    const gateZoom = 1 / Math.max(0.02, viewW);
+    const zoomGain = 1 + Math.max(0, gateZoom - 1) * 0.45;
+
+    ctx.fillStyle = BG_SCREEN;
+    ctx.fillRect(0, 0, W, H);
+
+    if (warpInterference) {
+      setHasQualifiedThermalInGate(false);
+      ctx.strokeStyle = "rgba(255,154,60,0.07)";
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i < 12; i++) {
+        const x = (i / 12) * W;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      for (let i = 0; i < 6; i++) {
+        const y = (i / 6) * H;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(255,154,60,0.2)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+      drawShipForwardReference(ctx, W, H, viewL, viewR, gate.bearingOffsetDeg, "rgba(255,226,138,0.9)");
+
+      ctx.beginPath();
+      ctx.strokeStyle = IR_ORANGE;
+      ctx.lineWidth = 1.6;
+      ctx.shadowColor = "rgba(255,184,111,0.6)";
+      ctx.shadowBlur = 8;
+      for (let x = 0; x < W; x++) {
+        const t = x / Math.max(1, W - 1);
+        const displacement =
+          Math.sin(t * 85 + time * 6.1) * 28
+          + Math.sin(t * 170 - time * 8.5) * 14
+          + (noise(t * 280, time * 5.2) - 0.5) * 54;
+        const y = midY + displacement;
+        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = "rgba(0,0,0,0.62)";
+      ctx.fillRect(W * 0.5 - 170, midY - 26, 340, 52);
+      ctx.strokeStyle = "rgba(255,154,60,0.35)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(W * 0.5 - 170, midY - 26, 340, 52);
+      ctx.font = "22px Consolas, Monaco, monospace";
+      ctx.fillStyle = "rgba(255,176,0,0.92)";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("WARP INTERFERENCE", W * 0.5, midY);
+      ctx.textAlign = "start";
+      ctx.textBaseline = "alphabetic";
+      return;
+    }
+
+    if (!scannerOn) {
+      setHasQualifiedThermalInGate(false);
+      ctx.strokeStyle = "rgba(130,130,130,0.08)";
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i < 12; i++) {
+        const x = (i / 12) * W;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      for (let i = 0; i < 6; i++) {
+        const y = (i / 6) * H;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(150,150,150,0.22)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+      drawShipForwardReference(ctx, W, H, viewL, viewR, gate.bearingOffsetDeg, "rgba(190,190,190,0.75)");
+      ctx.font = "20px Consolas, Monaco, monospace";
+      ctx.fillStyle = "rgba(170,170,170,0.75)";
+      ctx.fillText("SCANNER OFFLINE", 8, 22);
+      return;
+    }
+
+    ctx.strokeStyle = "rgba(255,154,60,0.07)";
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i < 12; i++) {
+      const x = (i / 12) * W;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let i = 0; i < 6; i++) {
+      const y = (i / 6) * H;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(255,154,60,0.2)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+    drawShipForwardReference(ctx, W, H, viewL, viewR, gate.bearingOffsetDeg, "rgba(255,226,138,0.95)");
+
+    let hasThermalContactInGate = false;
+    let hasSolarInGate = false;
+    let maxThermalPeakRaw = 0;
+    const shipHdgCheck = useGameStore.getState().ship.actualHeading;
+    irSources.forEach((c) => {
+      const relBrg = ((c.bearing - shipHdgCheck + 540) % 360) - 180;
+      const wellNormRaw = 0.5 + ((relBrg - gate.bearingOffsetDeg) / 360);
+      const wellNorm = ((wellNormRaw % 1) + 1) % 1;
+      if (wellNorm >= viewL && wellNorm <= viewR && gate.isGated) {
+        if (c.irProfile === "solar") {
+          hasSolarInGate = true;
+        } else {
+          hasThermalContactInGate = true;
+          const thermalStrength = Math.max(0.04, c.thermal ?? 0.08);
+          const rangeKm = c.range / 1000;
+          const rangeAttenuation = inverseCubeAttenuation(rangeKm, IR_SHIP_REFERENCE_RANGE_KM);
+          const strength = thermalStrength * 0.475 * rangeAttenuation * (0.8 + gain * 0.5);
+          const peakRaw = strength * H * 0.42;
+          if (peakRaw > maxThermalPeakRaw) {
+            maxThermalPeakRaw = peakRaw;
+          }
+        }
+      }
+    });
+
+    const traceColor = hasSolarInGate ? "#ffd24a" : hasThermalContactInGate ? "#ffb86f" : IR_ORANGE;
+    const traceGlow = hasSolarInGate ? "#ffe28a" : hasThermalContactInGate ? "#ffd0a0" : IR_ORANGE_GLOW;
+    const displacementRaw = new Array(W);
+    let maxDispAbs = 0;
+    let noiseAbsSum = 0;
+    const gainNoiseBoost = 0.85 + Math.max(0, gain - 1) * 2.6;
+
+    for (let x = 0; x < W; x++) {
+      const t = viewL + (x / W) * viewW;
+      const baselineNoise =
+        (Math.sin(t * 7 + time * 0.7) * 5
+          + Math.sin(t * 17 + time * 1.2) * 3
+          + (noise(t * 45, time * 0.9) - 0.5) * 9
+          + (noise(t * 140, time * 1.7) - 0.5) * 7 - 3) * gainNoiseBoost * 4;
+      noiseAbsSum += Math.abs(baselineNoise);
+      let displacement = baselineNoise;
+
+      irSources.forEach((c) => {
+        const relBrg = ((c.bearing - shipHdgCheck + 540) % 360) - 180;
+
+        const wellCenterRaw = 0.5 + ((relBrg - gate.bearingOffsetDeg) / 360);
+        const wellCenter = ((wellCenterRaw % 1) + 1) % 1;
+        const directDist = Math.abs(t - wellCenter);
+        const wellDist = Math.min(directDist, 1 - directDist);
+
+        let width = 0.024;
+        let strength = 0;
+        if (c.irProfile === "solar") {
+          // Solar source is a special case: keep it always visible.
+          const rangeAttenuation = 1;
+          // Broad lobe: roughly 2x the previous angular footprint.
+          width = 0.104;
+          strength = 8.5 * rangeAttenuation * Math.max(0.9, gain * 1.1);
+        } else {
+          const thermalStrength = Math.max(0.04, c.thermal ?? 0.08);
+          const rangeKm = c.range / 1000;
+          const rangeAttenuation = inverseCubeAttenuation(rangeKm, IR_SHIP_REFERENCE_RANGE_KM);
+          width = 0.01 + Math.min(0.015, thermalStrength * 0.02);
+          strength = thermalStrength * 4.75 * rangeAttenuation * (0.8 + gain * 0.5);
+        }
+
+        if (wellDist < width) {
+          let shaped;
+          if (c.irProfile === "solar") {
+            // Smooth bell curve for solar IR instead of a sharp punctate peak.
+            const sigma = width * 0.42;
+            const u = wellDist / Math.max(0.0001, sigma);
+            const raw = Math.exp(-0.5 * u * u);
+            const edgeU = width / Math.max(0.0001, sigma);
+            const edgeRaw = Math.exp(-0.5 * edgeU * edgeU);
+            // Normalize the bell so it reaches exactly zero at the cutoff edge.
+            shaped = Math.max(0, (raw - edgeRaw) / Math.max(0.0001, 1 - edgeRaw));
+          } else {
+            const spike = 1 - (wellDist / width);
+            shaped = spike * spike;
+          }
+          displacement += shaped * strength * H * 0.42;
+        }
+      });
+
+      const dRaw = displacement * zoomGain;
+      displacementRaw[x] = dRaw;
+      const abs = Math.abs(dRaw);
+      if (abs > maxDispAbs) maxDispAbs = abs;
+    }
+    const avgNoiseLevelRaw = noiseAbsSum / Math.max(1, W);
+    const hasThermalInGate = hasThermalContactInGate && maxThermalPeakRaw >= avgNoiseLevelRaw * 2;
+    setHasQualifiedThermalInGate(hasThermalInGate);
+
+    const targetSpan = H * 0.42;
+    const scaleRaw = maxDispAbs > 0.0001 ? targetSpan / maxDispAbs : 1;
+    const zoomNorm = Math.max(0, Math.min(1, (gateZoom - 1) / 9));
+    const maxScale = 1 + zoomNorm * 3;
+    const scale = Math.max(0.12, Math.min(maxScale, scaleRaw));
+
+    ctx.beginPath();
+    ctx.strokeStyle = traceColor;
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = traceGlow;
+    ctx.shadowBlur = 5;
+    for (let x = 0; x < W; x++) {
+      const y = midY - displacementRaw[x] * scale;
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    const gateColor = hasSolarInGate ? "#ffd24a" : hasThermalContactInGate ? "#ffb86f" : IR_ORANGE;
+    const gateDim = hasSolarInGate ? "#8a6f1a" : hasThermalContactInGate ? "#6e3f12" : IR_ORANGE_DIM;
+    drawGates(ctx, W, H, gate.cursor, gate.gateWidth, gateColor, gateDim);
+
+    ctx.font = "14px Consolas, Monaco, monospace";
+    ctx.fillStyle = IR_ORANGE_DIM;
+    ctx.fillText(`ZOOM ${(1 / Math.max(0.001, viewW)).toFixed(1)}x`, 8, 18);
+    ctx.textAlign = "right";
+    ctx.fillText(`GAIN ${gain.toFixed(2)}x`, W - 8, 18);
+    ctx.textAlign = "start";
+
+    const cursorT = viewL + gate.cursor * viewW;
+    const shipHdg2 = useGameStore.getState().ship.actualHeading;
+    const cursorAbsBrg = (((shipHdg2 + (cursorT - 0.5) * 360 + gate.bearingOffsetDeg) % 360 + 360) % 360).toFixed(0);
+    drawCursor(ctx, W, H, gate.cursor, IR_ORANGE, IR_ORANGE_GLOW, `BRG ${String(cursorAbsBrg).padStart(3, "0")}`);
+
+    if (hasSolarInGate || hasThermalInGate) {
+      ctx.font = "20px Consolas, Monaco, monospace";
+      ctx.fillStyle = hasSolarInGate ? "#ffd24a" : "#ffb86f";
+      ctx.textAlign = "right";
+      ctx.fillText(hasSolarInGate ? "■ SOLAR SPIKE LOCKED" : "■ THERMAL CONTACT IN GATE", W - 10, 22);
+      ctx.textAlign = "start";
+    }
+  }, [time, irSources, selectedBearing, gate.gateL, gate.gateR, gate.cursor, gate.isGated, gate.bearingOffsetDeg, scannerOn, warpInterference, gain]);
+
+  const font = "'Consolas', 'Monaco', monospace";
+  const handleWheel = useCallback((e) => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      if (!scannerUsable) return;
+      const gainStep = e.deltaY < 0 ? 0.05 : -0.05;
+      setGain((prev) => Math.max(0.5, Math.min(2, Number((prev + gainStep).toFixed(2)))));
+      return;
+    }
+    if (!scannerUsable) return;
+    gate.onWheel(e);
+  }, [scannerUsable, gate]);
+
+  const viewSpanDeg = Math.max(1, (gate.gateR - gate.gateL) * 360);
+  const viewCenterT = (gate.gateL + gate.gateR) / 2;
+  const centerBearing = (((shipHeadingDeg + (viewCenterT - 0.5) * 360 + gate.bearingOffsetDeg) % 360) + 360) % 360;
+  const nearestThirty = Math.round(centerBearing / 30) * 30;
+  const bearingTapeTicks = Array.from({ length: 41 }, (_, i) => {
+    const rawDeg = nearestThirty + (i - 20) * 30;
+    const deltaDeg = rawDeg - centerBearing;
+    const leftPct = 50 + (deltaDeg / viewSpanDeg) * 100;
+    const wrapped = ((rawDeg % 360) + 360) % 360;
+    const labelVal = wrapped === 360 ? 0 : wrapped;
+    return {
+      key: `${rawDeg}`,
+      leftPct,
+      label: `${labelVal}`,
+    };
+  }).filter((t) => t.leftPct >= -5 && t.leftPct <= 105);
+
+  return (
+    <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+          <canvas
+            ref={canvasRef}
+            width={800}
+            height={280}
+            style={{
+              width: "100%",
+              height: "100%",
+              minHeight: 0,
+              background: BG_SCREEN,
+              cursor: scannerUsable ? "crosshair" : "not-allowed",
+              pointerEvents: scannerUsable ? "auto" : "none",
+            }}
+            onMouseDown={scannerUsable ? gate.onMouseDown : undefined}
+            onMouseMove={scannerUsable ? gate.onMouseMove : undefined}
+            onMouseUp={scannerUsable ? gate.onMouseUp : undefined}
+            onMouseLeave={scannerUsable ? gate.onMouseUp : undefined}
+            onWheel={scannerUsable ? handleWheel : undefined}
+            onContextMenu={scannerUsable ? gate.onContextMenu : undefined}
+          />
+        </div>
+        <div style={{
+          width: GRAV_CONTROL_RACK_WIDTH,
+          borderLeft: `1px solid ${IR_ORANGE_DIM}55`,
+          background: "rgba(0,0,0,0.35)",
+          display: "flex",
+          flexDirection: "row",
+          flexShrink: 0,
+        }}>
+          <div style={{
+            width: GRAV_CONTROL_COLUMN_WIDTH,
+            borderRight: `1px solid ${IR_ORANGE_DIM}33`,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "6px 2px",
+          }}>
+            <span style={{ fontSize: 8, letterSpacing: 1, color: scannerUsable || warpInterference ? IR_ORANGE_DIM : "rgba(150,150,150,0.8)" }}>GAIN</span>
+            <input
+              type="range"
+              min={0.5}
+              max={2}
+              step={0.01}
+              value={gain}
+              disabled={!scannerUsable}
+              onChange={(e) => setGain(Number(e.target.value))}
+              style={{
+                width: 150,
+                transform: "rotate(-90deg)",
+                accentColor: scannerUsable || warpInterference ? IR_ORANGE : "rgba(130,130,130,0.6)",
+                cursor: scannerUsable ? "pointer" : "not-allowed",
+              }}
+              aria-label="IR gain"
+            />
+            <span style={{
+              fontSize: 8,
+              letterSpacing: 1,
+              color: scannerUsable || warpInterference ? IR_ORANGE : "rgba(150,150,150,0.8)",
+              minWidth: 34,
+              textAlign: "center",
+            }}>
+              {gain.toFixed(2)}x
+            </span>
+          </div>
+          <div style={{ flex: 1 }} />
+        </div>
+      </div>
+      <div style={{
+        display: "flex",
+        borderTop: `1px solid ${IR_ORANGE_DIM}55`,
+        background: "rgba(0,0,0,0.35)",
+        flexShrink: 0,
+        minHeight: 32,
+      }}>
+        <div style={{ flex: 1, minWidth: 0, padding: "3px 8px 5px" }}>
+          <div style={{
+            position: "relative",
+            height: 20,
+            overflow: "hidden",
+            fontFamily: font,
+          }}>
+            {bearingTapeTicks.map((tick) => (
+              <span
+                key={tick.key}
+                style={{
+                  position: "absolute",
+                  left: `${tick.leftPct}%`,
+                  transform: "translateX(-50%)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 1,
+                  textShadow: scannerUsable ? "0 0 4px rgba(255,184,111,0.35)" : "none",
+                  color: scannerUsable || warpInterference ? IR_ORANGE_GLOW : "rgba(170,170,170,0.9)",
+                  fontSize: 10,
+                  fontWeight: "bold",
+                  letterSpacing: 0.5,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span
+                  style={{
+                    width: 1,
+                    height: 7,
+                    background: scannerUsable || warpInterference ? IR_ORANGE : "rgba(150,150,150,0.8)",
+                  }}
+                />
+                <span>{tick.label}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+        <div
+          style={{
+            width: GRAV_CONTROL_RACK_WIDTH,
+            borderLeft: `1px solid ${IR_ORANGE_DIM}55`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "4px 4px 6px",
+          }}
+        >
+          <button
+            onClick={() => {
+              if (!scannerUsable || !inGateThermalTarget || !hasQualifiedThermalInGate) return;
+              const nextBearing = ((inGateThermalTarget.bearing % 360) + 360) % 360;
+              const nextInclination = Math.max(-90, Math.min(90, inGateThermalTarget.inclination ?? 0));
+              setShipState({
+                irstBearing: nextBearing,
+                irstInclination: nextInclination,
+              });
+            }}
+            disabled={!scannerUsable || !inGateThermalTarget || !hasQualifiedThermalInGate}
+            style={{
+              width: "100%",
+              padding: "4px 4px",
+              fontSize: 10,
+              letterSpacing: 1,
+              background: !scannerUsable
+                ? "rgba(100,100,100,0.08)"
+                : inGateThermalTarget && hasQualifiedThermalInGate
+                  ? "rgba(255,154,60,0.18)"
+                  : "rgba(255,154,60,0.08)",
+              border: `1px solid ${!scannerUsable ? "rgba(130,130,130,0.35)" : (inGateThermalTarget && hasQualifiedThermalInGate) ? IR_ORANGE : IR_ORANGE_DIM}`,
+              color: !scannerUsable
+                ? "rgba(160,160,160,0.65)"
+                : (inGateThermalTarget && hasQualifiedThermalInGate)
+                  ? IR_ORANGE_GLOW
+                  : "rgba(190,130,90,0.95)",
+              fontFamily: font,
+              cursor: scannerUsable && inGateThermalTarget && hasQualifiedThermalInGate ? "pointer" : "not-allowed",
+              borderRadius: 1,
+            }}
+            aria-label="Send gated thermal target to IRST"
+          >
+            IRST SEND
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // F-16 / F-22 style B-Scope Radar
 const RANGE_SCALES = [10, 20, 40, 80, 160];
 const AZ_OPTIONS = [30, 60, 90];
@@ -1862,10 +2441,9 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
 
       // Velocity vector caret — only with active radar return AND target actually moving
       if (activeDetect && c.speed > 1 && c.relDx !== undefined) {
-        const enemyHRad = c.heading * Math.PI / 180;
-        // Match simulation kinematics: enemy X velocity uses -sin(heading).
-        const vxVis = -Math.sin(enemyHRad) * c.speed;
-        const vzVis = -Math.cos(enemyHRad) * c.speed;
+        const targetHRad = c.heading * Math.PI / 180;
+        const vxVis = -Math.sin(targetHRad) * c.speed;
+        const vzVis = -Math.cos(targetHRad) * c.speed;
 
         const futDx = c.relDx + vxVis;
         const futDz = c.relDz + vzVis;
@@ -2303,13 +2881,12 @@ const EwRwr = () => {
 // Main Component
 export default function EWConsole() {
   const [time, setTime] = useState(0);
-  const enemy = useGameStore((s) => s.enemy);
   const starSystem = useGameStore((s) => s.starSystem);
   const currentCelestialId = useGameStore((s) => s.currentCelestialId);
   const gravScannerOn = useGameStore((s) => s.ewGravScannerOn);
   const setGravScannerOn = useGameStore((s) => s.setEwGravScannerOn);
-  const [contacts, setContacts] = useState(() => buildContactsFromGame(enemy));
-  const [selectedContact, setSelectedContact] = useState("Σ");
+  const [contacts, setContacts] = useState(() => buildContactsFromGame());
+  const [selectedContact, setSelectedContact] = useState(null);
   const [selectedBearing, setSelectedBearing] = useState(0);
   const radarOn = useGameStore((s) => s.ewRadarOn);
   const radarMode = useGameStore((s) => s.ewRadarMode);
@@ -2340,7 +2917,10 @@ export default function EWConsole() {
   const jammers = useGameStore((s) => s.ewJammers);
   const setJammers = useGameStore((s) => s.setEwJammers);
   const [selectedJammer, setSelectedJammer] = useState(0);
-  const [gravResetToken, setGravResetToken] = useState(0);
+  const [upperScannerResetToken, setUpperScannerResetToken] = useState(0);
+  const [lowerScannerResetToken, setLowerScannerResetToken] = useState(0);
+  const [upperScannerType, setUpperScannerType] = useState("grav");
+  const [lowerScannerType, setLowerScannerType] = useState("ir");
   const [staleContacts, setStaleContacts] = useState({});
   const [classifierMenu, setClassifierMenu] = useState(null);
   const radarWasOnRef = useRef(false);
@@ -2359,8 +2939,7 @@ export default function EWConsole() {
         timeUpdateAtRef.current = now;
       }
       if (now - contactUpdateAtRef.current >= 33) {
-        const currentEnemy = useGameStore.getState().enemy;
-        setContacts(buildContactsFromGame(currentEnemy));
+        setContacts(buildContactsFromGame());
         contactUpdateAtRef.current = now;
       }
       frame = requestAnimationFrame(tick);
@@ -2455,6 +3034,22 @@ export default function EWConsole() {
   }, [radarOn, radarPower]);
 
   const font = "'Consolas', 'Monaco', monospace";
+  const scannerSlots = [
+    {
+      id: "A",
+      type: upperScannerType,
+      setType: setUpperScannerType,
+      resetToken: upperScannerResetToken,
+      reset: () => setUpperScannerResetToken((v) => v + 1),
+    },
+    {
+      id: "B",
+      type: lowerScannerType,
+      setType: setLowerScannerType,
+      resetToken: lowerScannerResetToken,
+      reset: () => setLowerScannerResetToken((v) => v + 1),
+    },
+  ];
 
   return (
     <div style={{
@@ -2500,59 +3095,119 @@ export default function EWConsole() {
       {/* Main layout */}
       <div style={{ display: "flex", gap: 6, flex: 1, minHeight: 0, alignItems: "stretch" }}>
         <div style={{ flex: "0 0 36%", display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-          <Panel
-            title="Gravimetric Scanner"
-            style={{ minHeight: 160 }}
-            dimmed={!gravScannerOn}
-            headerRight={(
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <button
-                  onClick={() => setGravResetToken((v) => v + 1)}
-                  style={{
-                    padding: "1px 6px",
-                    fontSize: 8,
-                    letterSpacing: 1,
-                    borderRadius: 1,
-                    border: `1px solid ${gravScannerOn ? GRAV_CYAN_DIM : "rgba(130,130,130,0.35)"}`,
-                    background: gravScannerOn ? "rgba(0,204,170,0.08)" : "rgba(90,90,90,0.12)",
-                    color: gravScannerOn ? GRAV_CYAN : "rgba(180,180,180,0.65)",
-                    fontFamily: font,
-                    cursor: gravScannerOn ? "pointer" : "not-allowed",
-                  }}
-                  disabled={!gravScannerOn}
-                  aria-label="Reset gravimetric scanner gate"
-                >
-                  RESET
-                </button>
-                <button
-                  onClick={() => setGravScannerOn(!gravScannerOn)}
-                  style={{
-                    padding: "1px 6px",
-                    fontSize: 8,
-                    letterSpacing: 1,
-                    borderRadius: 1,
-                    border: `1px solid ${gravScannerOn ? GRAV_CYAN : "rgba(130,130,130,0.5)"}`,
-                    background: gravScannerOn ? "rgba(0,204,170,0.14)" : "rgba(90,90,90,0.16)",
-                    color: gravScannerOn ? GRAV_CYAN_GLOW : "rgba(180,180,180,0.85)",
-                    fontFamily: font,
-                    cursor: "pointer",
-                  }}
-                  aria-label="Toggle gravimetric scanner"
-                >
-                  {gravScannerOn ? "ON" : "OFF"}
-                </button>
-              </div>
-            )}
-          >
-            <GravAnalyzer
-              contacts={visibleContacts}
-              time={time}
-              selectedBearing={selectedBearing}
-              onBearingChange={setSelectedBearing}
-              resetToken={gravResetToken}
-              scannerOn={gravScannerOn}
-            />
-          </Panel>
+          {scannerSlots.map((slot) => {
+            const scannerAccent = slot.type === "ir" ? IR_ORANGE : GRAV_CYAN;
+            const scannerAccentDim = slot.type === "ir" ? IR_ORANGE_DIM : GRAV_CYAN_DIM;
+            const scannerAccentGlow = slot.type === "ir" ? IR_ORANGE_GLOW : GRAV_CYAN_GLOW;
+            const scannerLabel = slot.type === "ir" ? "IR Scanner" : "Gravimetric Scanner";
+            return (
+              <Panel
+                key={slot.id}
+                title={scannerLabel}
+                style={{ height: 243, minHeight: 243, flex: "0 0 auto" }}
+                dimmed={!gravScannerOn}
+                headerRight={(
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        onClick={() => slot.setType("grav")}
+                        style={{
+                          padding: "1px 6px",
+                          fontSize: 8,
+                          letterSpacing: 1,
+                          borderRadius: 1,
+                          border: `1px solid ${slot.type === "grav" ? GRAV_CYAN : "rgba(130,130,130,0.5)"}`,
+                          background: slot.type === "grav" ? "rgba(0,204,170,0.14)" : "rgba(90,90,90,0.12)",
+                          color: slot.type === "grav" ? GRAV_CYAN_GLOW : "rgba(180,180,180,0.75)",
+                          fontFamily: font,
+                          cursor: "pointer",
+                        }}
+                        aria-label={`Switch scanner ${slot.id} to gravimetric`}
+                      >
+                        GRAV
+                      </button>
+                      <button
+                        onClick={() => slot.setType("ir")}
+                        style={{
+                          padding: "1px 6px",
+                          fontSize: 8,
+                          letterSpacing: 1,
+                          borderRadius: 1,
+                          border: `1px solid ${slot.type === "ir" ? IR_ORANGE : "rgba(130,130,130,0.5)"}`,
+                          background: slot.type === "ir" ? "rgba(255,154,60,0.14)" : "rgba(90,90,90,0.12)",
+                          color: slot.type === "ir" ? IR_ORANGE_GLOW : "rgba(180,180,180,0.75)",
+                          fontFamily: font,
+                          cursor: "pointer",
+                        }}
+                        aria-label={`Switch scanner ${slot.id} to IR`}
+                      >
+                        IR
+                      </button>
+                    </div>
+                    <button
+                      onClick={slot.reset}
+                      style={{
+                        padding: "1px 6px",
+                        fontSize: 8,
+                        letterSpacing: 1,
+                        borderRadius: 1,
+                        border: `1px solid ${gravScannerOn ? scannerAccentDim : "rgba(130,130,130,0.35)"}`,
+                        background: gravScannerOn
+                          ? (slot.type === "ir" ? "rgba(255,154,60,0.1)" : "rgba(0,204,170,0.08)")
+                          : "rgba(90,90,90,0.12)",
+                        color: gravScannerOn ? scannerAccent : "rgba(180,180,180,0.65)",
+                        fontFamily: font,
+                        cursor: gravScannerOn ? "pointer" : "not-allowed",
+                      }}
+                      disabled={!gravScannerOn}
+                      aria-label={`Reset scanner ${slot.id} gate`}
+                    >
+                      RESET
+                    </button>
+                    <button
+                      onClick={() => setGravScannerOn(!gravScannerOn)}
+                      style={{
+                        padding: "1px 6px",
+                        fontSize: 8,
+                        letterSpacing: 1,
+                        borderRadius: 1,
+                        border: `1px solid ${gravScannerOn ? scannerAccent : "rgba(130,130,130,0.5)"}`,
+                        background: gravScannerOn
+                          ? (slot.type === "ir" ? "rgba(255,154,60,0.16)" : "rgba(0,204,170,0.14)")
+                          : "rgba(90,90,90,0.16)",
+                        color: gravScannerOn ? scannerAccentGlow : "rgba(180,180,180,0.85)",
+                        fontFamily: font,
+                        cursor: "pointer",
+                      }}
+                      aria-label={`Toggle scanner ${slot.id} power`}
+                    >
+                      {gravScannerOn ? "ON" : "OFF"}
+                    </button>
+                  </div>
+                )}
+              >
+                {slot.type === "ir" ? (
+                  <IrAnalyzer
+                    contacts={contacts}
+                    time={time}
+                    selectedBearing={selectedBearing}
+                    onBearingChange={setSelectedBearing}
+                    resetToken={slot.resetToken}
+                    scannerOn={gravScannerOn}
+                  />
+                ) : (
+                  <GravAnalyzer
+                    contacts={contacts}
+                    time={time}
+                    selectedBearing={selectedBearing}
+                    onBearingChange={setSelectedBearing}
+                    resetToken={slot.resetToken}
+                    scannerOn={gravScannerOn}
+                  />
+                )}
+              </Panel>
+            );
+          })}
         </div>
 
         <div style={{ flex: 1, minWidth: 0, display: "flex" }}>

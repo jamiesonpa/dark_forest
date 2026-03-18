@@ -10,7 +10,6 @@ import {
 import { TORPEDO_ACCEL_DURATION_SECONDS } from '@/systems/simulation/torpedoConstants'
 
 const SHIP_CENTER_PIVOT: [number, number, number] = [0, 0, 0]
-const DEFAULT_SHIP_TARGET_SPAWN_POSITION: [number, number, number] = [0, 0, -20000]
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 const WARP_MIN_POST_CAPACITOR = 1
 const WARP_ARRIVAL_MIN_DISTANCE_KM = 15
@@ -19,6 +18,8 @@ const WARP_ARRIVAL_STEP_KM = 5
 const FALLBACK_PLAYER_SHIP_BOUNDING_LENGTH = 600
 const LAUNCHED_CYLINDER_SCALE = 0.5
 const TORPEDO_THRUST_ACCELERATION = 130
+const TORPEDO_LAUNCH_ACCELERATION_MULTIPLIER = 10
+const TORPEDO_LAUNCH_ACCELERATION_TAPER_SECONDS = 2
 const TORPEDO_NAVIGATION_CONSTANT = 4
 const TORPEDO_MAX_LATERAL_ACCELERATION = 220
 const TORPEDO_MIN_TARGET_RANGE = 1
@@ -27,9 +28,8 @@ const FLARE_LIFETIME_SECONDS = 3
 const FLARE_VELOCITY_DECAY_RATE = 0.8
 const FLARE_ANGLE_RANDOM_JITTER_DEG = 5
 const FLARE_SPREAD_DEGREES = [0, -20, 20, -40, 40] as const
-const DEFAULT_SHIP_TARGET_HEADING_DEG = 0
-const DEFAULT_SHIP_TARGET_INCLINATION_DEG = 0
-const DEFAULT_SHIP_TARGET_SPEED = 0
+const TORPEDO_HIT_RADIUS = 50
+const TORPEDO_EXPLOSION_LIFETIME_SECONDS = 7.2
 
 function mergeKnownCelestialId(existingIds: string[], celestialId: string, starSystem = DEFAULT_STAR_SYSTEM_SNAPSHOT.system) {
   const celestial = getCelestialById(celestialId, starSystem)
@@ -48,15 +48,6 @@ function sanitizePivot(position: [number, number, number]): [number, number, num
   ]
 }
 
-function sanitizeShipTargetSpawnPosition(position: [number, number, number]): [number, number, number] {
-  const [x, y, z] = position
-  return [
-    Number.isFinite(x) ? x : DEFAULT_SHIP_TARGET_SPAWN_POSITION[0],
-    Number.isFinite(y) ? y : DEFAULT_SHIP_TARGET_SPAWN_POSITION[1],
-    Number.isFinite(z) ? z : DEFAULT_SHIP_TARGET_SPAWN_POSITION[2],
-  ]
-}
-
 function sanitizeWarpArrivalDistanceKm(distanceKm: number) {
   if (!Number.isFinite(distanceKm)) {
     return WARP_ARRIVAL_MIN_DISTANCE_KM
@@ -66,21 +57,6 @@ function sanitizeWarpArrivalDistanceKm(distanceKm: number) {
     Math.min(WARP_ARRIVAL_MAX_DISTANCE_KM, distanceKm)
   )
   return Math.round(clamped / WARP_ARRIVAL_STEP_KM) * WARP_ARRIVAL_STEP_KM
-}
-
-function normalizeHeadingDeg(value: number) {
-  if (!Number.isFinite(value)) return DEFAULT_SHIP_TARGET_HEADING_DEG
-  return ((value % 360) + 360) % 360
-}
-
-function clampInclinationDeg(value: number) {
-  if (!Number.isFinite(value)) return DEFAULT_SHIP_TARGET_INCLINATION_DEG
-  return Math.max(-90, Math.min(90, value))
-}
-
-function clampTargetSpeed(value: number) {
-  if (!Number.isFinite(value)) return DEFAULT_SHIP_TARGET_SPEED
-  return Math.max(0, value)
 }
 
 function hasRadarLock(lockState: Record<string, 'soft' | 'hard'>) {
@@ -110,6 +86,13 @@ function normalizeVector(vector: [number, number, number], fallback: [number, nu
     return [...fallback]
   }
   return [vector[0] / magnitude, vector[1] / magnitude, vector[2] / magnitude]
+}
+
+function getTorpedoLaunchAccelerationMultiplier(flightTimeSeconds: number) {
+  const clampedFlightTime = Math.max(0, flightTimeSeconds)
+  const taperProgress = Math.min(1, clampedFlightTime / TORPEDO_LAUNCH_ACCELERATION_TAPER_SECONDS)
+  return TORPEDO_LAUNCH_ACCELERATION_MULTIPLIER
+    + (1 - TORPEDO_LAUNCH_ACCELERATION_MULTIPLIER) * taperProgress
 }
 
 function crossProduct(a: [number, number, number], b: [number, number, number]): [number, number, number] {
@@ -145,20 +128,9 @@ function resolveLockTargetPosition(
   lockId: string | null
 ): [number, number, number] | null {
   if (!lockId) return null
-  if (lockId === 'Σ' || lockId === 'M') {
-    return [
-      state.enemy.position[0],
-      state.enemy.position[1],
-      state.enemy.position[2],
-    ]
-  }
-  if (lockId.startsWith('TGT-')) {
-    const targetId = lockId.slice(4)
-    const target = state.shipTargets.find((candidate) => candidate.id === targetId)
-    if (!target) return null
-    return [target.position[0], target.position[1], target.position[2]]
-  }
-  return null
+  const ship = state.shipsById[lockId]
+  if (!ship) return null
+  return [ship.position[0], ship.position[1], ship.position[2]]
 }
 
 function resolveLockTargetVelocity(
@@ -166,24 +138,9 @@ function resolveLockTargetVelocity(
   lockId: string | null
 ): [number, number, number] | null {
   if (!lockId) return null
-  if (lockId === 'Σ' || lockId === 'M') {
-    const headingRad = (state.enemy.heading * Math.PI) / 180
-    const speed = Math.max(0, state.enemy.speed)
-    return [
-      -Math.sin(headingRad) * speed,
-      0,
-      -Math.cos(headingRad) * speed,
-    ]
-  }
-  if (lockId.startsWith('TGT-')) {
-    const speed = clampTargetSpeed(state.shipTargetSpeed)
-    const [vx, vy, vz] = getShipForwardVector(
-      normalizeHeadingDeg(state.shipTargetHeadingDeg),
-      clampInclinationDeg(state.shipTargetInclinationDeg)
-    )
-    return [vx * speed, vy * speed, vz * speed]
-  }
-  return null
+  const ship = state.shipsById[lockId]
+  if (!ship) return null
+  return [ship.actualVelocity[0], ship.actualVelocity[1], ship.actualVelocity[2]]
 }
 
 export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<GameStore>> = (set) => ({
@@ -194,7 +151,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   debugPivotEnabled: false,
   orientDebugEnabled: false,
   showIRSTCone: false,
-  showBScopeRadarCone: true,
+  showBScopeRadarCone: false,
   unlimitAaOrbitZoomOut: false,
   showCelestialGridCenterMarker: false,
   debugPivotPosition: SHIP_CENTER_PIVOT,
@@ -223,14 +180,10 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   asteroidBeltMaxSize: 140,
   asteroidBeltSpawnNonce: 0,
   asteroidBeltClearNonce: 0,
-  shipTargetSpawnPosition: DEFAULT_SHIP_TARGET_SPAWN_POSITION,
-  shipTargets: [],
-  shipTargetHeadingDeg: DEFAULT_SHIP_TARGET_HEADING_DEG,
-  shipTargetInclinationDeg: DEFAULT_SHIP_TARGET_INCLINATION_DEG,
-  shipTargetSpeed: DEFAULT_SHIP_TARGET_SPEED,
   playerShipBoundingLength: FALLBACK_PLAYER_SHIP_BOUNDING_LENGTH,
   launchedCylinders: [],
   launchedFlares: [],
+  torpedoExplosions: [],
   planetTextureRandomizeNonce: 0,
   setStarSystemSnapshot: (snapshot) =>
     set((s) => {
@@ -380,67 +333,6 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
     set((s) => ({
       asteroidBeltClearNonce: s.asteroidBeltClearNonce + 1,
     })),
-  setShipTargetSpawnPosition: (position) =>
-    set({ shipTargetSpawnPosition: sanitizeShipTargetSpawnPosition(position) }),
-  setShipTargetMotionSettings: (partial) =>
-    set((s) => ({
-      shipTargetHeadingDeg:
-        partial.headingDeg === undefined
-          ? s.shipTargetHeadingDeg
-          : normalizeHeadingDeg(partial.headingDeg),
-      shipTargetInclinationDeg:
-        partial.inclinationDeg === undefined
-          ? s.shipTargetInclinationDeg
-          : clampInclinationDeg(partial.inclinationDeg),
-      shipTargetSpeed:
-        partial.speed === undefined
-          ? s.shipTargetSpeed
-          : clampTargetSpeed(partial.speed),
-    })),
-  spawnShipTarget: () =>
-    set((s) => {
-      const [x, y, z] = sanitizeShipTargetSpawnPosition(s.shipTargetSpawnPosition)
-      const id = `target-${Date.now()}-${Math.floor(Math.random() * 100000)}`
-      return {
-        shipTargets: [
-          ...s.shipTargets,
-          {
-            id,
-            currentCelestialId: s.currentCelestialId,
-            position: [x, y, z] as [number, number, number],
-          },
-        ],
-      }
-    }),
-  advanceShipTargets: (deltaSeconds) =>
-    set((s) => {
-      if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0 || s.shipTargets.length === 0) {
-        return {}
-      }
-      const speed = clampTargetSpeed(s.shipTargetSpeed)
-      if (speed <= 0.0001) {
-        return {}
-      }
-      const forward = getShipForwardVector(
-        normalizeHeadingDeg(s.shipTargetHeadingDeg),
-        clampInclinationDeg(s.shipTargetInclinationDeg)
-      )
-      return {
-        shipTargets: s.shipTargets.map((target) => ({
-          ...target,
-          position: [
-            target.position[0] + forward[0] * speed * deltaSeconds,
-            target.position[1] + forward[1] * speed * deltaSeconds,
-            target.position[2] + forward[2] * speed * deltaSeconds,
-          ],
-        })),
-      }
-    }),
-  clearShipTargets: () =>
-    set({
-      shipTargets: [],
-      selectedTargetId: null,
-    }),
   setPlayerShipBoundingLength: (length) =>
     set({
       playerShipBoundingLength:
@@ -497,98 +389,162 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0 || s.launchedCylinders.length === 0) {
         return {}
       }
-      return {
-        launchedCylinders: s.launchedCylinders.map((cylinder) => {
-          let nextDirection: [number, number, number] = [...cylinder.direction]
-          let nextVelocity: [number, number, number] = [...cylinder.velocity]
-          const targetPosition = resolveLockTargetPosition(s, cylinder.targetLockId)
-          const targetVelocity = resolveLockTargetVelocity(s, cylinder.targetLockId)
+      const TORPEDO_DAMAGE = 7000
+      const survivingCylinders: typeof s.launchedCylinders = []
+      const shipDamage: Record<string, number> = {}
+      const createdExplosions: GameStore['torpedoExplosions'] = []
 
-          if (targetPosition) {
-            const relX = targetPosition[0] - cylinder.position[0]
-            const relY = targetPosition[1] - cylinder.position[1]
-            const relZ = targetPosition[2] - cylinder.position[2]
-            const relMag = Math.hypot(relX, relY, relZ)
-            if (relMag > TORPEDO_MIN_TARGET_RANGE) {
-              const targetVelX = targetVelocity?.[0] ?? 0
-              const targetVelY = targetVelocity?.[1] ?? 0
-              const targetVelZ = targetVelocity?.[2] ?? 0
-              const relVelX = targetVelX - nextVelocity[0]
-              const relVelY = targetVelY - nextVelocity[1]
-              const relVelZ = targetVelZ - nextVelocity[2]
+      for (const cylinder of s.launchedCylinders) {
+        let nextDirection: [number, number, number] = [...cylinder.direction]
+        let nextVelocity: [number, number, number] = [...cylinder.velocity]
+        const thrustAccelerationActive =
+          cylinder.flightTimeSeconds < TORPEDO_ACCEL_DURATION_SECONDS
+        const targetPosition = resolveLockTargetPosition(s, cylinder.targetLockId)
+        const targetVelocity = resolveLockTargetVelocity(s, cylinder.targetLockId)
 
-              const losUnitX = relX / relMag
-              const losUnitY = relY / relMag
-              const losUnitZ = relZ / relMag
-              const closingSpeed = -(relVelX * losUnitX + relVelY * losUnitY + relVelZ * losUnitZ)
+        if (thrustAccelerationActive && targetPosition) {
+          const relX = targetPosition[0] - cylinder.position[0]
+          const relY = targetPosition[1] - cylinder.position[1]
+          const relZ = targetPosition[2] - cylinder.position[2]
+          const relMag = Math.hypot(relX, relY, relZ)
+          if (relMag > TORPEDO_MIN_TARGET_RANGE) {
+            const targetVelX = targetVelocity?.[0] ?? 0
+            const targetVelY = targetVelocity?.[1] ?? 0
+            const targetVelZ = targetVelocity?.[2] ?? 0
+            const relVelX = targetVelX - nextVelocity[0]
+            const relVelY = targetVelY - nextVelocity[1]
+            const relVelZ = targetVelZ - nextVelocity[2]
 
-              if (closingSpeed > 0) {
-                const relSq = relMag * relMag
-                const losRateX = ((relY * relVelZ) - (relZ * relVelY)) / relSq
-                const losRateY = ((relZ * relVelX) - (relX * relVelZ)) / relSq
-                const losRateZ = ((relX * relVelY) - (relY * relVelX)) / relSq
+            const losUnitX = relX / relMag
+            const losUnitY = relY / relMag
+            const losUnitZ = relZ / relMag
+            const closingSpeed = -(relVelX * losUnitX + relVelY * losUnitY + relVelZ * losUnitZ)
 
-                // 3D proportional navigation acceleration command.
-                let accelX = TORPEDO_NAVIGATION_CONSTANT * closingSpeed * ((losRateY * losUnitZ) - (losRateZ * losUnitY))
-                let accelY = TORPEDO_NAVIGATION_CONSTANT * closingSpeed * ((losRateZ * losUnitX) - (losRateX * losUnitZ))
-                let accelZ = TORPEDO_NAVIGATION_CONSTANT * closingSpeed * ((losRateX * losUnitY) - (losRateY * losUnitX))
+            if (closingSpeed > 0) {
+              const relSq = relMag * relMag
+              const losRateX = ((relY * relVelZ) - (relZ * relVelY)) / relSq
+              const losRateY = ((relZ * relVelX) - (relX * relVelZ)) / relSq
+              const losRateZ = ((relX * relVelY) - (relY * relVelX)) / relSq
 
-                const accelMag = Math.hypot(accelX, accelY, accelZ)
-                if (accelMag > TORPEDO_MAX_LATERAL_ACCELERATION && accelMag > 0.000001) {
-                  const scale = TORPEDO_MAX_LATERAL_ACCELERATION / accelMag
-                  accelX *= scale
-                  accelY *= scale
-                  accelZ *= scale
-                }
+              let accelX = TORPEDO_NAVIGATION_CONSTANT * closingSpeed * ((losRateY * losUnitZ) - (losRateZ * losUnitY))
+              let accelY = TORPEDO_NAVIGATION_CONSTANT * closingSpeed * ((losRateZ * losUnitX) - (losRateX * losUnitZ))
+              let accelZ = TORPEDO_NAVIGATION_CONSTANT * closingSpeed * ((losRateX * losUnitY) - (losRateY * losUnitX))
 
-                nextVelocity = [
-                  nextVelocity[0] + accelX * deltaSeconds,
-                  nextVelocity[1] + accelY * deltaSeconds,
-                  nextVelocity[2] + accelZ * deltaSeconds,
-                ]
+              const accelMag = Math.hypot(accelX, accelY, accelZ)
+              if (accelMag > TORPEDO_MAX_LATERAL_ACCELERATION && accelMag > 0.000001) {
+                const scale = TORPEDO_MAX_LATERAL_ACCELERATION / accelMag
+                accelX *= scale
+                accelY *= scale
+                accelZ *= scale
               }
-            }
-          }
 
-          const nextFlightTime = cylinder.flightTimeSeconds + deltaSeconds
-          if (nextFlightTime <= TORPEDO_ACCEL_DURATION_SECONDS) {
-            const thrustDelta = TORPEDO_THRUST_ACCELERATION * deltaSeconds
-            const speed = Math.hypot(nextVelocity[0], nextVelocity[1], nextVelocity[2])
-            if (speed > 0.000001) {
-              nextDirection = [
-                nextVelocity[0] / speed,
-                nextVelocity[1] / speed,
-                nextVelocity[2] / speed,
+              nextVelocity = [
+                nextVelocity[0] + accelX * deltaSeconds,
+                nextVelocity[1] + accelY * deltaSeconds,
+                nextVelocity[2] + accelZ * deltaSeconds,
               ]
             }
-            nextVelocity = [
-              nextVelocity[0] + nextDirection[0] * thrustDelta,
-              nextVelocity[1] + nextDirection[1] * thrustDelta,
-              nextVelocity[2] + nextDirection[2] * thrustDelta,
-            ]
           }
+        }
 
-          const finalSpeed = Math.hypot(nextVelocity[0], nextVelocity[1], nextVelocity[2])
-          if (finalSpeed > 0.000001) {
+        const nextFlightTime = cylinder.flightTimeSeconds + deltaSeconds
+        if (thrustAccelerationActive) {
+          const launchAccelerationMultiplier = getTorpedoLaunchAccelerationMultiplier(cylinder.flightTimeSeconds)
+          const thrustDelta = TORPEDO_THRUST_ACCELERATION * launchAccelerationMultiplier * deltaSeconds
+          const speed = Math.hypot(nextVelocity[0], nextVelocity[1], nextVelocity[2])
+          if (speed > 0.000001) {
             nextDirection = [
-              nextVelocity[0] / finalSpeed,
-              nextVelocity[1] / finalSpeed,
-              nextVelocity[2] / finalSpeed,
+              nextVelocity[0] / speed,
+              nextVelocity[1] / speed,
+              nextVelocity[2] / speed,
             ]
           }
+          nextVelocity = [
+            nextVelocity[0] + nextDirection[0] * thrustDelta,
+            nextVelocity[1] + nextDirection[1] * thrustDelta,
+            nextVelocity[2] + nextDirection[2] * thrustDelta,
+          ]
+        }
 
-          return {
-            ...cylinder,
-            position: [
-              cylinder.position[0] + nextVelocity[0] * deltaSeconds,
-              cylinder.position[1] + nextVelocity[1] * deltaSeconds,
-              cylinder.position[2] + nextVelocity[2] * deltaSeconds,
-            ],
-            velocity: nextVelocity,
-            direction: nextDirection,
-            flightTimeSeconds: nextFlightTime,
+        const finalSpeed = Math.hypot(nextVelocity[0], nextVelocity[1], nextVelocity[2])
+        if (finalSpeed > 0.000001) {
+          nextDirection = [
+            nextVelocity[0] / finalSpeed,
+            nextVelocity[1] / finalSpeed,
+            nextVelocity[2] / finalSpeed,
+          ]
+        }
+
+        const nextPosition: [number, number, number] = [
+          cylinder.position[0] + nextVelocity[0] * deltaSeconds,
+          cylinder.position[1] + nextVelocity[1] * deltaSeconds,
+          cylinder.position[2] + nextVelocity[2] * deltaSeconds,
+        ]
+
+        if (targetPosition && cylinder.targetLockId) {
+          const hitDist = Math.hypot(
+            nextPosition[0] - targetPosition[0],
+            nextPosition[1] - targetPosition[1],
+            nextPosition[2] - targetPosition[2]
+          )
+          if (hitDist <= TORPEDO_HIT_RADIUS) {
+            shipDamage[cylinder.targetLockId] = (shipDamage[cylinder.targetLockId] ?? 0) + TORPEDO_DAMAGE
+            createdExplosions.push({
+              id: `torpedo-explosion-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+              currentCelestialId: cylinder.currentCelestialId,
+              position: [nextPosition[0], nextPosition[1], nextPosition[2]],
+              flightTimeSeconds: 0,
+            })
+            continue
           }
-        }),
+        }
+
+        survivingCylinders.push({
+          ...cylinder,
+          position: nextPosition,
+          velocity: nextVelocity,
+          direction: nextDirection,
+          flightTimeSeconds: nextFlightTime,
+        })
+      }
+
+      const hitIds = Object.keys(shipDamage)
+      if (hitIds.length === 0) {
+        return {
+          launchedCylinders: survivingCylinders,
+          torpedoExplosions: createdExplosions.length > 0
+            ? [...s.torpedoExplosions, ...createdExplosions]
+            : s.torpedoExplosions,
+        }
+      }
+
+      const nextShips = { ...s.shipsById }
+      for (const targetId of hitIds) {
+        const target = nextShips[targetId]
+        if (!target) continue
+        let remaining = shipDamage[targetId] ?? 0
+        let { shield, armor, hull } = target
+        if (target.shieldsUp && shield > 0) {
+          const absorbed = Math.min(shield, remaining)
+          shield -= absorbed
+          remaining -= absorbed
+        }
+        if (remaining > 0 && armor > 0) {
+          const absorbed = Math.min(armor, remaining)
+          armor -= absorbed
+          remaining -= absorbed
+        }
+        if (remaining > 0) {
+          hull = Math.max(0, hull - remaining)
+        }
+        nextShips[targetId] = { ...target, shield, armor, hull }
+      }
+      return {
+        launchedCylinders: survivingCylinders,
+        shipsById: nextShips,
+        torpedoExplosions: createdExplosions.length > 0
+          ? [...s.torpedoExplosions, ...createdExplosions]
+          : s.torpedoExplosions,
       }
     }),
   launchFlares: (shipBoundingLength) =>
@@ -674,6 +630,20 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
             }
           })
           .filter((flare) => flare.flightTimeSeconds <= FLARE_LIFETIME_SECONDS),
+      }
+    }),
+  advanceTorpedoExplosions: (deltaSeconds) =>
+    set((s) => {
+      if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0 || s.torpedoExplosions.length === 0) {
+        return {}
+      }
+      return {
+        torpedoExplosions: s.torpedoExplosions
+          .map((explosion) => ({
+            ...explosion,
+            flightTimeSeconds: explosion.flightTimeSeconds + deltaSeconds,
+          }))
+          .filter((explosion) => explosion.flightTimeSeconds <= TORPEDO_EXPLOSION_LIFETIME_SECONDS),
       }
     }),
   randomizePlanetTextures: () =>

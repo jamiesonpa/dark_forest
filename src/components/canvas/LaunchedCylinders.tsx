@@ -13,12 +13,18 @@ const PLAYER_MAX_SUBWARP_LIFETIME_SCALE = 0.9
 const PLAYER_MAX_SUBWARP_NOZZLE_RADIUS = 5.2 * 6
 const PLAYER_MAX_SUBWARP_DECAY_RATE = 1.4
 const PLAYER_MAX_SUBWARP_SPAWN_SIZE = 30
-const SMOKE_PARTICLE_COUNT = 520
+const SMOKE_PARTICLE_COUNT = 900
 const SMOKE_SPAWN_RATE = 130
 const SMOKE_MIN_LIFETIME_SECONDS = 5.5
 const SMOKE_MAX_LIFETIME_SECONDS = 12
-const SMOKE_START_SIZE = 6
-const SMOKE_END_SIZE = 140
+const SMOKE_START_SIZE = 30
+const SMOKE_END_SIZE = 1000
+const SMOKE_VELOCITY_DRAG = 0.35
+const SMOKE_TURBULENCE_MIN = 10
+const SMOKE_TURBULENCE_MAX = 26
+const SMOKE_WOBBLE_FREQ_MIN = 0.8
+const SMOKE_WOBBLE_FREQ_MAX = 2.2
+const SMOKE_TURBULENCE_ACCEL = 7.5
 const LAUNCH_PLUME_DURATION_SECONDS = 0.45
 const LAUNCH_PLUME_SPAWN_RATE = 520
 const LAUNCH_PLUME_MIN_SPEED = 80
@@ -46,14 +52,33 @@ function createSmokeParticleData() {
   const maxLifetimes = new Float32Array(SMOKE_PARTICLE_COUNT)
   const colors = new Float32Array(SMOKE_PARTICLE_COUNT * 3)
   const sizes = new Float32Array(SMOKE_PARTICLE_COUNT)
-  return { positions, velocities, lifetimes, maxLifetimes, colors, sizes }
+  const alphas = new Float32Array(SMOKE_PARTICLE_COUNT)
+  const startAlphas = new Float32Array(SMOKE_PARTICLE_COUNT)
+  const wobblePhases = new Float32Array(SMOKE_PARTICLE_COUNT)
+  const wobbleFrequencies = new Float32Array(SMOKE_PARTICLE_COUNT)
+  const turbulenceStrengths = new Float32Array(SMOKE_PARTICLE_COUNT)
+  const sizeJitterPhases = new Float32Array(SMOKE_PARTICLE_COUNT)
+  return {
+    positions,
+    velocities,
+    lifetimes,
+    maxLifetimes,
+    colors,
+    sizes,
+    alphas,
+    startAlphas,
+    wobblePhases,
+    wobbleFrequencies,
+    turbulenceStrengths,
+    sizeJitterPhases,
+  }
 }
 
 function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
   const thrusterPointsRef = useRef<THREE.Points | null>(null)
   const thrusterMaterialRef = useRef<THREE.PointsMaterial | null>(null)
   const smokePointsRef = useRef<THREE.Points | null>(null)
-  const smokeMaterialRef = useRef<THREE.PointsMaterial | null>(null)
+  const smokeMaterialRef = useRef<THREE.ShaderMaterial | null>(null)
   const launchAgeRef = useRef(0)
   const smokeSpawnRemainderRef = useRef(0)
   const thrusterParticleData = useMemo(() => createThrusterParticleData(), [])
@@ -88,6 +113,12 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
     texture.needsUpdate = true
     return texture
   }, [])
+  const smokeUniforms = useMemo(
+    () => ({
+      uMap: { value: smokeParticleTexture },
+    }),
+    [smokeParticleTexture]
+  )
   const nozzleFlareTexture = useMemo(() => {
     const size = 128
     const canvas = document.createElement('canvas')
@@ -192,8 +223,20 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
       // Preheat launch plume so first render already has visible density.
       life *= 0.45 + Math.random() * 0.55
     }
+    const startAlpha = inLaunchPlumePhase
+      ? 0.72 + Math.random() * 0.24
+      : 0.28 + Math.random() * 0.16
     smokeParticleData.lifetimes[particleIndex] = life
     smokeParticleData.maxLifetimes[particleIndex] = life
+    smokeParticleData.startAlphas[particleIndex] = startAlpha
+    smokeParticleData.alphas[particleIndex] = startAlpha
+    smokeParticleData.wobblePhases[particleIndex] = Math.random() * Math.PI * 2
+    smokeParticleData.wobbleFrequencies[particleIndex] =
+      SMOKE_WOBBLE_FREQ_MIN + Math.random() * (SMOKE_WOBBLE_FREQ_MAX - SMOKE_WOBBLE_FREQ_MIN)
+    smokeParticleData.turbulenceStrengths[particleIndex] = inLaunchPlumePhase
+      ? SMOKE_TURBULENCE_MIN + Math.random() * (SMOKE_TURBULENCE_MAX - SMOKE_TURBULENCE_MIN)
+      : SMOKE_TURBULENCE_MIN * 0.55 + Math.random() * (SMOKE_TURBULENCE_MAX * 0.65)
+    smokeParticleData.sizeJitterPhases[particleIndex] = Math.random() * Math.PI * 2
   }
 
   useEffect(() => {
@@ -202,6 +245,7 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
       const positionAttr = points.geometry.getAttribute('position')
       const colorAttr = points.geometry.getAttribute('color')
       const sizeAttr = points.geometry.getAttribute('aSize')
+      const alphaAttr = points.geometry.getAttribute('aAlpha')
       if (positionAttr instanceof THREE.BufferAttribute) {
         positionAttr.setUsage(THREE.DynamicDrawUsage)
       }
@@ -210,6 +254,9 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
       }
       if (sizeAttr instanceof THREE.BufferAttribute) {
         sizeAttr.setUsage(THREE.DynamicDrawUsage)
+      }
+      if (alphaAttr instanceof THREE.BufferAttribute) {
+        alphaAttr.setUsage(THREE.DynamicDrawUsage)
       }
     }
     const configureSizeShader = (material: THREE.PointsMaterial | null) => {
@@ -228,7 +275,6 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
     configurePoints(thrusterPointsRef.current)
     configurePoints(smokePointsRef.current)
     configureSizeShader(thrusterMaterialRef.current)
-    configureSizeShader(smokeMaterialRef.current)
 
     // Prewarm smoke so there is no visual delay right after launch.
     const tailWorldX = cylinder.position[0] - directionVector.x * cylinder.length * 0.52
@@ -278,6 +324,12 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
         smokeParticleData.velocities[idx + 2] = 0
         smokeParticleData.lifetimes[i] = 0
         smokeParticleData.maxLifetimes[i] = 0
+        smokeParticleData.startAlphas[i] = 0
+        smokeParticleData.alphas[i] = 0
+        smokeParticleData.wobblePhases[i] = 0
+        smokeParticleData.wobbleFrequencies[i] = 0
+        smokeParticleData.turbulenceStrengths[i] = 0
+        smokeParticleData.sizeJitterPhases[i] = 0
         smokeParticleData.colors[idx] = 0
         smokeParticleData.colors[idx + 1] = 0
         smokeParticleData.colors[idx + 2] = 0
@@ -306,6 +358,7 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
         const positionAttr = smokePoints.geometry.getAttribute('position')
         const colorAttr = smokePoints.geometry.getAttribute('color')
         const sizeAttr = smokePoints.geometry.getAttribute('aSize')
+        const alphaAttr = smokePoints.geometry.getAttribute('aAlpha')
         if (positionAttr instanceof THREE.BufferAttribute) {
           positionAttr.needsUpdate = true
         }
@@ -315,9 +368,9 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
         if (sizeAttr instanceof THREE.BufferAttribute) {
           sizeAttr.needsUpdate = true
         }
-      }
-      if (smokeMaterialRef.current) {
-        smokeMaterialRef.current.opacity = 0
+        if (alphaAttr instanceof THREE.BufferAttribute) {
+          alphaAttr.needsUpdate = true
+        }
       }
       if (thrusterMaterialRef.current) {
         thrusterMaterialRef.current.opacity = 0
@@ -450,6 +503,7 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
       if (life <= 0) {
         const shouldSpawn = guaranteedSpawnCount > 0
         if (!shouldSpawn) {
+          smokeParticleData.alphas[i] = 0
           smokeParticleData.colors[idx] = 0
           smokeParticleData.colors[idx + 1] = 0
           smokeParticleData.colors[idx + 2] = 0
@@ -464,21 +518,47 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
       const velX = smokeParticleData.velocities[idx] ?? 0
       const velY = smokeParticleData.velocities[idx + 1] ?? 0
       const velZ = smokeParticleData.velocities[idx + 2] ?? 0
-      smokeParticleData.positions[idx] = (smokeParticleData.positions[idx] ?? 0) + velX * dt
-      smokeParticleData.positions[idx + 1] = (smokeParticleData.positions[idx + 1] ?? 0) + velY * dt
-      smokeParticleData.positions[idx + 2] = (smokeParticleData.positions[idx + 2] ?? 0) + velZ * dt
+      const wobblePhase = smokeParticleData.wobblePhases[i] ?? 0
+      const wobbleFreq = smokeParticleData.wobbleFrequencies[i] ?? SMOKE_WOBBLE_FREQ_MIN
+      const turbulence = smokeParticleData.turbulenceStrengths[i] ?? SMOKE_TURBULENCE_MIN
+      const wobbleTime = launchAgeRef.current * wobbleFreq + wobblePhase
+      const lifeRatio = (smokeParticleData.maxLifetimes[i] ?? 0) > 0
+        ? THREE.MathUtils.clamp(life / (smokeParticleData.maxLifetimes[i] ?? 1), 0, 1)
+        : 0
+      const ageRatioForTurbulence = 1 - lifeRatio
+      const turbulenceEnvelope = 0.35 + ageRatioForTurbulence * 1.5
+      const jitterX = Math.sin(wobbleTime) * turbulence * turbulenceEnvelope
+      const jitterY = Math.cos(wobbleTime * 1.35 + 0.9) * turbulence * 0.55 * turbulenceEnvelope
+      const jitterZ = Math.sin(wobbleTime * 0.8 + 1.7) * turbulence * turbulenceEnvelope
+      const nextVelX = velX + jitterX * dt * SMOKE_TURBULENCE_ACCEL
+      const nextVelY = velY + jitterY * dt * SMOKE_TURBULENCE_ACCEL
+      const nextVelZ = velZ + jitterZ * dt * SMOKE_TURBULENCE_ACCEL
+      smokeParticleData.positions[idx] = (smokeParticleData.positions[idx] ?? 0) + nextVelX * dt
+      smokeParticleData.positions[idx + 1] = (smokeParticleData.positions[idx + 1] ?? 0) + nextVelY * dt
+      smokeParticleData.positions[idx + 2] = (smokeParticleData.positions[idx + 2] ?? 0) + nextVelZ * dt
+      const smokeVelocityDamping = Math.exp(-SMOKE_VELOCITY_DRAG * dt)
+      smokeParticleData.velocities[idx] = nextVelX * smokeVelocityDamping
+      smokeParticleData.velocities[idx + 1] = nextVelY * smokeVelocityDamping
+      smokeParticleData.velocities[idx + 2] = nextVelZ * smokeVelocityDamping
 
       smokeParticleData.lifetimes[i] = life
       const maxLife = smokeParticleData.maxLifetimes[i] ?? 0
       if (life > 0 && maxLife > 0) {
         const ageRatio = 1 - THREE.MathUtils.clamp(life / maxLife, 0, 1)
-        const smokeBrightness = THREE.MathUtils.lerp(0.36, 0.08, ageRatio)
+        const smokeBrightness = ageRatio <= 0.25
+          ? THREE.MathUtils.lerp(1.0, 0.45, ageRatio / 0.25)
+          : THREE.MathUtils.lerp(0.45, 0.2, (ageRatio - 0.25) / 0.75)
         smokeParticleData.colors[idx] = smokeBrightness
         smokeParticleData.colors[idx + 1] = smokeBrightness
-        smokeParticleData.colors[idx + 2] = smokeBrightness * 0.95
+        smokeParticleData.colors[idx + 2] = smokeBrightness
         const billowGrowth = Math.pow(ageRatio, 1.35)
-        smokeParticleData.sizes[i] = THREE.MathUtils.lerp(SMOKE_START_SIZE, SMOKE_END_SIZE, billowGrowth)
+        const sizeJitter = 0.88 + Math.sin(wobbleTime * 0.65 + (smokeParticleData.sizeJitterPhases[i] ?? 0)) * 0.12
+        smokeParticleData.sizes[i] =
+          THREE.MathUtils.lerp(SMOKE_START_SIZE, SMOKE_END_SIZE, billowGrowth) * Math.max(0.72, sizeJitter)
+        const fade = Math.pow(1 - ageRatio, 1.35)
+        smokeParticleData.alphas[i] = (smokeParticleData.startAlphas[i] ?? 0) * fade
       } else {
+        smokeParticleData.alphas[i] = 0
         smokeParticleData.colors[idx] = 0
         smokeParticleData.colors[idx + 1] = 0
         smokeParticleData.colors[idx + 2] = 0
@@ -491,6 +571,7 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
       const positionAttr = smokePoints.geometry.getAttribute('position')
       const colorAttr = smokePoints.geometry.getAttribute('color')
       const sizeAttr = smokePoints.geometry.getAttribute('aSize')
+      const alphaAttr = smokePoints.geometry.getAttribute('aAlpha')
       if (positionAttr instanceof THREE.BufferAttribute) {
         positionAttr.needsUpdate = true
       }
@@ -500,9 +581,9 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
       if (sizeAttr instanceof THREE.BufferAttribute) {
         sizeAttr.needsUpdate = true
       }
-    }
-    if (smokeMaterialRef.current) {
-      smokeMaterialRef.current.opacity = inLaunchPlumePhase ? 0.62 : 0.34
+      if (alphaAttr instanceof THREE.BufferAttribute) {
+        alphaAttr.needsUpdate = true
+      }
     }
   })
 
@@ -568,20 +649,39 @@ function LaunchedCylinderMesh({ cylinder }: { cylinder: LaunchedCylinder }) {
           <bufferAttribute attach="attributes-position" args={[smokeParticleData.positions, 3]} />
           <bufferAttribute attach="attributes-color" args={[smokeParticleData.colors, 3]} />
           <bufferAttribute attach="attributes-aSize" args={[smokeParticleData.sizes, 1]} />
+          <bufferAttribute attach="attributes-aAlpha" args={[smokeParticleData.alphas, 1]} />
         </bufferGeometry>
-        <pointsMaterial
+        <shaderMaterial
           ref={smokeMaterialRef}
-          size={SMOKE_START_SIZE}
-          sizeAttenuation
-          vertexColors
-          map={smokeParticleTexture ?? undefined}
-          alphaMap={smokeParticleTexture ?? undefined}
-          alphaTest={0.02}
+          uniforms={smokeUniforms}
           transparent
-          opacity={0.34}
           blending={THREE.NormalBlending}
           depthWrite={false}
-          toneMapped={false}
+          vertexShader={`
+            attribute float aSize;
+            attribute float aAlpha;
+            attribute vec3 color;
+            varying vec3 vColor;
+            varying float vAlpha;
+            void main() {
+              vColor = color;
+              vAlpha = aAlpha;
+              vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+              gl_PointSize = aSize * (300.0 / max(1.0, -mvPosition.z));
+              gl_Position = projectionMatrix * mvPosition;
+            }
+          `}
+          fragmentShader={`
+            uniform sampler2D uMap;
+            varying vec3 vColor;
+            varying float vAlpha;
+            void main() {
+              vec4 smokeSample = texture2D(uMap, gl_PointCoord);
+              float alpha = smokeSample.a * vAlpha;
+              if (alpha < 0.01) discard;
+              gl_FragColor = vec4(vColor, alpha);
+            }
+          `}
         />
       </points>
     </>

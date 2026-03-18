@@ -1,11 +1,11 @@
 import { useMemo } from 'react'
 import { PlayerShip } from './PlayerShip'
-import { TargetShip } from './TargetShip'
 import { CelestialBody } from './CelestialBody'
 import { AsteroidBelt } from './AsteroidBelt'
 import { CelestialGridContents } from './CelestialGridContents'
 import { LaunchedCylinders } from './LaunchedCylinders'
 import { LaunchedFlares } from './LaunchedFlares'
+import { TorpedoExplosions } from './TorpedoExplosions'
 import { useGameStore } from '@/state/gameStore'
 import { getCelestialById } from '@/utils/systemData'
 
@@ -17,7 +17,6 @@ export function Grid() {
   const shipsById = useGameStore((s) => s.shipsById)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
   const localShipInWarpTransit = useGameStore((s) => s.ship.inWarpTransit)
-  const shipTargets = useGameStore((s) => s.shipTargets)
   const showCelestialGridCenterMarker = useGameStore((s) => s.showCelestialGridCenterMarker)
   const offGridWarpActive = localShipInWarpTransit
   const celestial = useMemo(
@@ -32,10 +31,6 @@ export function Grid() {
       }),
     [currentCelestialId, localPlayerId, shipsById]
   )
-  const visibleShipTargets = useMemo(
-    () => shipTargets.filter((target) => target.currentCelestialId === currentCelestialId),
-    [currentCelestialId, shipTargets]
-  )
 
   if (!celestial) return null
 
@@ -49,10 +44,8 @@ export function Grid() {
           isLocal={id === localPlayerId}
         />
       ))}
-      {visibleShipTargets.map((target) => (
-        <TargetShip key={target.id} position={target.position} />
-      ))}
       <LaunchedCylinders />
+      <TorpedoExplosions />
       <LaunchedFlares />
       {!offGridWarpActive && (
         <>

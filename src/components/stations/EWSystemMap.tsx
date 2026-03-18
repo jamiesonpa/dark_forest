@@ -716,7 +716,8 @@ export function EWSystemMap({ time }: { time: number }) {
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
 
   const starSystem = useGameStore((s) => s.starSystem)
-  const shipTargets = useGameStore((s) => s.shipTargets)
+  const shipsById = useGameStore((s) => s.shipsById)
+  const localPlayerId = useGameStore((s) => s.localPlayerId)
   const shipPosition = useGameStore((s) => s.ship.position)
   const shipHeadingDeg = useGameStore((s) => s.ship.actualHeading)
   const ewLockState = useGameStore((s) => s.ewLockState)
@@ -932,29 +933,36 @@ export function EWSystemMap({ time }: { time: number }) {
 
   const bScopeAllTracks = useMemo<BScopeTrack[]>(() => {
     const tracks: BScopeTrack[] = []
+    let npcIdx = 0
+    let remoteIdx = 0
 
-    shipTargets
-      .filter((target) => target.currentCelestialId === currentCelestialId)
-      .forEach((target, index) => {
-      const dx = target.position[0] - shipPosition[0]
-      const dy = target.position[1] - shipPosition[1]
-      const dz = target.position[2] - shipPosition[2]
+    for (const [id, ship] of Object.entries(shipsById)) {
+      if (id === localPlayerId) continue
+      if (ship.currentCelestialId !== currentCelestialId) continue
+      if (ship.inWarpTransit) continue
+
+      const isNpc = id.startsWith('npc-')
+      const label = isNpc ? `N${++npcIdx}` : `P${++remoteIdx}`
+
+      const dx = ship.position[0] - shipPosition[0]
+      const dy = ship.position[1] - shipPosition[1]
+      const dz = ship.position[2] - shipPosition[2]
       const rangeM = Math.hypot(dx, dz)
       const { bearing: bearingDeg, inclination: relInclinationDeg } =
         bearingInclinationFromVector([dx, dy, dz])
       const relBearingDeg = ((bearingDeg - shipHeadingDeg + 540) % 360) - 180
       tracks.push({
-        id: `TGT-${target.id}`,
-        label: `T${index + 1}`,
+        id,
+        label,
         absBearingDeg: bearingDeg,
         relInclinationDeg,
         rangeM,
         relBearingDeg,
       })
-    })
+    }
 
     return tracks
-  }, [currentCelestialId, shipHeadingDeg, shipPosition, shipTargets])
+  }, [currentCelestialId, localPlayerId, shipHeadingDeg, shipPosition, shipsById])
 
   const bScopeTracks = useMemo<BScopeTrack[]>(() => {
     return bScopeAllTracks.filter(
@@ -971,7 +979,7 @@ export function EWSystemMap({ time }: { time: number }) {
     )
   }, [bScopeAllTracks, bScopeMaxRangeM, bScopeViewMaxDeg, bScopeViewMinDeg])
   const bScopeTargetTracks = useMemo(
-    () => bScopeAllTracks.filter((track) => track.id.startsWith('TGT-')),
+    () => bScopeAllTracks,
     [bScopeAllTracks]
   )
   const bScopeTargetsInConeCount = useMemo(
@@ -988,7 +996,7 @@ export function EWSystemMap({ time }: { time: number }) {
     [bScopeMaxRangeM, bScopeTargetTracks]
   )
   const bScopeVisibleTargetCount = useMemo(
-    () => bScopeTracks.filter((track) => track.id.startsWith('TGT-')).length,
+    () => bScopeTracks.length,
     [bScopeTracks]
   )
   const bScopeNearestTarget = useMemo(() => {

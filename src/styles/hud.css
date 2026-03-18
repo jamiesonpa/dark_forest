@@ -1242,6 +1242,7 @@ body {
 .ship-status-v2-warp-distance-slider {
   --warp-distance-line-length: 136px;
   --warp-slider-end-inset: 3px;
+  --warp-slider-hit-width: 24px;
   --warp-notch-count: 7;
   --warp-usable-line-length: calc(
     var(--warp-distance-line-length) - (var(--warp-slider-end-inset) * 2)
@@ -1272,6 +1273,7 @@ body {
   font-size: 8.8px;
   letter-spacing: 0.06em;
   color: var(--hud-text-dim);
+  pointer-events: none;
 }
 
 .ship-status-v2-warp-distance-labels {
@@ -1281,6 +1283,7 @@ body {
   width: 42px;
   height: var(--warp-distance-line-length);
   text-align: right;
+  pointer-events: none;
 }
 
 .ship-status-v2-warp-distance-labels span {
@@ -1335,10 +1338,13 @@ body {
 .ship-status-v2-warp-distance-input {
   -webkit-appearance: none;
   appearance: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: var(--warp-distance-line-length);
-  height: 14px;
+  height: var(--warp-slider-hit-width);
   margin: 0;
-  transform: rotate(-90deg);
+  transform: translate(-50%, -50%) rotate(-90deg);
   transform-origin: 50% 50%;
   background: transparent;
   cursor: pointer;
@@ -1407,6 +1413,8 @@ body {
 .ship-status-v2-mwd-duration-slider {
   --mwd-distance-line-length: 136px;
   --mwd-slider-end-inset: 3px;
+  --mwd-slider-hit-width: 30px;
+  --mwd-dot-size: 8px;
   --mwd-notch-count: 3;
   --mwd-usable-line-length: calc(
     var(--mwd-distance-line-length) - (var(--mwd-slider-end-inset) * 2)
@@ -1437,6 +1445,7 @@ body {
   font-size: 8.8px;
   letter-spacing: 0.06em;
   color: var(--hud-text-dim);
+  pointer-events: none;
 }
 
 .ship-status-v2-mwd-duration-labels {
@@ -1446,6 +1455,7 @@ body {
   width: 28px;
   height: var(--mwd-distance-line-length);
   text-align: right;
+  pointer-events: none;
 }
 
 .ship-status-v2-mwd-duration-labels span {
@@ -1500,26 +1510,29 @@ body {
 .ship-status-v2-mwd-duration-input {
   -webkit-appearance: none;
   appearance: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: var(--mwd-distance-line-length);
-  height: 14px;
+  height: var(--mwd-slider-hit-width);
   margin: 0;
-  transform: rotate(-90deg);
+  transform: translate(-50%, -50%) rotate(-90deg);
   transform-origin: 50% 50%;
   background: transparent;
   cursor: pointer;
 }
 
 .ship-status-v2-mwd-duration-input::-webkit-slider-runnable-track {
-  height: 2px;
+  height: var(--mwd-slider-hit-width);
   border-radius: 999px;
   background: transparent;
 }
 
 .ship-status-v2-mwd-duration-input::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
-  margin-top: -5px;
+  width: 20px;
+  height: 20px;
+  margin-top: 0;
   border: none;
   border-radius: 999px;
   background: transparent;
@@ -1534,8 +1547,8 @@ body {
 }
 
 .ship-status-v2-mwd-duration-input::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
+  width: 20px;
+  height: 20px;
   border: none;
   border-radius: 999px;
   background: transparent;
@@ -1560,8 +1573,8 @@ body {
     var(--mwd-slider-end-inset) +
       (var(--mwd-thumb-progress) * var(--mwd-usable-line-length))
   );
-  width: 6px;
-  height: 6px;
+  width: var(--mwd-dot-size);
+  height: var(--mwd-dot-size);
   transform: translate(-50%, -50%);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.95);
@@ -1683,6 +1696,7 @@ body {
 .ship-status-v2-shd-recharge-slider {
   --shd-distance-line-length: 136px;
   --shd-slider-end-inset: 3px;
+  --shd-slider-hit-width: 24px;
   --shd-notch-count: 4;
   --shd-usable-line-length: calc(
     var(--shd-distance-line-length) - (var(--shd-slider-end-inset) * 2)
@@ -1713,6 +1727,7 @@ body {
   font-size: 8.8px;
   letter-spacing: 0.06em;
   color: var(--hud-text-dim);
+  pointer-events: none;
 }
 
 .ship-status-v2-shd-recharge-labels {
@@ -1722,6 +1737,7 @@ body {
   width: 26px;
   height: var(--shd-distance-line-length);
   text-align: right;
+  pointer-events: none;
 }
 
 .ship-status-v2-shd-recharge-labels span {
@@ -1776,10 +1792,13 @@ body {
 .ship-status-v2-shd-recharge-input {
   -webkit-appearance: none;
   appearance: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: var(--shd-distance-line-length);
-  height: 14px;
+  height: var(--shd-slider-hit-width);
   margin: 0;
-  transform: rotate(-90deg);
+  transform: translate(-50%, -50%) rotate(-90deg);
   transform-origin: 50% 50%;
   background: transparent;
   cursor: pointer;

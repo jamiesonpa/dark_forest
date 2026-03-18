@@ -1,4 +1,4 @@
-import type { EnemyState, ShipState } from '@/state/types'
+import type { NpcShipConfig, ShipState } from '@/state/types'
 
 export const defaultShipState: ShipState = {
   currentCelestialId: 'planet-1',
@@ -37,12 +37,14 @@ export const defaultShipState: ShipState = {
   irstInclination: 0,
 }
 
-export const defaultEnemyState: EnemyState = {
-  thrustersOn: true,
+export const defaultNpcShipConfig: NpcShipConfig = {
+  behaviorMode: 'manual',
+  commandedHeading: 0,
+  commandedInclination: 0,
+  commandedSpeed: 0,
+  mwdActive: false,
   shieldsUp: true,
-  speed: 0,
-  heading: 90,
   radarMode: 'off',
-  position: [0, 0, -20000],
-  missileLaunched: false,
+  orbitCenter: [0, 0, 0],
+  orbitRadius: 5000,
 }

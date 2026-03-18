@@ -45,16 +45,19 @@ export interface ShipState {
   irstInclination: number
 }
 
-export type EnemyRadarMode = 'off' | 'scan' | 'stt' | 'deception'
+export type NpcBehaviorMode = 'manual' | 'stationary' | 'straight' | 'orbit'
+export type NpcRadarMode = 'off' | 'scan' | 'stt'
 
-export interface EnemyState {
-  thrustersOn: boolean
+export interface NpcShipConfig {
+  behaviorMode: NpcBehaviorMode
+  commandedHeading: number
+  commandedInclination: number
+  commandedSpeed: number
+  mwdActive: boolean
   shieldsUp: boolean
-  speed: number
-  heading: number
-  radarMode: EnemyRadarMode
-  position: [number, number, number]
-  missileLaunched: boolean
+  radarMode: NpcRadarMode
+  orbitCenter: [number, number, number]
+  orbitRadius: number
 }
 
 export interface EwJammerState {
@@ -80,12 +83,6 @@ export interface EwGravAnalysisResult {
 
 export type NavAttitudeMode = 'AA' | 'DAC'
 
-export interface ShipTarget {
-  id: string
-  currentCelestialId: string
-  position: [number, number, number]
-}
-
 export interface LaunchedCylinder {
   id: string
   currentCelestialId: string
@@ -106,6 +103,13 @@ export interface LaunchedFlare {
   flightTimeSeconds: number
 }
 
+export interface TorpedoExplosion {
+  id: string
+  currentCelestialId: string
+  position: [number, number, number]
+  flightTimeSeconds: number
+}
+
 export interface GameStore {
   starSystem: StarSystemData
   starSystemSeed: number
@@ -123,7 +127,8 @@ export interface GameStore {
   localPlayerId: string
   shipsById: Record<string, ShipState>
   ship: ShipState
-  enemy: EnemyState
+  npcShips: Record<string, NpcShipConfig>
+  npcSpawnPosition: [number, number, number]
   warpState: WarpState
   warpTargetId: string | null
   selectedTargetId: string | null
@@ -161,7 +166,6 @@ export interface GameStore {
   setEwIffState: (updater: (prev: Record<string, string>) => Record<string, string>) => void
   setEwRadar: (partial: Partial<{ radarOn: boolean; radarMode: string; radarPower: number; radarFreq: number; radarPRF: string }>) => void
   setRwrContacts: (contacts: RWRContact[]) => void
-  setEnemyState: (partial: Partial<EnemyState>) => void
   setStarSystemSnapshot: (snapshot: StarSystemSnapshot) => void
   setCurrentCelestial: (id: string) => void
   setDebugPivotEnabled: (enabled: boolean) => void
@@ -196,14 +200,10 @@ export interface GameStore {
   asteroidBeltMaxSize: number
   asteroidBeltSpawnNonce: number
   asteroidBeltClearNonce: number
-  shipTargetSpawnPosition: [number, number, number]
-  shipTargets: ShipTarget[]
-  shipTargetHeadingDeg: number
-  shipTargetInclinationDeg: number
-  shipTargetSpeed: number
   playerShipBoundingLength: number
   launchedCylinders: LaunchedCylinder[]
   launchedFlares: LaunchedFlare[]
+  torpedoExplosions: TorpedoExplosion[]
   planetTextureRandomizeNonce: number
   setAsteroidBeltSettings: (partial: Partial<{
     thickness: number
@@ -216,20 +216,18 @@ export interface GameStore {
   }>) => void
   spawnAsteroidBelt: () => void
   clearSpawnedAsteroidBelt: () => void
-  setShipTargetSpawnPosition: (position: [number, number, number]) => void
-  setShipTargetMotionSettings: (partial: Partial<{
-    headingDeg: number
-    inclinationDeg: number
-    speed: number
-  }>) => void
-  spawnShipTarget: () => void
-  advanceShipTargets: (deltaSeconds: number) => void
-  clearShipTargets: () => void
+  setNpcSpawnPosition: (position: [number, number, number]) => void
+  spawnNpcShip: (position?: [number, number, number], config?: Partial<NpcShipConfig>) => void
+  removeNpcShip: (id: string) => void
+  clearNpcShips: () => void
+  setNpcShipConfig: (id: string, partial: Partial<NpcShipConfig>) => void
+  advanceNpcShips: (deltaSeconds: number) => void
   setPlayerShipBoundingLength: (length: number) => void
   launchLockedCylinder: (shipBoundingLength: number) => void
   advanceLaunchedCylinders: (deltaSeconds: number) => void
   launchFlares: (shipBoundingLength: number) => void
   advanceLaunchedFlares: (deltaSeconds: number) => void
+  advanceTorpedoExplosions: (deltaSeconds: number) => void
   randomizePlanetTextures: () => void
   setLocalPlayerId: (id: string) => void
   setLocalShipState: (partial: Partial<ShipState>) => void

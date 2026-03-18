@@ -100,6 +100,14 @@ export const createShipSlice: StateCreator<GameStore, [], [], Partial<GameStore>
       const prevState = s as GameStore
       const localId = getLocalPlayerId(prevState)
       const nextShips: Record<string, GameStore['ship']> = {}
+
+      // Preserve NPC ships
+      for (const [id, ship] of Object.entries(prevState.shipsById)) {
+        if (id.startsWith('npc-')) {
+          nextShips[id] = ship
+        }
+      }
+
       Object.entries(snapshot).forEach(([id, remoteShip]) => {
         if (id === localId) {
           return

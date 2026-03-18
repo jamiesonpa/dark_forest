@@ -39,7 +39,7 @@ import {
   normalizeSigned180,
 } from '@/systems/simulation/shipMath'
 import { sendMoveIfDue } from '@/systems/simulation/networkSync'
-import { updateEnemyAndElectronicWarfare } from '@/systems/simulation/enemySystems'
+import { updateNpcElectronicWarfare } from '@/systems/simulation/npcSystems'
 import { isEditableTarget } from '@/utils/dom'
 
 type SimControlKey =
@@ -228,7 +228,7 @@ export function SimulationLoop() {
       elapsedRef.current += dt
       const simTime = elapsedRef.current
       const state = useGameStore.getState()
-      state.advanceShipTargets(dt)
+      state.advanceNpcShips(dt)
       const ship = state.ship
       const nowSec = now / 1000
       const dampenersOnline = ship.dampenersActive
@@ -825,7 +825,7 @@ export function SimulationLoop() {
         rollAngle: rollRef.current,
       })
 
-      updateEnemyAndElectronicWarfare(state, newPos, newHeading, dt)
+      updateNpcElectronicWarfare(state, newPos, newHeading, dt)
 
       prevDampenersActiveRef.current = dampenersOnline
 

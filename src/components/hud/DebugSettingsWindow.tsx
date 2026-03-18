@@ -30,15 +30,13 @@ export function DebugSettingsWindow() {
   const setAsteroidBeltSettings = useGameStore((s) => s.setAsteroidBeltSettings)
   const spawnAsteroidBelt = useGameStore((s) => s.spawnAsteroidBelt)
   const clearSpawnedAsteroidBelt = useGameStore((s) => s.clearSpawnedAsteroidBelt)
-  const shipTargetSpawnPosition = useGameStore((s) => s.shipTargetSpawnPosition)
-  const setShipTargetSpawnPosition = useGameStore((s) => s.setShipTargetSpawnPosition)
-  const setShipTargetMotionSettings = useGameStore((s) => s.setShipTargetMotionSettings)
-  const spawnShipTarget = useGameStore((s) => s.spawnShipTarget)
-  const clearShipTargets = useGameStore((s) => s.clearShipTargets)
-  const shipTargets = useGameStore((s) => s.shipTargets)
-  const shipTargetHeadingDeg = useGameStore((s) => s.shipTargetHeadingDeg)
-  const shipTargetInclinationDeg = useGameStore((s) => s.shipTargetInclinationDeg)
-  const shipTargetSpeed = useGameStore((s) => s.shipTargetSpeed)
+  const npcSpawnPosition = useGameStore((s) => s.npcSpawnPosition)
+  const setNpcSpawnPosition = useGameStore((s) => s.setNpcSpawnPosition)
+  const spawnNpcShip = useGameStore((s) => s.spawnNpcShip)
+  const clearNpcShips = useGameStore((s) => s.clearNpcShips)
+  const removeNpcShip = useGameStore((s) => s.removeNpcShip)
+  const setNpcShipConfig = useGameStore((s) => s.setNpcShipConfig)
+  const npcShips = useGameStore((s) => s.npcShips)
   const randomizePlanetTextures = useGameStore((s) => s.randomizePlanetTextures)
   const revealEwCelestial = useGameStore((s) => s.revealEwCelestial)
   const cancelEwGravAnalysis = useGameStore((s) => s.cancelEwGravAnalysis)
@@ -135,26 +133,13 @@ export function DebugSettingsWindow() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const updateShipTargetSpawnAxis = (axisIndex: 0 | 1 | 2, value: string) => {
+  const npcIds = useMemo(() => Object.keys(npcShips), [npcShips])
+
+  const updateNpcSpawnAxis = (axisIndex: 0 | 1 | 2, value: string) => {
     const parsed = Number(value)
-    const next = [...shipTargetSpawnPosition] as [number, number, number]
+    const next = [...npcSpawnPosition] as [number, number, number]
     next[axisIndex] = Number.isFinite(parsed) ? parsed : 0
-    setShipTargetSpawnPosition(next)
-  }
-
-  const updateShipTargetHeading = (value: string) => {
-    const parsed = Number(value)
-    setShipTargetMotionSettings({ headingDeg: Number.isFinite(parsed) ? parsed : 0 })
-  }
-
-  const updateShipTargetInclination = (value: string) => {
-    const parsed = Number(value)
-    setShipTargetMotionSettings({ inclinationDeg: Number.isFinite(parsed) ? parsed : 0 })
-  }
-
-  const updateShipTargetSpeed = (value: string) => {
-    const parsed = Number(value)
-    setShipTargetMotionSettings({ speed: Number.isFinite(parsed) ? parsed : 0 })
+    setNpcSpawnPosition(next)
   }
 
   return (
@@ -273,8 +258,8 @@ export function DebugSettingsWindow() {
         CLEAR SPAWNED ROIDS
       </button>
       <div className="hud-debug-row">
-        <span className="hud-debug-axis">TARGETS</span>
-        <span className="hud-debug-value">{shipTargets.length}</span>
+        <span className="hud-debug-axis">NPC SHIPS</span>
+        <span className="hud-debug-value">{npcIds.length}</span>
       </div>
       <div className="hud-debug-target-pos">
         <label className="hud-debug-target-axis">
@@ -282,8 +267,8 @@ export function DebugSettingsWindow() {
           <input
             className="hud-debug-target-input"
             type="number"
-            value={shipTargetSpawnPosition[0]}
-            onChange={(event) => updateShipTargetSpawnAxis(0, event.target.value)}
+            value={npcSpawnPosition[0]}
+            onChange={(event) => updateNpcSpawnAxis(0, event.target.value)}
           />
         </label>
         <label className="hud-debug-target-axis">
@@ -291,8 +276,8 @@ export function DebugSettingsWindow() {
           <input
             className="hud-debug-target-input"
             type="number"
-            value={shipTargetSpawnPosition[1]}
-            onChange={(event) => updateShipTargetSpawnAxis(1, event.target.value)}
+            value={npcSpawnPosition[1]}
+            onChange={(event) => updateNpcSpawnAxis(1, event.target.value)}
           />
         </label>
         <label className="hud-debug-target-axis">
@@ -300,57 +285,144 @@ export function DebugSettingsWindow() {
           <input
             className="hud-debug-target-input"
             type="number"
-            value={shipTargetSpawnPosition[2]}
-            onChange={(event) => updateShipTargetSpawnAxis(2, event.target.value)}
-          />
-        </label>
-      </div>
-      <div className="hud-debug-target-pos">
-        <label className="hud-debug-target-axis">
-          HDG
-          <input
-            className="hud-debug-target-input"
-            type="number"
-            value={shipTargetHeadingDeg}
-            onChange={(event) => updateShipTargetHeading(event.target.value)}
-          />
-        </label>
-        <label className="hud-debug-target-axis">
-          INC
-          <input
-            className="hud-debug-target-input"
-            type="number"
-            min={-90}
-            max={90}
-            value={shipTargetInclinationDeg}
-            onChange={(event) => updateShipTargetInclination(event.target.value)}
-          />
-        </label>
-        <label className="hud-debug-target-axis">
-          SPD
-          <input
-            className="hud-debug-target-input"
-            type="number"
-            min={0}
-            value={shipTargetSpeed}
-            onChange={(event) => updateShipTargetSpeed(event.target.value)}
+            value={npcSpawnPosition[2]}
+            onChange={(event) => updateNpcSpawnAxis(2, event.target.value)}
           />
         </label>
       </div>
       <button
         type="button"
         className="hud-debug-spawn-roids"
-        onClick={spawnShipTarget}
+        onClick={() => spawnNpcShip()}
       >
-        SPAWN TARGET SHIP
+        SPAWN NPC SHIP
       </button>
       <button
         type="button"
         className="hud-debug-spawn-roids"
-        onClick={clearShipTargets}
+        onClick={clearNpcShips}
       >
-        CLEAR SHIP TARGETS
+        CLEAR NPC SHIPS
       </button>
+      {npcIds.map((npcId) => {
+        const cfg = npcShips[npcId]
+        if (!cfg) return null
+        const ship = shipsById[npcId]
+        return (
+          <div key={npcId} className="hud-debug-npc-block">
+            <div className="hud-debug-row">
+              <span className="hud-debug-axis">{npcId.slice(0, 12)}</span>
+              <button
+                type="button"
+                className="hud-debug-reset"
+                style={{ marginLeft: 4, fontSize: '0.7em', padding: '1px 4px' }}
+                onClick={() => removeNpcShip(npcId)}
+              >
+                X
+              </button>
+            </div>
+            {ship && (
+              <div className="hud-debug-row">
+                <span className="hud-debug-axis">POS</span>
+                <span className="hud-debug-value">
+                  {ship.position[0].toFixed(0)}, {ship.position[1].toFixed(0)}, {ship.position[2].toFixed(0)}
+                </span>
+              </div>
+            )}
+            {ship && (
+              <div className="hud-debug-row">
+                <span className="hud-debug-axis">HP</span>
+                <span className="hud-debug-value">
+                  S:{ship.shield.toFixed(0)} A:{ship.armor.toFixed(0)} H:{ship.hull.toFixed(0)}
+                </span>
+              </div>
+            )}
+            <div className="hud-debug-target-pos">
+              <label className="hud-debug-target-axis">
+                MODE
+                <select
+                  className="hud-debug-target-input"
+                  value={cfg.behaviorMode}
+                  onChange={(e) => setNpcShipConfig(npcId, { behaviorMode: e.target.value as 'manual' | 'stationary' | 'straight' | 'orbit' })}
+                >
+                  <option value="manual">manual</option>
+                  <option value="stationary">stationary</option>
+                  <option value="straight">straight</option>
+                  <option value="orbit">orbit</option>
+                </select>
+              </label>
+            </div>
+            <div className="hud-debug-target-pos">
+              <label className="hud-debug-target-axis">
+                HDG
+                <input
+                  className="hud-debug-target-input"
+                  type="number"
+                  value={cfg.commandedHeading}
+                  onChange={(e) => setNpcShipConfig(npcId, { commandedHeading: Number(e.target.value) || 0 })}
+                />
+              </label>
+              <label className="hud-debug-target-axis">
+                INC
+                <input
+                  className="hud-debug-target-input"
+                  type="number"
+                  min={-90}
+                  max={90}
+                  value={cfg.commandedInclination}
+                  onChange={(e) => setNpcShipConfig(npcId, { commandedInclination: Number(e.target.value) || 0 })}
+                />
+              </label>
+              <label className="hud-debug-target-axis">
+                SPD
+                <input
+                  className="hud-debug-target-input"
+                  type="number"
+                  min={0}
+                  value={cfg.commandedSpeed}
+                  onChange={(e) => setNpcShipConfig(npcId, { commandedSpeed: Number(e.target.value) || 0 })}
+                />
+              </label>
+            </div>
+            <div className="hud-debug-target-pos">
+              <label className="hud-debug-target-axis">
+                SHIELDS
+                <select
+                  className="hud-debug-target-input"
+                  value={cfg.shieldsUp ? 'on' : 'off'}
+                  onChange={(e) => setNpcShipConfig(npcId, { shieldsUp: e.target.value === 'on' })}
+                >
+                  <option value="on">ON</option>
+                  <option value="off">OFF</option>
+                </select>
+              </label>
+              <label className="hud-debug-target-axis">
+                MWD
+                <select
+                  className="hud-debug-target-input"
+                  value={cfg.mwdActive ? 'on' : 'off'}
+                  onChange={(e) => setNpcShipConfig(npcId, { mwdActive: e.target.value === 'on' })}
+                >
+                  <option value="off">OFF</option>
+                  <option value="on">ON</option>
+                </select>
+              </label>
+              <label className="hud-debug-target-axis">
+                RADAR
+                <select
+                  className="hud-debug-target-input"
+                  value={cfg.radarMode}
+                  onChange={(e) => setNpcShipConfig(npcId, { radarMode: e.target.value as 'off' | 'scan' | 'stt' })}
+                >
+                  <option value="off">OFF</option>
+                  <option value="scan">SCAN</option>
+                  <option value="stt">STT</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        )
+      })}
       <button
         type="button"
         className="hud-debug-spawn-roids"
