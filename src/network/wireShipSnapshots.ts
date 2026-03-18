@@ -14,8 +14,14 @@ type ColyseusShip = {
   mwdRemaining: number
   mwdCooldownRemaining: number
   dampenersActive: boolean
+  shieldsUp: boolean
+  shieldOnlineLevel: number
+  shieldRechargeRatePct: number
   bearing: number
   inclination: number
+  vx: number
+  vy: number
+  vz: number
   actualHeading: number
   actualSpeed: number
   actualInclination: number
@@ -52,8 +58,12 @@ export function toWireShipSnapshot(ship: ColyseusShip): WireShipSnapshot {
     mwdRemaining: ship.mwdRemaining,
     mwdCooldownRemaining: ship.mwdCooldownRemaining,
     dampenersActive: ship.dampenersActive,
+    shieldsUp: ship.shieldsUp,
+    shieldOnlineLevel: ship.shieldOnlineLevel,
+    shieldRechargeRatePct: ship.shieldRechargeRatePct,
     bearing: ship.bearing,
     inclination: ship.inclination,
+    actualVelocity: [ship.vx, ship.vy, ship.vz],
     actualHeading: ship.actualHeading,
     actualSpeed: ship.actualSpeed,
     actualInclination: ship.actualInclination,

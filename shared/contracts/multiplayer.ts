@@ -10,8 +10,12 @@ export interface WireShipSnapshot {
   mwdRemaining: number
   mwdCooldownRemaining: number
   dampenersActive: boolean
+  shieldsUp: boolean
+  shieldOnlineLevel: number
+  shieldRechargeRatePct: number
   bearing: number
   inclination: number
+  actualVelocity: [number, number, number]
   actualHeading: number
   actualSpeed: number
   actualInclination: number
@@ -77,8 +81,15 @@ export interface MoveMessage {
   mwdRemaining?: number
   mwdCooldownRemaining?: number
   dampenersActive?: boolean
+  shieldsUp?: boolean
+  shieldOnlineLevel?: number
+  shieldRechargeRatePct?: number
+  shield?: number
+  armor?: number
+  hull?: number
   bearing?: number
   inclination?: number
+  actualVelocity?: [number, number, number]
   actualHeading?: number
   actualSpeed?: number
   actualInclination?: number
@@ -97,8 +108,15 @@ export interface ShipMoveUpdate {
   mwdRemaining: number
   mwdCooldownRemaining: number
   dampenersActive: boolean
+  shieldsUp: boolean
+  shieldOnlineLevel: number
+  shieldRechargeRatePct: number
+  shield: number
+  armor: number
+  hull: number
   bearing: number
   inclination: number
+  actualVelocity: [number, number, number]
   actualHeading: number
   actualSpeed: number
   actualInclination: number

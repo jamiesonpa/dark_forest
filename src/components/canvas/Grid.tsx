@@ -27,9 +27,10 @@ export function Grid() {
     () =>
       Object.entries(shipsById).filter(([id, ship]) => {
         if (id === localPlayerId) return true
+        if (offGridWarpActive) return false
         return ship.currentCelestialId === currentCelestialId && !ship.inWarpTransit
       }),
-    [currentCelestialId, localPlayerId, shipsById]
+    [currentCelestialId, localPlayerId, offGridWarpActive, shipsById]
   )
 
   if (!celestial) return null

@@ -14,8 +14,14 @@ export class ShipState extends Schema {
   @type('number') mwdRemaining = 0
   @type('number') mwdCooldownRemaining = 0
   @type('boolean') dampenersActive = true
+  @type('boolean') shieldsUp = false
+  @type('number') shieldOnlineLevel = 5000
+  @type('number') shieldRechargeRatePct = 0
   @type('number') bearing = 0
   @type('number') inclination = 0
+  @type('number') vx = 0
+  @type('number') vy = 0
+  @type('number') vz = 0
   @type('number') actualHeading = 0
   @type('number') actualSpeed = 0
   @type('number') actualInclination = 0

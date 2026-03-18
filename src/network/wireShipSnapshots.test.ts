@@ -22,6 +22,9 @@ describe('wireShipSnapshots', () => {
             dampenersActive: true,
             bearing: 90,
             inclination: 5,
+            vx: 4,
+            vy: 5,
+            vz: 6,
             actualHeading: 89,
             actualSpeed: 38,
             actualInclination: 4,
@@ -46,6 +49,7 @@ describe('wireShipSnapshots', () => {
         actualSpeed: 38,
         capacitorMax: 80,
         revealedCelestialIds: ['planet-1'],
+        actualVelocity: [4, 5, 6],
       })
     )
   })
