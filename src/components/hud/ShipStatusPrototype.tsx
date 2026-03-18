@@ -670,9 +670,9 @@ export function ShipStatusPrototype() {
               disabled={ship.mwdActive || !canActivateMwd}
             >
               {ship.mwdActive
-                ? `MWD ${ship.mwdRemaining.toFixed(1)}s`
+                ? `${ship.mwdRemaining.toFixed(1)}s`
                 : mwdCooldownRemaining > 0
-                  ? `CD ${mwdCooldownRemaining.toFixed(1)}s`
+                  ? `${mwdCooldownRemaining.toFixed(1)}s`
                   : 'MWD'}
             </button>
           </div>

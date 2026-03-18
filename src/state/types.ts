@@ -32,6 +32,7 @@ export interface ShipState {
   inclination: number
   actualHeading: number
   actualSpeed: number
+  actualVelocity: [number, number, number]
   actualInclination: number
   dacPitch: number
   rollAngle: number
@@ -79,6 +80,32 @@ export interface EwGravAnalysisResult {
 
 export type NavAttitudeMode = 'AA' | 'DAC'
 
+export interface ShipTarget {
+  id: string
+  currentCelestialId: string
+  position: [number, number, number]
+}
+
+export interface LaunchedCylinder {
+  id: string
+  currentCelestialId: string
+  position: [number, number, number]
+  velocity: [number, number, number]
+  radius: number
+  length: number
+  direction: [number, number, number]
+  targetLockId: string | null
+  flightTimeSeconds: number
+}
+
+export interface LaunchedFlare {
+  id: string
+  currentCelestialId: string
+  position: [number, number, number]
+  velocity: [number, number, number]
+  flightTimeSeconds: number
+}
+
 export interface GameStore {
   starSystem: StarSystemData
   starSystemSeed: number
@@ -86,8 +113,9 @@ export interface GameStore {
   currentCelestialId: string
   debugPivotEnabled: boolean
   orientDebugEnabled: boolean
-  debugEwPlanet1TargetEnabled: boolean
   showIRSTCone: boolean
+  showBScopeRadarCone: boolean
+  unlimitAaOrbitZoomOut: boolean
   showCelestialGridCenterMarker: boolean
   debugPivotPosition: [number, number, number]
   debugPivotDragging: boolean
@@ -138,8 +166,9 @@ export interface GameStore {
   setCurrentCelestial: (id: string) => void
   setDebugPivotEnabled: (enabled: boolean) => void
   setOrientDebugEnabled: (enabled: boolean) => void
-  setDebugEwPlanet1TargetEnabled: (enabled: boolean) => void
   setShowIRSTCone: (enabled: boolean) => void
+  setShowBScopeRadarCone: (enabled: boolean) => void
+  setUnlimitAaOrbitZoomOut: (enabled: boolean) => void
   setShowCelestialGridCenterMarker: (enabled: boolean) => void
   setDebugPivotPosition: (position: [number, number, number]) => void
   setDebugPivotDragging: (dragging: boolean) => void
@@ -167,6 +196,14 @@ export interface GameStore {
   asteroidBeltMaxSize: number
   asteroidBeltSpawnNonce: number
   asteroidBeltClearNonce: number
+  shipTargetSpawnPosition: [number, number, number]
+  shipTargets: ShipTarget[]
+  shipTargetHeadingDeg: number
+  shipTargetInclinationDeg: number
+  shipTargetSpeed: number
+  playerShipBoundingLength: number
+  launchedCylinders: LaunchedCylinder[]
+  launchedFlares: LaunchedFlare[]
   planetTextureRandomizeNonce: number
   setAsteroidBeltSettings: (partial: Partial<{
     thickness: number
@@ -179,6 +216,20 @@ export interface GameStore {
   }>) => void
   spawnAsteroidBelt: () => void
   clearSpawnedAsteroidBelt: () => void
+  setShipTargetSpawnPosition: (position: [number, number, number]) => void
+  setShipTargetMotionSettings: (partial: Partial<{
+    headingDeg: number
+    inclinationDeg: number
+    speed: number
+  }>) => void
+  spawnShipTarget: () => void
+  advanceShipTargets: (deltaSeconds: number) => void
+  clearShipTargets: () => void
+  setPlayerShipBoundingLength: (length: number) => void
+  launchLockedCylinder: (shipBoundingLength: number) => void
+  advanceLaunchedCylinders: (deltaSeconds: number) => void
+  launchFlares: (shipBoundingLength: number) => void
+  advanceLaunchedFlares: (deltaSeconds: number) => void
   randomizePlanetTextures: () => void
   setLocalPlayerId: (id: string) => void
   setLocalShipState: (partial: Partial<ShipState>) => void

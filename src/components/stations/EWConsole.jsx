@@ -5,7 +5,6 @@ import { EWSystemMap } from "@/components/stations/EWSystemMap";
 import {
   WORLD_UNITS_PER_AU,
   bearingInclinationFromVector,
-  getWorldShipPosition,
   vectorBetweenWorldPoints,
   vectorMagnitude,
   worldPositionForCelestial,
@@ -40,7 +39,7 @@ import {
 function buildContactsFromGame(enemy) {
   const gameState = useGameStore.getState();
   const playerPos = gameState.ship.position;
-  const dx = -(enemy.position[0] - playerPos[0]);
+  const dx = enemy.position[0] - playerPos[0];
   const dz = enemy.position[2] - playerPos[2];
   const range = Math.sqrt(dx * dx + dz * dz);
   const bearing = ((Math.atan2(dx, dz) * 180 / Math.PI) + 360) % 360;
@@ -118,41 +117,6 @@ function buildContactsFromGame(enemy) {
       relDx: dx,
       relDz: dz,
     });
-  }
-
-  if (gameState.debugEwPlanet1TargetEnabled) {
-    const starSystem = gameState.starSystem;
-    const currentCelestial = getCelestialById(gameState.currentCelestialId, starSystem);
-    const planetOne = getCelestialById("planet-1", starSystem);
-    if (currentCelestial && planetOne) {
-      const shipWorld = getWorldShipPosition(playerPos, worldPositionForCelestial(currentCelestial));
-      const planetOneWorld = worldPositionForCelestial(planetOne);
-      const debugTargetWorld = [planetOneWorld[0] + 100000, planetOneWorld[1], planetOneWorld[2]];
-      const toTarget = vectorBetweenWorldPoints(shipWorld, debugTargetWorld);
-      const targetRange = vectorMagnitude(toTarget);
-      const { bearing: targetBearing } = bearingInclinationFromVector(toTarget);
-
-      contacts.push({
-        id: "P1",
-        bearing: targetBearing,
-        range: targetRange,
-        freq: 0.36,
-        sigWidth: 0.022,
-        sigType: "scan",
-        emStrength: 0.66,
-        thermal: 0.12,
-        type: "battleship",
-        driftBearing: 0,
-        driftRange: 0,
-        active: true,
-        jamming: false,
-        rcs: 24,
-        heading: 0,
-        speed: 0,
-        relDx: toTarget[0],
-        relDz: toTarget[2],
-      });
-    }
   }
 
   return contacts;
@@ -1701,6 +1665,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
     const MARGIN_B = 56;
     const scopeW = W - MARGIN_L - MARGIN_R;
     const scopeH = H - MARGIN_T - MARGIN_B;
+    const azToScopeX = (azDeg) => MARGIN_L + ((azDeg + azHalf) / (azHalf * 2)) * scopeW;
 
     ctx.fillStyle = BG_SCREEN;
     ctx.fillRect(0, 0, W, H);
@@ -1728,7 +1693,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
     const azLines = [];
     for (let a = -azHalf; a <= azHalf; a += azStep) azLines.push(a);
     azLines.forEach(az => {
-      const x = MARGIN_L + ((az + azHalf) / (azHalf * 2)) * scopeW;
+      const x = azToScopeX(az);
       ctx.strokeStyle = az === 0 ? GRID_COLOR_BRIGHT : GRID_COLOR;
       ctx.lineWidth = az === 0 ? 1 : 0.5;
       ctx.beginPath();
@@ -1760,7 +1725,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
 
       // Commanded bearing indicator — small chevron showing where the ship is turning
       if (Math.abs(headingDelta) > 1) {
-        const cmdNorm = (headingDelta + azHalf) / (azHalf * 2);
+        const cmdNorm = (-headingDelta + azHalf) / (azHalf * 2);
         const cmdX = MARGIN_L + Math.max(0, Math.min(1, cmdNorm)) * scopeW;
         ctx.strokeStyle = "rgba(80, 140, 255, 0.4)";
         ctx.lineWidth = 1;
@@ -1781,7 +1746,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
 
     if (hardLockedContact) {
       const lockedRel = ((hardLockedContact.bearing - shipHeading + 540) % 360) - 180;
-      sweepCenterNorm = (lockedRel + azHalf) / (azHalf * 2);
+      sweepCenterNorm = (-lockedRel + azHalf) / (azHalf * 2);
       sweepWidthNorm = 10 / azHalf;
       sweepSpeed = 0.012;
     }
@@ -1835,11 +1800,11 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
       const passiveOnly = passiveDetect && !activeDetect;
       const displaySig = activeDetect ? Math.max(sig, 0.3) : sig;
 
-      let relBearing = ((c.bearing - shipHeading + 540) % 360) - 180;
+      const relBearing = ((c.bearing - shipHeading + 540) % 360) - 180;
+      let displayRelBrg = relBearing;
 
       // Passive-only contacts: intermittent, frozen snapshots with massive uncertainty
       let displayRange = c.range;
-      let displayRelBrg = relBearing;
       if (passiveOnly) {
         const specReduce = spectrumQuality === "locked" ? 0.1 : spectrumQuality === "close" ? 0.3 : 1.0;
         const seed = c.id.charCodeAt(0);
@@ -1868,7 +1833,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
       if (Math.abs(displayRelBrg) > azHalf) return;
 
       const rangeNorm = Math.min(displayRange / maxRange, 1);
-      const px = MARGIN_L + ((displayRelBrg + azHalf) / (azHalf * 2)) * scopeW;
+      const px = azToScopeX(displayRelBrg);
       const py = MARGIN_T + (1 - rangeNorm) * scopeH;
 
       hits.push({ id: c.id, x: px, y: py, w: 40, h: 32 });
@@ -1898,7 +1863,8 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
       // Velocity vector caret — only with active radar return AND target actually moving
       if (activeDetect && c.speed > 1 && c.relDx !== undefined) {
         const enemyHRad = c.heading * Math.PI / 180;
-        const vxVis = Math.sin(enemyHRad) * c.speed;
+        // Match simulation kinematics: enemy X velocity uses -sin(heading).
+        const vxVis = -Math.sin(enemyHRad) * c.speed;
         const vzVis = -Math.cos(enemyHRad) * c.speed;
 
         const futDx = c.relDx + vxVis;
@@ -1907,7 +1873,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
         const futRange = Math.sqrt(futDx * futDx + futDz * futDz);
         const futRelBrg = ((futBearing - shipHeading + 540) % 360) - 180;
         const futRangeNorm = Math.min(futRange / maxRange, 1);
-        const futPx = MARGIN_L + ((futRelBrg + azHalf) / (azHalf * 2)) * scopeW;
+        const futPx = azToScopeX(futRelBrg);
         const futPy = MARGIN_T + (1 - futRangeNorm) * scopeH;
 
         const cdx = futPx - px;
@@ -1968,7 +1934,7 @@ const BScope = ({ contacts, time, selectedContact, onSelectContact, lockState, s
     ctx.fillStyle = AMBER_DIM;
     const labelAzStep = azHalf <= 30 ? 10 : 30;
     for (let az = -azHalf; az <= azHalf; az += labelAzStep) {
-      const x = MARGIN_L + ((az + azHalf) / (azHalf * 2)) * scopeW;
+      const x = azToScopeX(az);
       const label = az === 0 ? "0" : az > 0 ? `R${az}` : `L${Math.abs(az)}`;
       ctx.fillText(label, x - 12, H - MARGIN_B + 24);
     }

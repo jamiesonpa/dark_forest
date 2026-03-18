@@ -1,21 +1,15 @@
 import { Html } from '@react-three/drei'
 import { useMemo } from 'react'
 import { useGameStore } from '@/state/gameStore'
-import { getCelestialById } from '@/utils/systemData'
 import {
-  getWorldShipPosition,
-  vectorBetweenWorldPoints,
   vectorMagnitude,
-  worldPositionForCelestial,
 } from '@/systems/warp/navigationMath'
 
 export function LockedTargetCue() {
   const lockState = useGameStore((s) => s.ewLockState)
   const enemy = useGameStore((s) => s.enemy)
   const ship = useGameStore((s) => s.ship)
-  const starSystem = useGameStore((s) => s.starSystem)
-  const currentCelestialId = useGameStore((s) => s.currentCelestialId)
-  const debugEwPlanet1TargetEnabled = useGameStore((s) => s.debugEwPlanet1TargetEnabled)
+  const shipTargets = useGameStore((s) => s.shipTargets)
 
   const hardLockId = useMemo(
     () => Object.keys(lockState).find((id) => lockState[id] === 'hard') ?? null,
@@ -48,23 +42,19 @@ export function LockedTargetCue() {
       ]
     }
 
-    if (hardLockId === 'P1' && debugEwPlanet1TargetEnabled) {
-      const currentCelestial = getCelestialById(currentCelestialId, starSystem)
-      const planetOne = getCelestialById('planet-1', starSystem)
-      if (!currentCelestial || !planetOne) return null
-      const shipWorld = getWorldShipPosition(ship.position, worldPositionForCelestial(currentCelestial))
-      const planetOneWorld = worldPositionForCelestial(planetOne)
-      const targetWorld: [number, number, number] = [planetOneWorld[0] + 100000, planetOneWorld[1], planetOneWorld[2]]
-      const toTarget = vectorBetweenWorldPoints(shipWorld, targetWorld)
+    if (hardLockId.startsWith('TGT-')) {
+      const targetId = hardLockId.slice(4)
+      const lockedTarget = shipTargets.find((target) => target.id === targetId)
+      if (!lockedTarget) return null
       return [
-        ship.position[0] + toTarget[0],
-        ship.position[1] + toTarget[1],
-        ship.position[2] + toTarget[2],
+        lockedTarget.position[0],
+        lockedTarget.position[1],
+        lockedTarget.position[2],
       ]
     }
 
     return null
-  }, [currentCelestialId, debugEwPlanet1TargetEnabled, enemy.position, hardLockId, ship.position, starSystem])
+  }, [enemy.position, hardLockId, ship.position, shipTargets])
 
   if (!cuePosition) return null
 

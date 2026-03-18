@@ -10,6 +10,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
 import { getCelestialById } from '@/utils/systemData'
+import { B_SCOPE_AZ_LIMIT_DEG, B_SCOPE_RANGE_OPTIONS_KM } from '@/systems/ew/bScopeConstants'
 import {
   bearingInclinationFromVector,
   formatDistanceAu,
@@ -28,8 +29,6 @@ const LINE_GREY = '#7d848e'
 const SELECT_BLUE = '#6cb8ff'
 
 const MAP_TABS = ['MAP', 'RADAR'] as const
-const B_SCOPE_RANGE_OPTIONS_KM = [10, 25, 50, 100, 160, 250, 500] as const
-const B_SCOPE_AZ_LIMIT_DEG = 60
 const B_SCOPE_MIN_VIEW_SPAN_DEG = 12
 const B_SCOPE_AZ_GRID_STEP_DEG = 5
 const B_SCOPE_GREEN = '#44ff66'
@@ -39,6 +38,7 @@ const B_SCOPE_GREEN_GLOW = '#88ffaa'
 type MapTab = (typeof MAP_TABS)[number]
 type BScopeTrack = {
   id: string
+  label: string
   absBearingDeg: number
   relInclinationDeg: number
   rangeM: number
@@ -704,7 +704,7 @@ export function EWSystemMap({ time }: { time: number }) {
   } | null>(null)
   const dragMovedRef = useRef(false)
   const [activeTab, setActiveTab] = useState<MapTab>('MAP')
-  const [bScopeRangeIdx, setBScopeRangeIdx] = useState(4)
+  const [bScopeRangeIdx, setBScopeRangeIdx] = useState(B_SCOPE_RANGE_OPTIONS_KM.length - 1)
   const [bScopeBearingMode, setBScopeBearingMode] = useState<'REL' | 'ABS'>('REL')
   const [bScopeViewMinDeg, setBScopeViewMinDeg] = useState(-B_SCOPE_AZ_LIMIT_DEG)
   const [bScopeViewMaxDeg, setBScopeViewMaxDeg] = useState(B_SCOPE_AZ_LIMIT_DEG)
@@ -716,12 +716,11 @@ export function EWSystemMap({ time }: { time: number }) {
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
 
   const starSystem = useGameStore((s) => s.starSystem)
-  const enemy = useGameStore((s) => s.enemy)
+  const shipTargets = useGameStore((s) => s.shipTargets)
   const shipPosition = useGameStore((s) => s.ship.position)
   const shipHeadingDeg = useGameStore((s) => s.ship.actualHeading)
   const ewLockState = useGameStore((s) => s.ewLockState)
   const setEwLockState = useGameStore((s) => s.setEwLockState)
-  const debugEwPlanet1TargetEnabled = useGameStore((s) => s.debugEwPlanet1TargetEnabled)
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const warpState = useGameStore((s) => s.warpState)
   const warpSourceCelestialId = useGameStore((s) => s.warpSourceCelestialId)
@@ -934,68 +933,68 @@ export function EWSystemMap({ time }: { time: number }) {
   const bScopeAllTracks = useMemo<BScopeTrack[]>(() => {
     const tracks: BScopeTrack[] = []
 
-    if (enemy?.position && shipPosition) {
-      const dx = -(enemy.position[0] - shipPosition[0])
-      const dy = enemy.position[1] - shipPosition[1]
-      const dz = enemy.position[2] - shipPosition[2]
+    shipTargets
+      .filter((target) => target.currentCelestialId === currentCelestialId)
+      .forEach((target, index) => {
+      const dx = target.position[0] - shipPosition[0]
+      const dy = target.position[1] - shipPosition[1]
+      const dz = target.position[2] - shipPosition[2]
       const rangeM = Math.hypot(dx, dz)
       const { bearing: bearingDeg, inclination: relInclinationDeg } =
         bearingInclinationFromVector([dx, dy, dz])
       const relBearingDeg = ((bearingDeg - shipHeadingDeg + 540) % 360) - 180
-
       tracks.push({
-        id: 'Σ',
+        id: `TGT-${target.id}`,
+        label: `T${index + 1}`,
         absBearingDeg: bearingDeg,
         relInclinationDeg,
         rangeM,
         relBearingDeg,
       })
-
-      if (enemy.missileLaunched) {
-        tracks.push({
-          id: 'M',
-          absBearingDeg: bearingDeg,
-          relInclinationDeg,
-          rangeM: Math.max(0, rangeM - 2000),
-          relBearingDeg,
-        })
-      }
-    }
-
-    if (debugEwPlanet1TargetEnabled) {
-      const planetOne = getCelestialById('planet-1', starSystem)
-      if (planetOne) {
-        const planetOneWorld = worldPositionForCelestial(planetOne)
-        const debugTargetWorld: [number, number, number] = [
-          planetOneWorld[0] + 100000,
-          planetOneWorld[1],
-          planetOneWorld[2],
-        ]
-        const toTarget = vectorBetweenWorldPoints(shipWorldPosition, debugTargetWorld)
-        const rangeM = vectorMagnitude(toTarget)
-        const { bearing, inclination } = bearingInclinationFromVector(toTarget)
-        const relBearingDeg = ((bearing - shipHeadingDeg + 540) % 360) - 180
-        tracks.push({
-          id: 'P1',
-          absBearingDeg: bearing,
-          relInclinationDeg: inclination,
-          rangeM,
-          relBearingDeg,
-        })
-      }
-    }
+    })
 
     return tracks
-  }, [debugEwPlanet1TargetEnabled, enemy, shipHeadingDeg, shipPosition, shipWorldPosition, starSystem])
+  }, [currentCelestialId, shipHeadingDeg, shipPosition, shipTargets])
 
   const bScopeTracks = useMemo<BScopeTrack[]>(() => {
     return bScopeAllTracks.filter(
       (track) =>
+        !track.id.startsWith('planet-')
+        && !track.id.startsWith('moon-')
+        && !track.id.startsWith('asteroid-')
+        && track.id !== 'star'
+        && track.id !== 'sun'
+        &&
         track.relBearingDeg >= bScopeViewMinDeg
         && track.relBearingDeg <= bScopeViewMaxDeg
         && track.rangeM <= bScopeMaxRangeM
     )
   }, [bScopeAllTracks, bScopeMaxRangeM, bScopeViewMaxDeg, bScopeViewMinDeg])
+  const bScopeTargetTracks = useMemo(
+    () => bScopeAllTracks.filter((track) => track.id.startsWith('TGT-')),
+    [bScopeAllTracks]
+  )
+  const bScopeTargetsInConeCount = useMemo(
+    () =>
+      bScopeTargetTracks.filter(
+        (track) =>
+          track.relBearingDeg >= bScopeViewMinDeg
+          && track.relBearingDeg <= bScopeViewMaxDeg
+      ).length,
+    [bScopeTargetTracks, bScopeViewMaxDeg, bScopeViewMinDeg]
+  )
+  const bScopeTargetsInRangeCount = useMemo(
+    () => bScopeTargetTracks.filter((track) => track.rangeM <= bScopeMaxRangeM).length,
+    [bScopeMaxRangeM, bScopeTargetTracks]
+  )
+  const bScopeVisibleTargetCount = useMemo(
+    () => bScopeTracks.filter((track) => track.id.startsWith('TGT-')).length,
+    [bScopeTracks]
+  )
+  const bScopeNearestTarget = useMemo(() => {
+    if (bScopeTargetTracks.length === 0) return null
+    return [...bScopeTargetTracks].sort((a, b) => a.rangeM - b.rangeM)[0] ?? null
+  }, [bScopeTargetTracks])
   const bScopeTrackRelBearingById = useMemo<Record<string, number>>(() => {
     const byId: Record<string, number> = {}
     bScopeAllTracks.forEach((track) => {
@@ -1402,6 +1401,26 @@ export function EWSystemMap({ time }: { time: number }) {
                       <span>B-SCOPE</span>
                       <span style={{ color: B_SCOPE_GREEN_DIM }}>{`AZ ${bScopeViewSpanDeg.toFixed(0)}° | RNG ${bScopeRangeKm}km`}</span>
                     </div>
+                    <div
+                      style={{
+                        color: B_SCOPE_GREEN_DIM,
+                        fontSize: 10,
+                        letterSpacing: 0.3,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <span>
+                        {`DBG targets total:${bScopeTargetTracks.length} cone:${bScopeTargetsInConeCount} range:${bScopeTargetsInRangeCount} visible:${bScopeVisibleTargetCount}`}
+                      </span>
+                      <span>
+                        {bScopeNearestTarget
+                          ? `nearest ${bScopeNearestTarget.label} brg:${Math.round(bScopeNearestTarget.relBearingDeg)} rng:${(bScopeNearestTarget.rangeM / 1000).toFixed(1)}km`
+                          : 'nearest -'}
+                      </span>
+                    </div>
 
                     <div
                       style={{
@@ -1508,7 +1527,7 @@ export function EWSystemMap({ time }: { time: number }) {
                                 justifyContent: 'center',
                                 cursor: 'crosshair',
                               }}
-                              title={`${track.id} | BRG ${track.relBearingDeg.toFixed(0)}° | RNG ${(track.rangeM / 1000).toFixed(1)}km | INC ${incLabel}`}
+                              title={`${track.label} | BRG ${track.relBearingDeg.toFixed(0)}° | RNG ${(track.rangeM / 1000).toFixed(1)}km | INC ${incLabel}`}
                               onContextMenu={(event) => {
                                 event.preventDefault()
                                 event.stopPropagation()
@@ -1524,7 +1543,7 @@ export function EWSystemMap({ time }: { time: number }) {
                                 })
                               }}
                             >
-                              {track.id}
+                              {track.label}
                             </div>
                             {isHardLocked ? (
                               <>

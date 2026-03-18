@@ -228,6 +228,7 @@ export function SimulationLoop() {
       elapsedRef.current += dt
       const simTime = elapsedRef.current
       const state = useGameStore.getState()
+      state.advanceShipTargets(dt)
       const ship = state.ship
       const nowSec = now / 1000
       const dampenersOnline = ship.dampenersActive
@@ -734,6 +735,9 @@ export function SimulationLoop() {
       shipPatch.actualSpeed = newSpeed
       shipPatch.actualHeading = newHeading
       shipPatch.actualInclination = newIncl
+      shipPatch.actualVelocity = dt > 0
+        ? [pdx / dt, pdy / dt, pdz / dt]
+        : [0, 0, 0]
       shipPatch.position = newPos
       shipPatch.rollAngle = rollRef.current
 

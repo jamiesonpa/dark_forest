@@ -6,10 +6,12 @@ export function DebugSettingsWindow() {
   const setDebugPivotEnabled = useGameStore((s) => s.setDebugPivotEnabled)
   const orientDebugEnabled = useGameStore((s) => s.orientDebugEnabled)
   const setOrientDebugEnabled = useGameStore((s) => s.setOrientDebugEnabled)
-  const debugEwPlanet1TargetEnabled = useGameStore((s) => s.debugEwPlanet1TargetEnabled)
-  const setDebugEwPlanet1TargetEnabled = useGameStore((s) => s.setDebugEwPlanet1TargetEnabled)
   const showIRSTCone = useGameStore((s) => s.showIRSTCone)
   const setShowIRSTCone = useGameStore((s) => s.setShowIRSTCone)
+  const showBScopeRadarCone = useGameStore((s) => s.showBScopeRadarCone)
+  const setShowBScopeRadarCone = useGameStore((s) => s.setShowBScopeRadarCone)
+  const unlimitAaOrbitZoomOut = useGameStore((s) => s.unlimitAaOrbitZoomOut)
+  const setUnlimitAaOrbitZoomOut = useGameStore((s) => s.setUnlimitAaOrbitZoomOut)
   const showCelestialGridCenterMarker = useGameStore((s) => s.showCelestialGridCenterMarker)
   const setShowCelestialGridCenterMarker = useGameStore((s) => s.setShowCelestialGridCenterMarker)
   const setShipState = useGameStore((s) => s.setShipState)
@@ -28,6 +30,15 @@ export function DebugSettingsWindow() {
   const setAsteroidBeltSettings = useGameStore((s) => s.setAsteroidBeltSettings)
   const spawnAsteroidBelt = useGameStore((s) => s.spawnAsteroidBelt)
   const clearSpawnedAsteroidBelt = useGameStore((s) => s.clearSpawnedAsteroidBelt)
+  const shipTargetSpawnPosition = useGameStore((s) => s.shipTargetSpawnPosition)
+  const setShipTargetSpawnPosition = useGameStore((s) => s.setShipTargetSpawnPosition)
+  const setShipTargetMotionSettings = useGameStore((s) => s.setShipTargetMotionSettings)
+  const spawnShipTarget = useGameStore((s) => s.spawnShipTarget)
+  const clearShipTargets = useGameStore((s) => s.clearShipTargets)
+  const shipTargets = useGameStore((s) => s.shipTargets)
+  const shipTargetHeadingDeg = useGameStore((s) => s.shipTargetHeadingDeg)
+  const shipTargetInclinationDeg = useGameStore((s) => s.shipTargetInclinationDeg)
+  const shipTargetSpeed = useGameStore((s) => s.shipTargetSpeed)
   const randomizePlanetTextures = useGameStore((s) => s.randomizePlanetTextures)
   const revealEwCelestial = useGameStore((s) => s.revealEwCelestial)
   const cancelEwGravAnalysis = useGameStore((s) => s.cancelEwGravAnalysis)
@@ -124,6 +135,28 @@ export function DebugSettingsWindow() {
     return () => window.clearInterval(timer)
   }, [])
 
+  const updateShipTargetSpawnAxis = (axisIndex: 0 | 1 | 2, value: string) => {
+    const parsed = Number(value)
+    const next = [...shipTargetSpawnPosition] as [number, number, number]
+    next[axisIndex] = Number.isFinite(parsed) ? parsed : 0
+    setShipTargetSpawnPosition(next)
+  }
+
+  const updateShipTargetHeading = (value: string) => {
+    const parsed = Number(value)
+    setShipTargetMotionSettings({ headingDeg: Number.isFinite(parsed) ? parsed : 0 })
+  }
+
+  const updateShipTargetInclination = (value: string) => {
+    const parsed = Number(value)
+    setShipTargetMotionSettings({ inclinationDeg: Number.isFinite(parsed) ? parsed : 0 })
+  }
+
+  const updateShipTargetSpeed = (value: string) => {
+    const parsed = Number(value)
+    setShipTargetMotionSettings({ speed: Number.isFinite(parsed) ? parsed : 0 })
+  }
+
   return (
     <div className="hud-debug-values">
       <button
@@ -199,17 +232,24 @@ export function DebugSettingsWindow() {
       </button>
       <button
         type="button"
-        className={`hud-debug-toggle ${debugEwPlanet1TargetEnabled ? 'active' : ''}`}
-        onClick={() => setDebugEwPlanet1TargetEnabled(!debugEwPlanet1TargetEnabled)}
-      >
-        EW P1 TARGET
-      </button>
-      <button
-        type="button"
         className={`hud-debug-toggle ${showIRSTCone ? 'active' : ''}`}
         onClick={() => setShowIRSTCone(!showIRSTCone)}
       >
         SHOW IRST CONE
+      </button>
+      <button
+        type="button"
+        className={`hud-debug-toggle ${showBScopeRadarCone ? 'active' : ''}`}
+        onClick={() => setShowBScopeRadarCone(!showBScopeRadarCone)}
+      >
+        SHOW B-SCOPE CONE
+      </button>
+      <button
+        type="button"
+        className={`hud-debug-toggle ${unlimitAaOrbitZoomOut ? 'active' : ''}`}
+        onClick={() => setUnlimitAaOrbitZoomOut(!unlimitAaOrbitZoomOut)}
+      >
+        UNLIMIT AA ORBIT ZOOM
       </button>
       <button
         type="button"
@@ -231,6 +271,85 @@ export function DebugSettingsWindow() {
         onClick={clearSpawnedAsteroidBelt}
       >
         CLEAR SPAWNED ROIDS
+      </button>
+      <div className="hud-debug-row">
+        <span className="hud-debug-axis">TARGETS</span>
+        <span className="hud-debug-value">{shipTargets.length}</span>
+      </div>
+      <div className="hud-debug-target-pos">
+        <label className="hud-debug-target-axis">
+          X
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            value={shipTargetSpawnPosition[0]}
+            onChange={(event) => updateShipTargetSpawnAxis(0, event.target.value)}
+          />
+        </label>
+        <label className="hud-debug-target-axis">
+          Y
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            value={shipTargetSpawnPosition[1]}
+            onChange={(event) => updateShipTargetSpawnAxis(1, event.target.value)}
+          />
+        </label>
+        <label className="hud-debug-target-axis">
+          Z
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            value={shipTargetSpawnPosition[2]}
+            onChange={(event) => updateShipTargetSpawnAxis(2, event.target.value)}
+          />
+        </label>
+      </div>
+      <div className="hud-debug-target-pos">
+        <label className="hud-debug-target-axis">
+          HDG
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            value={shipTargetHeadingDeg}
+            onChange={(event) => updateShipTargetHeading(event.target.value)}
+          />
+        </label>
+        <label className="hud-debug-target-axis">
+          INC
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            min={-90}
+            max={90}
+            value={shipTargetInclinationDeg}
+            onChange={(event) => updateShipTargetInclination(event.target.value)}
+          />
+        </label>
+        <label className="hud-debug-target-axis">
+          SPD
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            min={0}
+            value={shipTargetSpeed}
+            onChange={(event) => updateShipTargetSpeed(event.target.value)}
+          />
+        </label>
+      </div>
+      <button
+        type="button"
+        className="hud-debug-spawn-roids"
+        onClick={spawnShipTarget}
+      >
+        SPAWN TARGET SHIP
+      </button>
+      <button
+        type="button"
+        className="hud-debug-spawn-roids"
+        onClick={clearShipTargets}
+      >
+        CLEAR SHIP TARGETS
       </button>
       <button
         type="button"

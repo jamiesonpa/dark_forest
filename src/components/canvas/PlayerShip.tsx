@@ -74,6 +74,7 @@ interface PlayerShipProps {
 
 export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   const warpState = useGameStore((s) => s.warpState)
+  const setPlayerShipBoundingLength = useGameStore((s) => s.setPlayerShipBoundingLength)
   const groupRef = useRef<THREE.Group>(null)
   const targetPositionRef = useRef(new THREE.Vector3(ship.position[0], ship.position[1], ship.position[2]))
   const renderPositionRef = useRef(new THREE.Vector3(ship.position[0], ship.position[1], ship.position[2]))
@@ -116,6 +117,13 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
     const center = new THREE.Vector3()
     box.getCenter(center)
     return [-center.x, -center.y, -center.z]
+  }, [centeredObj])
+  const hullBoundingLength = useMemo(() => {
+    centeredObj.updateMatrixWorld(true)
+    const box = new THREE.Box3().setFromObject(centeredObj)
+    const size = new THREE.Vector3()
+    box.getSize(size)
+    return Math.max(1, size.z)
   }, [centeredObj])
   const thrusterEmitters = useMemo(
     () =>
@@ -172,6 +180,11 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
       thrusterParticleTexture?.dispose()
     }
   }, [thrusterParticleTexture])
+
+  useEffect(() => {
+    if (!isLocal) return
+    setPlayerShipBoundingLength(hullBoundingLength)
+  }, [hullBoundingLength, isLocal, setPlayerShipBoundingLength])
 
   useEffect(() => {
     targetPositionRef.current.set(ship.position[0], ship.position[1], ship.position[2])

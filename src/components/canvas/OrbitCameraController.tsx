@@ -69,7 +69,10 @@ export function OrbitCameraController() {
     const debugPivotEnabled = state.debugPivotEnabled
     const debugPivotPosition = state.debugPivotPosition
     const debugPivotDragging = state.debugPivotDragging
+    const unlimitAaOrbitZoomOut = state.unlimitAaOrbitZoomOut
     const dacActive = navAttitudeMode === 'DAC'
+    const aaZoomUnlimited = navAttitudeMode === 'AA' && unlimitAaOrbitZoomOut
+    controls.maxDistance = aaZoomUnlimited ? Number.POSITIVE_INFINITY : MAX_DISTANCE
 
     if (debugPivotEnabled) {
       const [px, py, pz] = liveShip.position
@@ -244,6 +247,19 @@ export function OrbitCameraController() {
         restoreToAaOffsetRef.current = false
       }
       return
+    }
+
+    if (!aaZoomUnlimited) {
+      targetDeltaRef.current.copy(cameraObj.position).sub(targetVecRef.current)
+      const distanceFromTarget = targetDeltaRef.current.length()
+      if (distanceFromTarget > MAX_DISTANCE) {
+        if (distanceFromTarget > 0.000001) {
+          targetDeltaRef.current.setLength(MAX_DISTANCE)
+        } else {
+          targetDeltaRef.current.set(0, 0, MAX_DISTANCE)
+        }
+        cameraObj.position.copy(targetVecRef.current).add(targetDeltaRef.current)
+      }
     }
 
     controls.enabled = !debugPivotDragging

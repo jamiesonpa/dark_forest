@@ -24,6 +24,7 @@ export const defaultShipState: ShipState = {
   inclination: 0,
   actualHeading: 0,
   actualSpeed: 0,
+  actualVelocity: [0, 0, 0],
   actualInclination: 0,
   dacPitch: 0,
   rollAngle: 0,

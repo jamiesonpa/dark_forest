@@ -1,0 +1,1 @@
+export const TORPEDO_ACCEL_DURATION_SECONDS = 30

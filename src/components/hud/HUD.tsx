@@ -4,6 +4,7 @@ import { DacFlightHud } from './DacFlightHud'
 import { IRSTView } from './IRSTView'
 import { EngineeringPanel } from './EngineeringPanel'
 import { RWRDisplay } from './RWRDisplay'
+import { LaunchControl } from './LaunchControl'
 import { useGameStore } from '@/state/gameStore'
 
 export function HUD() {
@@ -17,6 +18,7 @@ export function HUD() {
       <div className="hud-left-eng">
         <EngineeringPanel />
       </div>
+      <LaunchControl />
       <div className="hud-bottom">
         <div className={`hud-bottom-status-row ${navAttitudeMode === 'DAC' ? 'dac-mode' : ''}`.trim()}>
           <ShipStatusPrototype />

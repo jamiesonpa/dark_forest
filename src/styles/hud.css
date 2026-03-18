@@ -340,6 +340,43 @@ body {
   width: 220px;
 }
 
+.hud-launch-left {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.hud-launch-button {
+  min-width: 78px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  color: #ffdc85;
+  background: rgba(80, 45, 10, 0.4);
+  border: 1px solid rgba(255, 186, 84, 0.9);
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.hud-launch-button:hover:not(:disabled) {
+  background: rgba(122, 66, 13, 0.55);
+  color: #fff0c2;
+}
+
+.hud-launch-button.is-disabled,
+.hud-launch-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .engineering-panel {
   padding-bottom: 10px;
 }
@@ -2171,6 +2208,32 @@ body {
   width: 100%;
   accent-color: #ff8e66;
   cursor: pointer;
+}
+
+.hud-debug-target-pos {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hud-debug-target-axis {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: #ffc7c7;
+}
+
+.hud-debug-target-input {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: #ffe6e6;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 170, 85, 0.7);
+  border-radius: 2px;
 }
 
 .hud-nav-solution-bottom-right {

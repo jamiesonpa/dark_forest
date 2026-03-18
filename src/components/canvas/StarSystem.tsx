@@ -3,6 +3,7 @@ import { Grid } from './Grid'
 import { OrbitCameraController } from './OrbitCameraController'
 import { IRSTCamera } from './IRSTCamera'
 import { IRSTCameraDebugCone } from './IRSTCameraDebugCone'
+import { BScopeRadarDebugCone } from './BScopeRadarDebugCone'
 import { SunSystem } from './SunSystem'
 import { PlanetMoonSystem } from './PlanetMoonSystem'
 import { WarpTargetMarkers } from './WarpTargetMarkers'
@@ -26,6 +27,7 @@ export function StarSystem() {
       <Grid />
       <IRSTCamera />
       <IRSTCameraDebugCone />
+      <BScopeRadarDebugCone />
       <OrbitCameraController />
     </>
   )
