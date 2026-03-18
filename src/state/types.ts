@@ -108,6 +108,7 @@ export interface TorpedoExplosion {
   currentCelestialId: string
   position: [number, number, number]
   flightTimeSeconds: number
+  targetShipId?: string
 }
 
 export interface GameStore {
@@ -151,13 +152,15 @@ export interface GameStore {
   ewRadarPower: number
   ewRadarFreq: number
   ewRadarPRF: string
-  ewGravScannerOn: boolean
+  ewUpperScannerOn: boolean
+  ewLowerScannerOn: boolean
   ewJammers: EwJammerState[]
   ewActiveGravAnalysis: EwGravAnalysisSession | null
   ewLastGravAnalysisResult: EwGravAnalysisResult | null
   ewRevealedCelestialIds: string[]
   setEwJammers: (jammers: EwJammerState[]) => void
-  setEwGravScannerOn: (on: boolean) => void
+  setEwUpperScannerOn: (on: boolean) => void
+  setEwLowerScannerOn: (on: boolean) => void
   startEwGravAnalysis: (session: EwGravAnalysisSession) => void
   completeEwGravAnalysis: () => void
   cancelEwGravAnalysis: () => void

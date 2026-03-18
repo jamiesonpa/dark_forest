@@ -12,6 +12,9 @@ describe('shipSnapshots', () => {
     ship.x = 10
     ship.y = 20
     ship.z = 30
+    ship.vx = 2
+    ship.vy = 3
+    ship.vz = 4
     ship.actualSpeed = 42
 
     const snapshot = buildShipsSnapshot(
@@ -27,6 +30,7 @@ describe('shipSnapshots', () => {
         currentCelestialId: 'planet-1',
         revealedCelestialIds: ['planet-1'],
         position: [10, 20, 30],
+        actualVelocity: [2, 3, 4],
         actualSpeed: 42,
       })
     )
@@ -44,6 +48,7 @@ describe('shipSnapshots', () => {
       revealedCelestialIds: ['planet-1', 'moon-2'],
       targetSpeed: 120,
       dampenersActive: false,
+      actualVelocity: [11, 12, 13],
       actualHeading: 270,
       actualSpeed: 119,
     })
@@ -54,6 +59,7 @@ describe('shipSnapshots', () => {
     expect(ship.targetSpeed).toBe(120)
     expect(Array.from(ship.revealedCelestialIds)).toEqual(['planet-1', 'moon-2'])
     expect(ship.dampenersActive).toBe(false)
+    expect([ship.vx, ship.vy, ship.vz]).toEqual([11, 12, 13])
     expect(ship.actualHeading).toBe(270)
     expect(ship.actualSpeed).toBe(119)
     expect(ship.shield).toBe(123)

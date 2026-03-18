@@ -34,6 +34,7 @@ const FLARE_LIFETIME_SECONDS = 3
 const FLARE_VELOCITY_DECAY_RATE = 0.8
 const FLARE_ANGLE_RANDOM_JITTER_DEG = 5
 const FLARE_SPREAD_DEGREES = [0, -20, 20, -40, 40] as const
+const TORPEDO_MIN_PN_SPEED = 20
 const TORPEDO_HIT_RADIUS = 50
 const TORPEDO_EXPLOSION_LIFETIME_SECONDS = 7.2
 const NETWORK_ORDNANCE_MAX_PER_CATEGORY = 512
@@ -147,7 +148,11 @@ function resolveLockTargetVelocity(
   if (!lockId) return null
   const ship = state.shipsById[lockId]
   if (!ship) return null
-  return [ship.actualVelocity[0], ship.actualVelocity[1], ship.actualVelocity[2]]
+  const vx = ship.actualVelocity[0]
+  const vy = ship.actualVelocity[1]
+  const vz = ship.actualVelocity[2]
+  if (!Number.isFinite(vx) || !Number.isFinite(vy) || !Number.isFinite(vz)) return null
+  return [vx, vy, vz]
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -269,6 +274,7 @@ function sanitizeNetworkExplosions(
         currentCelestialId: explosion.currentCelestialId,
         position,
         flightTimeSeconds: Math.max(0, explosion.flightTimeSeconds),
+        targetShipId: typeof explosion.targetShipId === 'string' ? explosion.targetShipId : undefined,
       })
       if (next.length >= NETWORK_ORDNANCE_MAX_PER_CATEGORY) return next
     }
@@ -538,7 +544,27 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
         const targetPosition = resolveLockTargetPosition(s, cylinder.targetLockId)
         const targetVelocity = resolveLockTargetVelocity(s, cylinder.targetLockId)
 
-        if (thrustAccelerationActive && targetPosition) {
+        const nextFlightTime = cylinder.flightTimeSeconds + deltaSeconds
+        if (thrustAccelerationActive) {
+          const launchAccelerationMultiplier = getTorpedoLaunchAccelerationMultiplier(cylinder.flightTimeSeconds)
+          const thrustDelta = TORPEDO_THRUST_ACCELERATION * launchAccelerationMultiplier * deltaSeconds
+          const speed = Math.hypot(nextVelocity[0], nextVelocity[1], nextVelocity[2])
+          if (speed > 0.000001) {
+            nextDirection = [
+              nextVelocity[0] / speed,
+              nextVelocity[1] / speed,
+              nextVelocity[2] / speed,
+            ]
+          }
+          nextVelocity = [
+            nextVelocity[0] + nextDirection[0] * thrustDelta,
+            nextVelocity[1] + nextDirection[1] * thrustDelta,
+            nextVelocity[2] + nextDirection[2] * thrustDelta,
+          ]
+        }
+
+        const postThrustSpeed = Math.hypot(nextVelocity[0], nextVelocity[1], nextVelocity[2])
+        if (thrustAccelerationActive && targetPosition && postThrustSpeed > TORPEDO_MIN_PN_SPEED) {
           const relX = targetPosition[0] - cylinder.position[0]
           const relY = targetPosition[1] - cylinder.position[1]
           const relZ = targetPosition[2] - cylinder.position[2]
@@ -574,32 +600,15 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
                 accelZ *= scale
               }
 
-              nextVelocity = [
-                nextVelocity[0] + accelX * deltaSeconds,
-                nextVelocity[1] + accelY * deltaSeconds,
-                nextVelocity[2] + accelZ * deltaSeconds,
-              ]
+              const correctedX = nextVelocity[0] + accelX * deltaSeconds
+              const correctedY = nextVelocity[1] + accelY * deltaSeconds
+              const correctedZ = nextVelocity[2] + accelZ * deltaSeconds
+              const dot = correctedX * nextVelocity[0] + correctedY * nextVelocity[1] + correctedZ * nextVelocity[2]
+              if (dot > 0) {
+                nextVelocity = [correctedX, correctedY, correctedZ]
+              }
             }
           }
-        }
-
-        const nextFlightTime = cylinder.flightTimeSeconds + deltaSeconds
-        if (thrustAccelerationActive) {
-          const launchAccelerationMultiplier = getTorpedoLaunchAccelerationMultiplier(cylinder.flightTimeSeconds)
-          const thrustDelta = TORPEDO_THRUST_ACCELERATION * launchAccelerationMultiplier * deltaSeconds
-          const speed = Math.hypot(nextVelocity[0], nextVelocity[1], nextVelocity[2])
-          if (speed > 0.000001) {
-            nextDirection = [
-              nextVelocity[0] / speed,
-              nextVelocity[1] / speed,
-              nextVelocity[2] / speed,
-            ]
-          }
-          nextVelocity = [
-            nextVelocity[0] + nextDirection[0] * thrustDelta,
-            nextVelocity[1] + nextDirection[1] * thrustDelta,
-            nextVelocity[2] + nextDirection[2] * thrustDelta,
-          ]
         }
 
         const finalSpeed = Math.hypot(nextVelocity[0], nextVelocity[1], nextVelocity[2])
@@ -630,6 +639,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
               currentCelestialId: cylinder.currentCelestialId,
               position: [nextPosition[0], nextPosition[1], nextPosition[2]],
               flightTimeSeconds: 0,
+              targetShipId: cylinder.targetLockId,
             })
             continue
           }

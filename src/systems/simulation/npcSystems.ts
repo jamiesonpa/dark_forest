@@ -1,6 +1,7 @@
 import type { GameStore } from '@/state/types'
 import type { RWRContact } from '@/types/game'
 import { clamp } from '@/systems/simulation/lib/math'
+import { B_SCOPE_AZ_LIMIT_DEG } from '@/systems/ew/bScopeConstants'
 
 export function updateNpcElectronicWarfare(
   state: GameStore,
@@ -81,7 +82,7 @@ export function updateNpcElectronicWarfare(
 
     if (lockState[id]) {
       const relativeBearing = ((bearing - playerHeading + 540) % 360) - 180
-      if (Math.abs(relativeBearing) > 90) {
+      if (Math.abs(relativeBearing) > B_SCOPE_AZ_LIMIT_DEG) {
         lockChanged = true
       } else {
         cleanedLocks[id] = lockState[id]

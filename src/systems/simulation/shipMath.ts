@@ -24,7 +24,7 @@ type CapacitorFrameInput = {
   capacitor: number
   capacitorMax: number
   selectedSpeedRatio: number
-  ewGravScannerOn: boolean
+  scannerPanelsOfflineCount: number
   dampenersActive: boolean
   drainTimeAtMaxSpeedSec: number
   rechargeFractionOfMaxDrain: number
@@ -35,9 +35,10 @@ type CapacitorFrameInput = {
 
 export function getNextCapacitor(input: CapacitorFrameInput) {
   const capacitorDrainPerSecondAtMaxSpeed = input.capacitorMax / input.drainTimeAtMaxSpeedSec
-  const gravScannerRechargeBonus = input.ewGravScannerOn ? 1 : 1.1
+  const scannerPanelsOfflineCount = clamp(input.scannerPanelsOfflineCount, 0, 2)
+  const scannerRechargeBonus = 1 + scannerPanelsOfflineCount * 0.1
   const capacitorRechargePerSecond =
-    capacitorDrainPerSecondAtMaxSpeed * input.rechargeFractionOfMaxDrain * gravScannerRechargeBonus
+    capacitorDrainPerSecondAtMaxSpeed * input.rechargeFractionOfMaxDrain * scannerRechargeBonus
   const capacitorDrain = capacitorDrainPerSecondAtMaxSpeed * input.selectedSpeedRatio
   const dampenersDrainPerSecond = input.dampenersActive
     ? capacitorDrainPerSecondAtMaxSpeed * input.dampenersDrainFractionOfMaxDrain

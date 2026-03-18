@@ -2883,8 +2883,10 @@ export default function EWConsole() {
   const [time, setTime] = useState(0);
   const starSystem = useGameStore((s) => s.starSystem);
   const currentCelestialId = useGameStore((s) => s.currentCelestialId);
-  const gravScannerOn = useGameStore((s) => s.ewGravScannerOn);
-  const setGravScannerOn = useGameStore((s) => s.setEwGravScannerOn);
+  const upperScannerOn = useGameStore((s) => s.ewUpperScannerOn);
+  const lowerScannerOn = useGameStore((s) => s.ewLowerScannerOn);
+  const setUpperScannerOn = useGameStore((s) => s.setEwUpperScannerOn);
+  const setLowerScannerOn = useGameStore((s) => s.setEwLowerScannerOn);
   const [contacts, setContacts] = useState(() => buildContactsFromGame());
   const [selectedContact, setSelectedContact] = useState(null);
   const [selectedBearing, setSelectedBearing] = useState(0);
@@ -3039,6 +3041,8 @@ export default function EWConsole() {
       id: "A",
       type: upperScannerType,
       setType: setUpperScannerType,
+      isOn: upperScannerOn,
+      setOn: setUpperScannerOn,
       resetToken: upperScannerResetToken,
       reset: () => setUpperScannerResetToken((v) => v + 1),
     },
@@ -3046,6 +3050,8 @@ export default function EWConsole() {
       id: "B",
       type: lowerScannerType,
       setType: setLowerScannerType,
+      isOn: lowerScannerOn,
+      setOn: setLowerScannerOn,
       resetToken: lowerScannerResetToken,
       reset: () => setLowerScannerResetToken((v) => v + 1),
     },
@@ -3105,7 +3111,7 @@ export default function EWConsole() {
                 key={slot.id}
                 title={scannerLabel}
                 style={{ height: 243, minHeight: 243, flex: "0 0 auto" }}
-                dimmed={!gravScannerOn}
+                dimmed={!slot.isOn}
                 headerRight={(
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <div style={{ display: "flex", gap: 4 }}>
@@ -3151,37 +3157,37 @@ export default function EWConsole() {
                         fontSize: 8,
                         letterSpacing: 1,
                         borderRadius: 1,
-                        border: `1px solid ${gravScannerOn ? scannerAccentDim : "rgba(130,130,130,0.35)"}`,
-                        background: gravScannerOn
+                        border: `1px solid ${slot.isOn ? scannerAccentDim : "rgba(130,130,130,0.35)"}`,
+                        background: slot.isOn
                           ? (slot.type === "ir" ? "rgba(255,154,60,0.1)" : "rgba(0,204,170,0.08)")
                           : "rgba(90,90,90,0.12)",
-                        color: gravScannerOn ? scannerAccent : "rgba(180,180,180,0.65)",
+                        color: slot.isOn ? scannerAccent : "rgba(180,180,180,0.65)",
                         fontFamily: font,
-                        cursor: gravScannerOn ? "pointer" : "not-allowed",
+                        cursor: slot.isOn ? "pointer" : "not-allowed",
                       }}
-                      disabled={!gravScannerOn}
+                      disabled={!slot.isOn}
                       aria-label={`Reset scanner ${slot.id} gate`}
                     >
                       RESET
                     </button>
                     <button
-                      onClick={() => setGravScannerOn(!gravScannerOn)}
+                      onClick={() => slot.setOn(!slot.isOn)}
                       style={{
                         padding: "1px 6px",
                         fontSize: 8,
                         letterSpacing: 1,
                         borderRadius: 1,
-                        border: `1px solid ${gravScannerOn ? scannerAccent : "rgba(130,130,130,0.5)"}`,
-                        background: gravScannerOn
+                        border: `1px solid ${slot.isOn ? scannerAccent : "rgba(130,130,130,0.5)"}`,
+                        background: slot.isOn
                           ? (slot.type === "ir" ? "rgba(255,154,60,0.16)" : "rgba(0,204,170,0.14)")
                           : "rgba(90,90,90,0.16)",
-                        color: gravScannerOn ? scannerAccentGlow : "rgba(180,180,180,0.85)",
+                        color: slot.isOn ? scannerAccentGlow : "rgba(180,180,180,0.85)",
                         fontFamily: font,
                         cursor: "pointer",
                       }}
                       aria-label={`Toggle scanner ${slot.id} power`}
                     >
-                      {gravScannerOn ? "ON" : "OFF"}
+                      {slot.isOn ? "ON" : "OFF"}
                     </button>
                   </div>
                 )}
@@ -3193,7 +3199,7 @@ export default function EWConsole() {
                     selectedBearing={selectedBearing}
                     onBearingChange={setSelectedBearing}
                     resetToken={slot.resetToken}
-                    scannerOn={gravScannerOn}
+                    scannerOn={slot.isOn}
                   />
                 ) : (
                   <GravAnalyzer
@@ -3202,7 +3208,7 @@ export default function EWConsole() {
                     selectedBearing={selectedBearing}
                     onBearingChange={setSelectedBearing}
                     resetToken={slot.resetToken}
-                    scannerOn={gravScannerOn}
+                    scannerOn={slot.isOn}
                   />
                 )}
               </Panel>

@@ -83,6 +83,7 @@ function halfLineWidthPx(pitchDeg: number) {
 export function DacFlightHud() {
   const navAttitudeMode = useGameStore((s) => s.navAttitudeMode)
   const warpState = useGameStore((s) => s.warpState)
+  const shieldsUp = useGameStore((s) => s.ship.shieldsUp)
   const dampenersActive = useGameStore((s) => s.ship.dampenersActive)
   const actualHeading = useGameStore((s) => s.ship.actualHeading)
   const actualInclination = useGameStore((s) => s.ship.actualInclination)
@@ -194,7 +195,10 @@ export function DacFlightHud() {
   }
 
   return (
-    <div className="dac-flight-hud" aria-label="Direct attitude control HUD">
+    <div
+      className={`dac-flight-hud${shieldsUp ? ' is-shields-up' : ''}`}
+      aria-label="Direct attitude control HUD"
+    >
       <div className="dac-flight-hud-heading">
         <div className="dac-flight-hud-bearing-readout">
           <div className="dac-flight-hud-bearing-unit">BEARING</div>

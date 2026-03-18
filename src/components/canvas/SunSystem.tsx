@@ -17,7 +17,6 @@ const SUN_SCALE_MIN_ORBIT_MULTIPLIER = 2
 const SUN_SCALE_MAX_ORBIT_MULTIPLIER = 0.25
 const SUN_SCALE_SMOOTH_SPEED = 3.5
 const SUN_LIGHT_INTENSITY = 2.4
-const SUN_BLOCKED_LIGHT_FACTOR = 0.12
 const SUN_SHADOW_DISTANCE = 12000
 const SUN_SHADOW_FRUSTUM_RADIUS = 3200
 const SUN_SHADOW_NEAR = 100
@@ -190,6 +189,7 @@ export function SunSystem() {
   const sunRayDir = useMemo(() => new THREE.Vector3(), [])
   const sunDirection = useMemo(() => new THREE.Vector3(), [])
   const sunLightPos = useMemo(() => new THREE.Vector3(), [])
+  const shadowFocus = useMemo(() => new THREE.Vector3(), [])
   const shadowTarget = useMemo(() => new THREE.Object3D(), [])
   const irstSunCoreRef = useRef<THREE.Sprite>(null)
   const irstSunHaloRef = useRef<THREE.Sprite>(null)
@@ -348,10 +348,12 @@ export function SunSystem() {
     sunPos.copy(camPos).addScaledVector(sunDirection, SUN_DISTANCE)
     sunAnchorRef.current?.position.copy(sunPos)
     irstSunGroupRef.current?.position.copy(sunPos)
-    shadowTarget.position.copy(camPos)
+    const shipPos = liveState.ship.position
+    shadowFocus.set(shipPos[0], shipPos[1], shipPos[2])
+    shadowTarget.position.copy(shadowFocus)
     shadowTarget.updateMatrixWorld()
     directionalLightRef.current?.position.copy(
-      sunLightPos.copy(camPos).addScaledVector(sunDirection, SUN_SHADOW_DISTANCE)
+      sunLightPos.copy(shadowFocus).addScaledVector(sunDirection, SUN_SHADOW_DISTANCE)
     )
 
     forward.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize()
@@ -379,9 +381,8 @@ export function SunSystem() {
     const occlusionLerp = blocked ? 0.32 : 0.08
     occlusionRef.current = THREE.MathUtils.lerp(occlusionRef.current, targetOcclusion, occlusionLerp)
     const occlusion = occlusionRef.current
-    const lightOcclusionFactor = THREE.MathUtils.lerp(1, SUN_BLOCKED_LIGHT_FACTOR, occlusion)
     if (directionalLightRef.current) {
-      directionalLightRef.current.intensity = SUN_LIGHT_INTENSITY * lightOcclusionFactor
+      directionalLightRef.current.intensity = SUN_LIGHT_INTENSITY
     }
     const visibleIntensity = intensity * (1 - occlusion * OCCLUSION_DARKENING)
     const flareOcclusion = Math.max(0, 1 - occlusion * 1.35)

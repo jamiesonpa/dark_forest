@@ -728,6 +728,7 @@ export function EWSystemMap({ time }: { time: number }) {
   const warpTargetId = useGameStore((s) => s.warpTargetId)
   const warpTravelProgress = useGameStore((s) => s.warpTravelProgress)
   const revealedCelestialIds = useGameStore((s) => s.ewRevealedCelestialIds)
+  const radarWarpInterference = warpState === 'warping' || warpState === 'landing'
 
   const star = useMemo(
     () => getCelestialById('star', starSystem) ?? starSystem.celestials[0] ?? null,
@@ -965,6 +966,7 @@ export function EWSystemMap({ time }: { time: number }) {
   }, [currentCelestialId, localPlayerId, shipHeadingDeg, shipPosition, shipsById])
 
   const bScopeTracks = useMemo<BScopeTrack[]>(() => {
+    if (radarWarpInterference) return []
     return bScopeAllTracks.filter(
       (track) =>
         !track.id.startsWith('planet-')
@@ -977,10 +979,10 @@ export function EWSystemMap({ time }: { time: number }) {
         && track.relBearingDeg <= bScopeViewMaxDeg
         && track.rangeM <= bScopeMaxRangeM
     )
-  }, [bScopeAllTracks, bScopeMaxRangeM, bScopeViewMaxDeg, bScopeViewMinDeg])
+  }, [bScopeAllTracks, bScopeMaxRangeM, bScopeViewMaxDeg, bScopeViewMinDeg, radarWarpInterference])
   const bScopeTargetTracks = useMemo(
-    () => bScopeAllTracks,
-    [bScopeAllTracks]
+    () => (radarWarpInterference ? [] : bScopeAllTracks),
+    [bScopeAllTracks, radarWarpInterference]
   )
   const bScopeTargetsInConeCount = useMemo(
     () =>
@@ -1012,27 +1014,31 @@ export function EWSystemMap({ time }: { time: number }) {
   }, [bScopeAllTracks])
 
   useEffect(() => {
-    const hardLockedId = Object.keys(ewLockState).find((id) => ewLockState[id] === 'hard')
-    if (!hardLockedId) return
-    const relBearing = bScopeTrackRelBearingById[hardLockedId]
-    if (relBearing === undefined) {
+    if (radarWarpInterference) {
       setEwLockState((prev) => {
-        const next = { ...prev }
-        delete next[hardLockedId]
-        return next
+        if (Object.keys(prev).length === 0) return prev
+        return {}
       })
       return
     }
-    if (Math.abs(relBearing) > B_SCOPE_AZ_LIMIT_DEG) {
-      setEwLockState((prev) => {
-        const next = { ...prev }
-        delete next[hardLockedId]
-        return next
+    setEwLockState((prev) => {
+      const lockIds = Object.keys(prev)
+      if (lockIds.length === 0) return prev
+      let changed = false
+      const next = { ...prev }
+      lockIds.forEach((lockId) => {
+        const relBearing = bScopeTrackRelBearingById[lockId]
+        if (relBearing === undefined || Math.abs(relBearing) > B_SCOPE_AZ_LIMIT_DEG) {
+          delete next[lockId]
+          changed = true
+        }
       })
-    }
-  }, [bScopeTrackRelBearingById, ewLockState, setEwLockState])
+      return changed ? next : prev
+    })
+  }, [bScopeTrackRelBearingById, ewLockState, radarWarpInterference, setEwLockState])
 
   const handleBScopeWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (radarWarpInterference) return
     event.preventDefault()
     const rect = event.currentTarget.getBoundingClientRect()
     const mouseXNorm = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
@@ -1440,6 +1446,7 @@ export function EWSystemMap({ time }: { time: number }) {
                       }}
                       onWheel={handleBScopeWheel}
                       onContextMenu={(event) => {
+                        if (radarWarpInterference) return
                         event.preventDefault()
                         setEwLockState((prev) => {
                           const next = { ...prev }
@@ -1452,6 +1459,27 @@ export function EWSystemMap({ time }: { time: number }) {
                         })
                       }}
                     >
+                      {radarWarpInterference ? (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: 'rgba(0,0,0,0.62)',
+                            color: B_SCOPE_GREEN_GLOW,
+                            fontSize: 12,
+                            letterSpacing: 1,
+                            textAlign: 'center',
+                            padding: '0 20px',
+                            zIndex: 5,
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          RADAR INOPERABLE DURING WARP TRANSIT
+                        </div>
+                      ) : null}
                       <div
                         style={{
                           position: 'absolute',
@@ -1537,6 +1565,7 @@ export function EWSystemMap({ time }: { time: number }) {
                               }}
                               title={`${track.label} | BRG ${track.relBearingDeg.toFixed(0)}° | RNG ${(track.rangeM / 1000).toFixed(1)}km | INC ${incLabel}`}
                               onContextMenu={(event) => {
+                                if (radarWarpInterference) return
                                 event.preventDefault()
                                 event.stopPropagation()
                                 setEwLockState((prev) => {

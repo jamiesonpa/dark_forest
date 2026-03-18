@@ -28,7 +28,7 @@ describe('shipMath', () => {
       capacitor: 200,
       capacitorMax: 800,
       selectedSpeedRatio: 0,
-      ewGravScannerOn: true,
+      scannerPanelsOfflineCount: 0,
       dampenersActive: true,
       drainTimeAtMaxSpeedSec: 120,
       rechargeFractionOfMaxDrain: 0.6,
@@ -39,6 +39,36 @@ describe('shipMath', () => {
 
     expect(next).toBeGreaterThan(200)
     expect(next).toBeLessThanOrEqual(800)
+  })
+
+  it('applies capacitor recharge bonus for each offline scanner panel', () => {
+    const baseInput = {
+      capacitor: 200,
+      capacitorMax: 800,
+      selectedSpeedRatio: 0,
+      dampenersActive: false,
+      drainTimeAtMaxSpeedSec: 120,
+      rechargeFractionOfMaxDrain: 0.6,
+      dampenersDrainFractionOfMaxDrain: 0.15,
+      dampenersRecoveryDrain: 0,
+      dt: 1,
+    }
+
+    const baseRecharge = getNextCapacitor({
+      ...baseInput,
+      scannerPanelsOfflineCount: 0,
+    }) - baseInput.capacitor
+    const oneOfflineRecharge = getNextCapacitor({
+      ...baseInput,
+      scannerPanelsOfflineCount: 1,
+    }) - baseInput.capacitor
+    const twoOfflineRecharge = getNextCapacitor({
+      ...baseInput,
+      scannerPanelsOfflineCount: 2,
+    }) - baseInput.capacitor
+
+    expect(oneOfflineRecharge).toBeCloseTo(baseRecharge * 1.1)
+    expect(twoOfflineRecharge).toBeCloseTo(baseRecharge * 1.2)
   })
 
   it('does not recharge or drain capacitor when shield recharge rate is zero', () => {

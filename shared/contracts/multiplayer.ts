@@ -57,6 +57,7 @@ export interface WireTorpedoExplosion {
   currentCelestialId: string
   position: [number, number, number]
   flightTimeSeconds: number
+  targetShipId?: string
 }
 
 export interface WireOrdnanceSnapshot {

@@ -91,7 +91,6 @@ const DAC_DIRECT_BEARING_RATE_MULTIPLIER = 0.38
 const DAC_DIRECT_INCLINATION_RATE_MULTIPLIER = 0.55
 const DAC_ROLL_RATE_MULTIPLIER = 0.9
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
-const TORPEDO_HIT_RADIUS = 50
 const TORPEDO_DAMAGE = 7000
 
 const EMPTY_KEY_STATE: Record<SimControlKey, boolean> = {
@@ -136,7 +135,7 @@ export function SimulationLoop() {
   const prevDampenersActiveRef = useRef(useGameStore.getState().ship.dampenersActive)
   const dampenersRecoveryActiveRef = useRef(false)
   const dampenersRecoveryCapDebtRef = useRef(0)
-  const remoteTorpedoHitIdsRef = useRef(new Set<string>())
+  const remoteExplosionDamageIdsRef = useRef(new Set<string>())
 
   useEffect(() => {
     const thrustEuler = new THREE.Euler(0, 0, 0, 'YXZ')
@@ -749,11 +748,14 @@ export function SimulationLoop() {
         ? 1
         : clamp(effectiveTargetSpeed / MAX_SELECTED_SPEED, 0, 1)
       const selectedSpeedRatio = hasCapacitorForThrust ? requestedThrustRatio : 0
+      const scannerPanelsOfflineCount =
+        (state.ewUpperScannerOn ? 0 : 1) +
+        (state.ewLowerScannerOn ? 0 : 1)
       let nextCapacitor = getNextCapacitor({
         capacitor: ship.capacitor,
         capacitorMax: ship.capacitorMax,
         selectedSpeedRatio,
-        ewGravScannerOn: state.ewGravScannerOn,
+        scannerPanelsOfflineCount,
         dampenersActive: ship.dampenersActive,
         drainTimeAtMaxSpeedSec: CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC,
         rechargeFractionOfMaxDrain: CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN,
@@ -815,14 +817,11 @@ export function SimulationLoop() {
       state.setShipState(shipPatch)
       const latestState = useGameStore.getState()
       const localShipId = latestState.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
-      for (const remoteCylinder of latestState.remoteLaunchedCylinders) {
-        if (remoteCylinder.currentCelestialId !== latestState.currentCelestialId) continue
-        const dx = remoteCylinder.position[0] - latestState.ship.position[0]
-        const dy = remoteCylinder.position[1] - latestState.ship.position[1]
-        const dz = remoteCylinder.position[2] - latestState.ship.position[2]
-        const withinHitRadius = Math.hypot(dx, dy, dz) <= TORPEDO_HIT_RADIUS
-        if (!withinHitRadius || remoteTorpedoHitIdsRef.current.has(remoteCylinder.id)) continue
-        remoteTorpedoHitIdsRef.current.add(remoteCylinder.id)
+      for (const explosion of latestState.remoteTorpedoExplosions) {
+        if (explosion.targetShipId !== localShipId) continue
+        if (explosion.currentCelestialId !== latestState.currentCelestialId) continue
+        if (remoteExplosionDamageIdsRef.current.has(explosion.id)) continue
+        remoteExplosionDamageIdsRef.current.add(explosion.id)
         const localShip = latestState.shipsById[localShipId] ?? latestState.ship
         let remaining = TORPEDO_DAMAGE
         let shield = localShip.shield
@@ -842,17 +841,11 @@ export function SimulationLoop() {
           hull = Math.max(0, hull - remaining)
         }
         latestState.setShipState({ shield, armor, hull })
-        latestState.addTorpedoExplosion({
-          id: `remote-hit-${remoteCylinder.id}`,
-          currentCelestialId: remoteCylinder.currentCelestialId,
-          position: [...remoteCylinder.position] as [number, number, number],
-          flightTimeSeconds: 0,
-        })
       }
-      const activeRemoteIds = new Set(latestState.remoteLaunchedCylinders.map((cylinder) => cylinder.id))
-      for (const consumedId of remoteTorpedoHitIdsRef.current) {
-        if (!activeRemoteIds.has(consumedId)) {
-          remoteTorpedoHitIdsRef.current.delete(consumedId)
+      const activeExplosionIds = new Set(latestState.remoteTorpedoExplosions.map((e) => e.id))
+      for (const processedId of remoteExplosionDamageIdsRef.current) {
+        if (!activeExplosionIds.has(processedId)) {
+          remoteExplosionDamageIdsRef.current.delete(processedId)
         }
       }
       sendMoveIfDue(lastMoveSendMsRef, {
