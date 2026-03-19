@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { IRSTView } from '@/components/hud/IRSTView'
 import { useGameStore } from '@/state/gameStore'
 import { useIRSTStore } from '@/state/irstStore'
+import { multiplayerClient } from '@/network/colyseusClient'
 
 /* ── WS / EW mixed theme ────────────────────────────────────── */
 const AMBER = '#ffb000'
@@ -405,6 +406,10 @@ const DEW_BEAM_HALF_H = 25
 const DEW_TARGET_MAX_RANGE_M = 20_000
 const DEW_CONVERGENCE_ZONE_LEFT = DEW_DIAGRAM_W / 2
 const DEW_CONVERGENCE_ZONE_RIGHT = DEW_DIAGRAM_W - 10
+const DEW_BASE_DAMAGE_AT_MAX_RANGE = 2000
+const DEW_BASE_DAMAGE_AT_ZERO_RANGE = 4000
+const DEW_DAMAGE_FALLOFF_MAX_RANGE_M = 20_000
+const DEW_DAMAGE_RANGE_CURVE_EXPONENT = 1.6
 
 const DEW_LENS_HEIGHT = 60
 const DEW_LENS_DEFS = [
@@ -419,6 +424,14 @@ function rangeToTargetX(rangeM: number): number {
   const clampedRange = Math.max(0, Math.min(DEW_TARGET_MAX_RANGE_M, rangeM))
   const t = clampedRange / DEW_TARGET_MAX_RANGE_M
   return DEW_CONVERGENCE_ZONE_LEFT + t * (DEW_CONVERGENCE_ZONE_RIGHT - DEW_CONVERGENCE_ZONE_LEFT)
+}
+
+function getDewBaseDamageByRange(rangeM: number): number {
+  const clampedRange = Math.max(0, Math.min(DEW_DAMAGE_FALLOFF_MAX_RANGE_M, rangeM))
+  const closeness = 1 - (clampedRange / DEW_DAMAGE_FALLOFF_MAX_RANGE_M)
+  const curvedCloseness = Math.pow(closeness, DEW_DAMAGE_RANGE_CURVE_EXPONENT)
+  return DEW_BASE_DAMAGE_AT_MAX_RANGE
+    + (DEW_BASE_DAMAGE_AT_ZERO_RANGE - DEW_BASE_DAMAGE_AT_MAX_RANGE) * curvedCloseness
 }
 
 interface TracedRay {
@@ -484,7 +497,15 @@ const DEW_SCALE_H = 20
 const DEW_SCALE_MAJOR_KM = [0, 5, 10, 15, 20]
 const DEW_SCALE_MINOR_KM = [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19]
 
-function LensFocusDiagram({ enabled, targetRangeM }: { enabled: boolean; targetRangeM: number }) {
+function LensFocusDiagram({
+  enabled,
+  targetRangeM,
+  onAlignmentChange,
+}: {
+  enabled: boolean
+  targetRangeM: number
+  onAlignmentChange?: (alignment: number) => void
+}) {
   const midY = DEW_DIAGRAM_H / 2
   const totalSvgH = DEW_DIAGRAM_H + DEW_SCALE_H
   const lensZoneLeft = 56
@@ -498,7 +519,7 @@ function LensFocusDiagram({ enabled, targetRangeM }: { enabled: boolean; targetR
   const [lensTypes, setLensTypes] = useState<LensType[]>(() =>
     DEW_LENS_DEFS.map(() => 'convex')
   )
-  const [lensWidths, setLensWidths] = useState(() =>
+  const [lensWidths, setLensWidths] = useState<number[]>(() =>
     DEW_LENS_DEFS.map((d) => d.rx)
   )
   const [dragging, setDragging] = useState<number | null>(null)
@@ -563,6 +584,11 @@ function LensFocusDiagram({ enabled, targetRangeM }: { enabled: boolean; targetR
   const focusPct = convergenceX !== null && targetInRange
     ? Math.max(0, Math.round((1 - focusError / (focusZoneWidth * 0.5)) * 100))
     : 0
+  const focusAlignment = enabled && targetInRange ? Math.max(0, Math.min(1, focusPct / 100)) : 0
+
+  useEffect(() => {
+    onAlignmentChange?.(focusAlignment)
+  }, [focusAlignment, onAlignmentChange])
 
   const beamColor = !enabled ? `${AMBER_DIM}44`
     : focusPct > 85 ? '#ff4400'
@@ -783,6 +809,10 @@ function LaserSystemsPanel({
   isArmed,
   hasTarget,
   targetRangeM,
+  onFocusAlignmentChange,
+  capacitor,
+  capacitorMax,
+  onChargingChange,
   onTogglePower,
   onToggleArmed,
   onFire,
@@ -791,6 +821,10 @@ function LaserSystemsPanel({
   isArmed: boolean
   hasTarget: boolean
   targetRangeM: number
+  onFocusAlignmentChange?: (alignment: number) => void
+  capacitor: number
+  capacitorMax: number
+  onChargingChange: (charging: boolean) => void
   onTogglePower: () => void
   onToggleArmed: () => void
   onFire: () => void
@@ -800,6 +834,8 @@ function LaserSystemsPanel({
   const [chargePct, setChargePct] = useState(0)
   const chargeStartRef = useRef<number | null>(null)
   const chargeRafRef = useRef<number | null>(null)
+  const notifiedChargingRef = useRef<boolean>(false)
+  const requiredCapacitor = capacitorMax * 0.1
 
   useEffect(() => {
     if (!active) {
@@ -810,8 +846,32 @@ function LaserSystemsPanel({
     }
   }, [active])
 
+  useEffect(() => {
+    const nextCharging = active && charging && chargePct < 100
+    if (notifiedChargingRef.current === nextCharging) return
+    notifiedChargingRef.current = nextCharging
+    onChargingChange(nextCharging)
+  }, [active, chargePct, charging, onChargingChange])
+
+  useEffect(() => {
+    return () => {
+      notifiedChargingRef.current = false
+      onChargingChange(false)
+    }
+  }, [onChargingChange])
+
+  useEffect(() => {
+    if (charging && capacitor <= 0) {
+      setCharging(false)
+      setChargePct(0)
+      chargeStartRef.current = null
+      if (chargeRafRef.current !== null) cancelAnimationFrame(chargeRafRef.current)
+    }
+  }, [capacitor, charging])
+
   const startCharge = () => {
     if (!active || charging) return
+    if (capacitor < requiredCapacitor) return
     setCharging(true)
     setChargePct(0)
     chargeStartRef.current = performance.now()
@@ -824,6 +884,8 @@ function LaserSystemsPanel({
       setChargePct(pct)
       if (pct < 100) {
         chargeRafRef.current = requestAnimationFrame(tick)
+      } else {
+        setCharging(false)
       }
     }
     chargeRafRef.current = requestAnimationFrame(tick)
@@ -958,7 +1020,7 @@ function LaserSystemsPanel({
               <div style={{ display: 'flex', gap: 4 }}>
                 <button
                   type="button"
-                  disabled={!active || (charging && !charged) || (charged && !hasTarget)}
+                  disabled={!active || (charging && !charged) || (charged && !hasTarget) || (!charged && !charging && capacitor < requiredCapacitor)}
                   onClick={charged ? handleFire : (charging ? resetCharge : startCharge)}
                   style={{
                     height: 18,
@@ -1002,7 +1064,11 @@ function LaserSystemsPanel({
         </div>
 
         {/* lens focus minigame — available whenever system is active */}
-        <LensFocusDiagram enabled={active} targetRangeM={targetRangeM} />
+        <LensFocusDiagram
+          enabled={active}
+          targetRangeM={targetRangeM}
+          onAlignmentChange={onFocusAlignmentChange}
+        />
       </div>
     </WsPanel>
   )
@@ -1289,10 +1355,12 @@ export function WSStation() {
   const setCountermeasuresPowered = useGameStore((state) => state.setCountermeasuresPowered)
   const dewPowered = useGameStore((state) => state.dewPowered)
   const setDewPowered = useGameStore((state) => state.setDewPowered)
+  const setDewCharging = useGameStore((state) => state.setDewCharging)
   const fireDew = useGameStore((state) => state.fireDew)
   const currentCelestialId = useGameStore((state) => state.currentCelestialId)
   const [isCountermeasuresArmed, setIsCountermeasuresArmed] = useState(true)
   const [isDewArmed, setIsDewArmed] = useState(false)
+  const [dewFocusAlignment, setDewFocusAlignment] = useState(0)
   const [flareLaunchCount, setFlareLaunchCount] = useState(3)
   const [flareLaunchMode, setFlareLaunchMode] = useState<'PTN' | 'SGL'>('PTN')
   const [queuedSingleFlares, setQueuedSingleFlares] = useState(0)
@@ -1300,6 +1368,8 @@ export function WSStation() {
   const hasRadarLock = Object.values(ewLockState).some((state) => state === 'hard' || state === 'soft')
   const hasIrstPointTrackTarget = pointTrackEnabled && Boolean(pointTrackTargetId)
   const shipsById = useGameStore((s) => s.shipsById)
+  const localPlayerId = useGameStore((s) => s.localPlayerId)
+  const npcShips = useGameStore((s) => s.npcShips)
   const playerShip = useGameStore((s) => s.ship)
   const dewTargetRangeM = (() => {
     if (!pointTrackTargetId) return 50_000
@@ -1786,17 +1856,43 @@ export function WSStation() {
             isArmed={isDewArmed}
             hasTarget={hasIrstPointTrackTarget}
             targetRangeM={dewTargetRangeM}
+            onFocusAlignmentChange={setDewFocusAlignment}
+            capacitor={playerShip.capacitor}
+            capacitorMax={playerShip.capacitorMax}
+            onChargingChange={setDewCharging}
             onTogglePower={() => setDewPowered(!dewPowered)}
             onToggleArmed={() => setIsDewArmed((a) => !a)}
             onFire={() => {
               if (!pointTrackTargetId) return
               const tgt = shipsById[pointTrackTargetId]
               if (!tgt) return
+              const dx = tgt.position[0] - playerShip.position[0]
+              const dy = tgt.position[1] - playerShip.position[1]
+              const dz = tgt.position[2] - playerShip.position[2]
+              const rangeM = Math.sqrt(dx * dx + dy * dy + dz * dz)
+              const baseDamage = getDewBaseDamageByRange(rangeM)
+              const alignment = Math.max(0, Math.min(1, dewFocusAlignment))
+              const appliedDamage = Math.round(baseDamage * alignment)
+              const isNpcTarget = Boolean(npcShips[pointTrackTargetId])
+              const isLocalTarget = pointTrackTargetId === localPlayerId
+              const shouldSendMultiplayerDamage =
+                multiplayerClient.isConnected()
+                && !isNpcTarget
+                && !isLocalTarget
               fireDew(
                 [...playerShip.position],
                 [...tgt.position],
                 currentCelestialId,
+                pointTrackTargetId,
+                shouldSendMultiplayerDamage ? 0 : appliedDamage,
               )
+              if (shouldSendMultiplayerDamage && appliedDamage > 0) {
+                multiplayerClient.sendShipDamage({
+                  targetShipId: pointTrackTargetId,
+                  damage: appliedDamage,
+                  currentCelestialId,
+                })
+              }
             }}
           />
           <CountermeasuresPanel

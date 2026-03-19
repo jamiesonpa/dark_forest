@@ -2,6 +2,7 @@ import { Client, type Room } from 'colyseus.js'
 import type { StarSystemGenerationConfig, StarSystemSnapshot } from '@/types/game'
 import type {
   OrdnanceSnapshotMessage,
+  ShipDamageMessage,
   ShipMoveUpdate,
   ShipsSnapshotMessage,
   WarpIntentPayload,
@@ -18,6 +19,7 @@ type Handlers = {
   onJoined?: (sessionId: string) => void
   onShipsUpdate?: (shipsById: Record<string, NetworkShipSnapshot>) => void
   onOrdnanceUpdate?: (snapshot: OrdnanceSnapshotMessage) => void
+  onShipDamage?: (message: ShipDamageMessage) => void
   onStarSystemUpdate?: (snapshot: StarSystemSnapshot) => void
 }
 
@@ -62,6 +64,9 @@ class ColyseusMultiplayerClient {
       })
       room.onMessage('ordnance_snapshot', (snapshot: OrdnanceSnapshotMessage) => {
         this.handlers.onOrdnanceUpdate?.(snapshot)
+      })
+      room.onMessage('ship_damage', (message: ShipDamageMessage) => {
+        this.handlers.onShipDamage?.(message)
       })
       room.onMessage('star_system_snapshot', (snapshot: StarSystemSnapshot) => {
         this.handlers.onStarSystemUpdate?.(snapshot)
@@ -130,6 +135,11 @@ class ColyseusMultiplayerClient {
       actualInclination: update.actualInclination,
       rollAngle: update.rollAngle,
     })
+  }
+
+  sendShipDamage(message: ShipDamageMessage) {
+    if (!this.room) return
+    this.room.send('ship_damage', message)
   }
 
   sendWarp(celestialId: string) {

@@ -27,6 +27,7 @@ export function Grid() {
   const ships = useMemo(
     () =>
       Object.entries(shipsById).filter(([id, ship]) => {
+        if (ship.hull <= 0) return false
         if (id === localPlayerId) return true
         if (offGridWarpActive) return false
         return ship.currentCelestialId === currentCelestialId && !ship.inWarpTransit

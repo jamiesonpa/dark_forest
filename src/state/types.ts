@@ -117,6 +117,10 @@ export interface TorpedoExplosion {
   position: [number, number, number]
   flightTimeSeconds: number
   targetShipId?: string
+  kind?: 'torpedo' | 'ship-destruction'
+  sizeMultiplier?: number
+  lifetimeSeconds?: number
+  glowMultiplier?: number
 }
 
 export interface DewBeam {
@@ -231,6 +235,7 @@ export interface GameStore {
   flareInventoryMax: number
   countermeasuresPowered: boolean
   dewPowered: boolean
+  dewCharging: boolean
   remoteLaunchedCylinders: LaunchedCylinder[]
   remoteLaunchedFlares: LaunchedFlare[]
   remoteTorpedoExplosions: TorpedoExplosion[]
@@ -255,13 +260,25 @@ export interface GameStore {
   setPlayerShipBoundingLength: (length: number) => void
   setCountermeasuresPowered: (powered: boolean) => void
   setDewPowered: (powered: boolean) => void
+  setDewCharging: (charging: boolean) => void
   launchLockedCylinder: (shipBoundingLength: number) => void
   advanceLaunchedCylinders: (deltaSeconds: number) => void
   launchFlares: (shipBoundingLength: number, options?: FlareLaunchOptions) => void
   advanceLaunchedFlares: (deltaSeconds: number) => void
   advanceTorpedoExplosions: (deltaSeconds: number) => void
   addTorpedoExplosion: (explosion: TorpedoExplosion) => void
-  fireDew: (originPosition: [number, number, number], targetPosition: [number, number, number], celestialId: string) => void
+  applyShipDamage: (
+    targetShipId: string,
+    damage: number,
+    options?: { currentCelestialId?: string }
+  ) => void
+  fireDew: (
+    originPosition: [number, number, number],
+    targetPosition: [number, number, number],
+    celestialId: string,
+    targetShipId?: string,
+    damage?: number
+  ) => void
   advanceDewBeams: () => void
   setRemoteOrdnanceSnapshot: (snapshot: OrdnanceSnapshotMessage) => void
   clearRemoteOrdnance: () => void

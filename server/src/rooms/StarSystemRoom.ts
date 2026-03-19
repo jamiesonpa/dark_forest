@@ -2,13 +2,18 @@ import colyseus, { type Client } from 'colyseus'
 import type {
   MoveMessage,
   OrdnanceSnapshotMessage,
+  ShipDamageMessage,
   WarpMessage,
+  WireLaunchedCylinder,
+  WireLaunchedFlare,
   WireOrdnanceSnapshot,
+  WireTorpedoExplosion,
 } from '../../../shared/contracts/multiplayer.js'
 import { ROOM_MESSAGES } from '../net/messages.js'
 import { applyMoveMessage, applyWarpMessage, buildShipsSnapshot } from '../net/shipSnapshots.js'
 import { createShipForJoin } from '../rooms/roomLifecycle.js'
 import { StarSystemRoomState } from '../schema/GameState.js'
+import type { ShipState } from '../schema/GameState.js'
 import {
   computeSpawnAnchorIds,
   respawnShipsByAnchorOrder,
@@ -38,19 +43,41 @@ function asMessageArray<T>(value: unknown): T[] {
 }
 
 function toOrdnanceSnapshotFromMove(message: MoveMessage): WireOrdnanceSnapshot {
-  const launchedCylinders = asMessageArray(message.launchedCylinders)
+  const launchedCylinders = asMessageArray<WireLaunchedCylinder>(message.launchedCylinders)
     .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
     .map((cylinder) => ({ ...cylinder }))
-  const launchedFlares = asMessageArray(message.launchedFlares)
+  const launchedFlares = asMessageArray<WireLaunchedFlare>(message.launchedFlares)
     .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
     .map((flare) => ({ ...flare }))
-  const torpedoExplosions = asMessageArray(message.torpedoExplosions)
+  const torpedoExplosions = asMessageArray<WireTorpedoExplosion>(message.torpedoExplosions)
     .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
     .map((explosion) => ({ ...explosion }))
   return {
     launchedCylinders,
     launchedFlares,
     torpedoExplosions,
+  }
+}
+
+function applyLayeredDamage(
+  target: ShipState,
+  damage: number
+) {
+  let remaining = Math.max(0, damage)
+  if (remaining <= 0) return
+
+  if (target.shieldsUp && target.shield > 0) {
+    const absorbed = Math.min(target.shield, remaining)
+    target.shield = Math.max(0, target.shield - absorbed)
+    remaining -= absorbed
+  }
+  if (remaining > 0 && target.armor > 0) {
+    const absorbed = Math.min(target.armor, remaining)
+    target.armor = Math.max(0, target.armor - absorbed)
+    remaining -= absorbed
+  }
+  if (remaining > 0) {
+    target.hull = Math.max(0, target.hull - remaining)
   }
 }
 
@@ -145,6 +172,29 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
       this.broadcastSnapshot()
       this.broadcastOrdnanceSnapshot()
       this.logMoveDebug(client, message)
+    })
+
+    this.onMessage(ROOM_MESSAGES.shipDamage, (client, message: ShipDamageMessage) => {
+      const source = this.state.ships.get(client.sessionId)
+      const target = this.state.ships.get(message.targetShipId)
+      if (!source || !target) return
+      if (source.currentCelestialId !== target.currentCelestialId) return
+      if (
+        message.currentCelestialId
+        && target.currentCelestialId !== message.currentCelestialId
+      ) {
+        return
+      }
+
+      const appliedDamage = Math.max(0, message.damage)
+      if (!Number.isFinite(appliedDamage) || appliedDamage <= 0) return
+      applyLayeredDamage(target, appliedDamage)
+      this.broadcastSnapshot()
+      this.broadcast(ROOM_MESSAGES.shipDamage, {
+        targetShipId: message.targetShipId,
+        damage: appliedDamage,
+        currentCelestialId: target.currentCelestialId,
+      } satisfies ShipDamageMessage)
     })
   }
 

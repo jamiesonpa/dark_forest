@@ -1,5 +1,6 @@
 Dark Forest - Player Manual
 Version: Living document (updated with gameplay changes)
+Last Updated: 2026-03-19
 
 Introduction
 Dark Forest is a multi-station ship operations game. Crew members can switch stations at any time, but the best results come from coordinated roles:
@@ -15,8 +16,8 @@ Global Controls (All Stations)
 
 Station Switching
 - F1 -> Pilot station
-- F2 -> EW Officer station
-- F3 -> WS Officer station
+- F2 -> EWO station
+- F3 -> WSO station
 
 Ship-Wide Quick Toggles
 - Backspace -> Toggle nav attitude mode (AA <-> DAC)
@@ -153,3 +154,13 @@ Change Log Policy
 This file is intended to stay current with gameplay changes.
 - Whenever controls, station behavior, or roles change, update this manual in the same work session when possible.
 - If a feature is present in UI but not functionally complete, document it as "in progress" rather than fully operational.
+
+========================================
+Quick Start (First 60 Seconds)
+========================================
+
+1) Press F1 (Pilot) and verify dampeners/nav mode baseline.
+2) Press F2 (EWO), power scanners, and build first contact picture.
+3) Coordinate heading/speed and EMCON posture between Pilot and EWO.
+4) Use Enter (MWD) and G/WARP only when capacitor/alignment conditions are met.
+5) If threat spikes, Pilot prioritizes maneuver + shields while EWO maintains lock quality.

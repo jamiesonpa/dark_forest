@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { multiplayerClient, type MultiplayerStatus } from '@/network/colyseusClient'
 import { useGameStore } from '@/state/gameStore'
-import type { OrdnanceSnapshotMessage } from '../../shared/contracts/multiplayer'
+import type { OrdnanceSnapshotMessage, ShipDamageMessage } from '../../shared/contracts/multiplayer'
 
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 
@@ -21,6 +21,7 @@ export function useMultiplayerLifecycle({
   const setCurrentCelestial = useGameStore((state) => state.setCurrentCelestial)
   const setEwRevealedCelestialIds = useGameStore((state) => state.setEwRevealedCelestialIds)
   const setStarSystemSnapshot = useGameStore((state) => state.setStarSystemSnapshot)
+  const applyShipDamage = useGameStore((state) => state.applyShipDamage)
 
   useEffect(() => {
     multiplayerClient.setHandlers({
@@ -73,6 +74,13 @@ export function useMultiplayerLifecycle({
         ) as OrdnanceSnapshotMessage
         setRemoteOrdnanceSnapshot(remoteOnlySnapshot)
       },
+      onShipDamage: (message: ShipDamageMessage) => {
+        const localPlayerId = useGameStore.getState().localPlayerId
+        if (message.targetShipId !== localPlayerId) return
+        applyShipDamage(message.targetShipId, message.damage, {
+          currentCelestialId: message.currentCelestialId,
+        })
+      },
       onStarSystemUpdate: (snapshot) => {
         setStarSystemSnapshot(snapshot)
       },
@@ -81,5 +89,5 @@ export function useMultiplayerLifecycle({
     return () => {
       multiplayerClient.disconnect()
     }
-  }, [clearRemoteOrdnance, setCurrentCelestial, setEwRevealedCelestialIds, setLocalPlayerId, setRemoteOrdnanceSnapshot, setStarSystemSnapshot, setStatus, setStatusDetail, upsertRemoteShips])
+  }, [applyShipDamage, clearRemoteOrdnance, setCurrentCelestial, setEwRevealedCelestialIds, setLocalPlayerId, setRemoteOrdnanceSnapshot, setStarSystemSnapshot, setStatus, setStatusDetail, upsertRemoteShips])
 }

@@ -73,7 +73,10 @@ const WARP_MIN_POST_CAPACITOR = 1
 const CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC = 120
 const CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN = 0.6
 const CAPACITOR_RECHARGE_COUNTERMEASURES_OFF_MULTIPLIER = 1.1
+const CAPACITOR_RECHARGE_DEW_OFF_MULTIPLIER = 1.1
 const CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN = 0.15
+const DEW_CAPACITOR_DRAIN_FRACTION_PER_CHARGE = 0.1
+const DEW_CHARGE_DURATION_SECONDS = 10
 const SHIELD_RECHARGE_PER_SECOND_AT_100_PCT = 100
 const SHIELD_RECHARGE_CAP_DRAIN_FRACTION_PER_SECOND_AT_100_PCT = 0.01
 const SHIELD_ONLINE_RAMP_SECONDS_AT_MAX = 2
@@ -92,6 +95,9 @@ const ORIENT_DEBUG_COMMAND_RATE_MULTIPLIER = 5
 const DAC_DIRECT_BEARING_RATE_MULTIPLIER = 0.38
 const DAC_DIRECT_INCLINATION_RATE_MULTIPLIER = 0.55
 const DAC_ROLL_RATE_MULTIPLIER = 0.9
+const SHIP_DESTRUCTION_EXPLOSION_SIZE_MULTIPLIER = 5
+const SHIP_DESTRUCTION_EXPLOSION_LIFETIME_SECONDS = 36
+const SHIP_DESTRUCTION_EXPLOSION_GLOW_MULTIPLIER = 2.5
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 const TORPEDO_DAMAGE = 7000
 const PT_TRACK_MAX_RANGE_M = 100_000
@@ -162,6 +168,7 @@ export function SimulationLoop() {
   const dampenersRecoveryActiveRef = useRef(false)
   const dampenersRecoveryCapDebtRef = useRef(0)
   const remoteExplosionDamageIdsRef = useRef(new Set<string>())
+  const knownShipHullRef = useRef<Record<string, number>>({})
 
   useEffect(() => {
     const thrustEuler = new THREE.Euler(0, 0, 0, 'YXZ')
@@ -809,9 +816,12 @@ export function SimulationLoop() {
         (state.ewUpperScannerOn ? 0 : 1) +
         (state.ewLowerScannerOn ? 0 : 1) +
         (state.irstCameraOn ? 0 : 1)
-      const capacitorRechargeFraction = state.countermeasuresPowered
+      let capacitorRechargeFraction = state.countermeasuresPowered
         ? CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN
         : CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN * CAPACITOR_RECHARGE_COUNTERMEASURES_OFF_MULTIPLIER
+      if (!state.dewPowered) {
+        capacitorRechargeFraction *= CAPACITOR_RECHARGE_DEW_OFF_MULTIPLIER
+      }
       let nextCapacitor = getNextCapacitor({
         capacitor: ship.capacitor,
         capacitorMax: ship.capacitorMax,
@@ -825,6 +835,11 @@ export function SimulationLoop() {
         dampenersRecoveryDrain: dampenersRecoveryDrainThisFrame,
         dt,
       })
+      if (state.dewCharging && ship.capacitorMax > 0) {
+        const dewCapDrainPerSecond =
+          (ship.capacitorMax * DEW_CAPACITOR_DRAIN_FRACTION_PER_CHARGE) / DEW_CHARGE_DURATION_SECONDS
+        nextCapacitor = clamp(nextCapacitor - dewCapDrainPerSecond * dt, 0, ship.capacitorMax)
+      }
       const shieldRecharge = getShieldRechargeFrame({
         shieldsUp: ship.shieldsUp,
         shield: ship.shield,
@@ -909,6 +924,34 @@ export function SimulationLoop() {
         if (!activeExplosionIds.has(processedId)) {
           remoteExplosionDamageIdsRef.current.delete(processedId)
         }
+      }
+      const nextKnownShipHull: Record<string, number> = {}
+      const npcIdsToRemove: string[] = []
+      for (const [shipId, knownShip] of Object.entries(latestState.shipsById)) {
+        const currentHull = Math.max(0, knownShip.hull)
+        const previousHull = knownShipHullRef.current[shipId] ?? currentHull
+        nextKnownShipHull[shipId] = currentHull
+        if (!(previousHull > 0 && currentHull <= 0)) {
+          continue
+        }
+        latestState.addTorpedoExplosion({
+          id: `ship-destruction-${shipId}-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+          currentCelestialId: knownShip.currentCelestialId,
+          position: [...knownShip.position],
+          flightTimeSeconds: 0,
+          targetShipId: shipId,
+          kind: 'ship-destruction',
+          sizeMultiplier: SHIP_DESTRUCTION_EXPLOSION_SIZE_MULTIPLIER,
+          lifetimeSeconds: SHIP_DESTRUCTION_EXPLOSION_LIFETIME_SECONDS,
+          glowMultiplier: SHIP_DESTRUCTION_EXPLOSION_GLOW_MULTIPLIER,
+        })
+        if (latestState.npcShips[shipId]) {
+          npcIdsToRemove.push(shipId)
+        }
+      }
+      knownShipHullRef.current = nextKnownShipHull
+      for (const npcId of npcIdsToRemove) {
+        latestState.removeNpcShip(npcId)
       }
       sendMoveIfDue(lastMoveSendMsRef, {
         position: newPos,

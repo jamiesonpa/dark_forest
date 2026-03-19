@@ -124,6 +124,12 @@ export interface ShipMoveUpdate {
   rollAngle: number
 }
 
+export interface ShipDamageMessage {
+  targetShipId: string
+  damage: number
+  currentCelestialId?: string
+}
+
 export interface WarpMessage {
   celestialId: string
 }

@@ -298,6 +298,40 @@ function sanitizeNetworkExplosions(
   return next
 }
 
+function applyLayeredDamageToShip(
+  ship: GameStore['ship'],
+  damage: number
+): GameStore['ship'] {
+  const appliedDamage = Math.max(0, damage)
+  if (appliedDamage <= 0) return ship
+
+  let remaining = appliedDamage
+  let shield = ship.shield
+  let armor = ship.armor
+  let hull = ship.hull
+
+  if (ship.shieldsUp && shield > 0) {
+    const absorbed = Math.min(shield, remaining)
+    shield -= absorbed
+    remaining -= absorbed
+  }
+  if (remaining > 0 && armor > 0) {
+    const absorbed = Math.min(armor, remaining)
+    armor -= absorbed
+    remaining -= absorbed
+  }
+  if (remaining > 0) {
+    hull = Math.max(0, hull - remaining)
+  }
+
+  return {
+    ...ship,
+    shield,
+    armor,
+    hull,
+  }
+}
+
 export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<GameStore>> = (set) => ({
   starSystem: DEFAULT_STAR_SYSTEM_SNAPSHOT.system,
   starSystemSeed: DEFAULT_STAR_SYSTEM_SNAPSHOT.seed,
@@ -344,6 +378,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   flareInventoryMax: FLARE_STARTING_INVENTORY,
   countermeasuresPowered: true,
   dewPowered: false,
+  dewCharging: false,
   remoteLaunchedCylinders: [],
   remoteLaunchedFlares: [],
   remoteTorpedoExplosions: [],
@@ -506,9 +541,14 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       countermeasuresPowered: powered,
     }),
   setDewPowered: (powered) =>
-    set({
+    set((s) => ({
       dewPowered: powered,
-    }),
+      dewCharging: powered ? s.dewCharging : false,
+    })),
+  setDewCharging: (charging) =>
+    set((s) => ({
+      dewCharging: s.dewPowered ? charging : false,
+    })),
   launchLockedCylinder: (shipBoundingLength) =>
     set((s) => {
       if (!hasRadarLock(s.ewLockState)) {
@@ -831,7 +871,11 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
             ...explosion,
             flightTimeSeconds: explosion.flightTimeSeconds + deltaSeconds,
           }))
-          .filter((explosion) => explosion.flightTimeSeconds <= TORPEDO_EXPLOSION_LIFETIME_SECONDS),
+          .filter(
+            (explosion) =>
+              explosion.flightTimeSeconds
+              <= (explosion.lifetimeSeconds ?? TORPEDO_EXPLOSION_LIFETIME_SECONDS)
+          ),
       }
     }),
   addTorpedoExplosion: (explosion) =>
@@ -844,19 +888,69 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
         },
       ],
     })),
-  fireDew: (originPosition, targetPosition, celestialId) =>
-    set((s) => ({
-      dewBeams: [
-        ...s.dewBeams,
-        {
-          id: `dew-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          currentCelestialId: celestialId,
-          originPosition,
-          targetPosition,
-          firedAtMs: performance.now(),
-        },
-      ],
-    })),
+  applyShipDamage: (targetShipId, damage, options) =>
+    set((s) => {
+      const target = s.shipsById[targetShipId]
+      const appliedDamage = Math.max(0, damage)
+      if (!target || appliedDamage <= 0) return {}
+      if (
+        options?.currentCelestialId
+        && target.currentCelestialId !== options.currentCelestialId
+      ) {
+        return {}
+      }
+
+      const updatedTarget = applyLayeredDamageToShip(target, appliedDamage)
+      const nextShipsById = {
+        ...s.shipsById,
+        [targetShipId]: updatedTarget,
+      }
+      const nextState: Partial<GameStore> = {
+        shipsById: nextShipsById,
+      }
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      if (targetShipId === localId) {
+        nextState.ship = updatedTarget
+      }
+      return nextState
+    }),
+  fireDew: (originPosition, targetPosition, celestialId, targetShipId, damage = 0) =>
+    set((s) => {
+      const nextState: Partial<GameStore> = {
+        dewBeams: [
+          ...s.dewBeams,
+          {
+            id: `dew-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            currentCelestialId: celestialId,
+            originPosition,
+            targetPosition,
+            firedAtMs: performance.now(),
+          },
+        ],
+      }
+      const appliedDamage = Math.max(0, damage)
+      if (!targetShipId || appliedDamage <= 0) {
+        return nextState
+      }
+      const target = s.shipsById[targetShipId]
+      if (!target || target.currentCelestialId !== celestialId) {
+        return nextState
+      }
+
+      const updatedTarget = applyLayeredDamageToShip(target, appliedDamage)
+      const nextShipsById = {
+        ...s.shipsById,
+        [targetShipId]: updatedTarget,
+      }
+      nextState.shipsById = nextShipsById
+
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      if (targetShipId === localId) {
+        nextState.ship = updatedTarget
+      }
+
+      return nextState
+    }),
   advanceDewBeams: () =>
     set((s) => {
       if (s.dewBeams.length === 0) return {}

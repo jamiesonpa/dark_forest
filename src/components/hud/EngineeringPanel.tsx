@@ -5,6 +5,7 @@ import { clamp } from '@/systems/simulation/lib/math'
 const CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC = 120
 const CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN = 0.6
 const CAPACITOR_RECHARGE_COUNTERMEASURES_OFF_MULTIPLIER = 1.1
+const CAPACITOR_RECHARGE_DEW_OFF_MULTIPLIER = 1.1
 const CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN = 0.15
 const MAX_SELECTED_SPEED = 215
 
@@ -16,6 +17,7 @@ export function EngineeringPanel() {
   const ewLowerScannerOn = useGameStore((s) => s.ewLowerScannerOn)
   const irstCameraOn = useGameStore((s) => s.irstCameraOn)
   const countermeasuresPowered = useGameStore((s) => s.countermeasuresPowered)
+  const dewPowered = useGameStore((s) => s.dewPowered)
   const ewRadarPower = useGameStore((s) => s.ewRadarPower)
   const targetSpeed = useGameStore((s) => s.ship.targetSpeed)
   const mwdActive = useGameStore((s) => s.ship.mwdActive)
@@ -33,9 +35,12 @@ export function EngineeringPanel() {
   const radarPowerNorm = clamp(ewRadarPower, 0, 100) / 100
   const radarLowPowerRechargeBonus = 1 + (1 - radarPowerNorm) * 0.2
   const capacitorDrainPerSecondAtMaxSpeed = capacitorMax / CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC
-  const baseRechargeFraction = countermeasuresPowered
+  let baseRechargeFraction = countermeasuresPowered
     ? CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN
     : CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN * CAPACITOR_RECHARGE_COUNTERMEASURES_OFF_MULTIPLIER
+  if (!dewPowered) {
+    baseRechargeFraction *= CAPACITOR_RECHARGE_DEW_OFF_MULTIPLIER
+  }
   const capRechargePerSecond =
     capacitorDrainPerSecondAtMaxSpeed
     * baseRechargeFraction
