@@ -31,6 +31,7 @@ export const defaultShipState: ShipState = {
   thermalSignature: 285,
   radioSignature: -42,
   irstMode: 'BHOT',
+  irstSpectrumMode: 'IR',
   laserRange: -1,
   irstZoom: 2,
   irstBearing: 0,

@@ -1,4 +1,4 @@
-export type StationId = 'pilot' | 'ew'
+export type StationId = 'pilot' | 'ew' | 'ws'
 
 interface StationSelectorProps {
   current: StationId
@@ -8,6 +8,7 @@ interface StationSelectorProps {
 const STATIONS: { id: StationId; label: string; key: string }[] = [
   { id: 'pilot', label: 'PILOT', key: 'F1' },
   { id: 'ew', label: 'EW OFFICER', key: 'F2' },
+  { id: 'ws', label: 'WS OFFICER', key: 'F3' },
 ]
 
 export function StationSelector({ current, onSwitch }: StationSelectorProps) {

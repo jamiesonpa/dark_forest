@@ -39,6 +39,7 @@ export interface ShipState {
   thermalSignature: number
   radioSignature: number
   irstMode: 'BHOT' | 'WHOT'
+  irstSpectrumMode: 'IR' | 'VIS'
   laserRange: number
   irstZoom: number
   irstBearing: number
@@ -154,6 +155,7 @@ export interface GameStore {
   ewRadarPRF: string
   ewUpperScannerOn: boolean
   ewLowerScannerOn: boolean
+  irstCameraOn: boolean
   ewJammers: EwJammerState[]
   ewActiveGravAnalysis: EwGravAnalysisSession | null
   ewLastGravAnalysisResult: EwGravAnalysisResult | null
@@ -161,6 +163,7 @@ export interface GameStore {
   setEwJammers: (jammers: EwJammerState[]) => void
   setEwUpperScannerOn: (on: boolean) => void
   setEwLowerScannerOn: (on: boolean) => void
+  setIrstCameraOn: (on: boolean) => void
   startEwGravAnalysis: (session: EwGravAnalysisSession) => void
   completeEwGravAnalysis: () => void
   cancelEwGravAnalysis: () => void

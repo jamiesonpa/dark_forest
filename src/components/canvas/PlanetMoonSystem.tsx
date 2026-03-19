@@ -16,7 +16,7 @@ const DISTANT_BODY_PRELANDING_MAX_SCALE = DISTANT_BODY_MAX_SCALE * 0.92
 const DISTANT_BODY_APPARENT_SIZE_TUNING = 0.08
 const WARPING_STATES = new Set(['warping', 'landing'])
 const DEFAULT_BODY_DIRECTION = new THREE.Vector3(0.18, 0.11, 0.97).normalize()
-const PLANET_TEXTURE_TINT = '#8a8a8a'
+const PLANET_TEXTURE_TINT = '#b8b8b8'
 const PLANET_TEXTURE_MODULES = (
   import.meta as unknown as {
     glob: (
@@ -254,6 +254,9 @@ export function PlanetMoonSystem() {
 
       const material = mesh.material as THREE.MeshStandardMaterial
       material.opacity = 1
+      material.color.set(material.map ? PLANET_TEXTURE_TINT : bodyColor())
+      material.emissive.set(0x000000)
+      material.emissiveIntensity = 0
     }
 
     for (const body of distantBodies) {
@@ -277,6 +280,7 @@ export function PlanetMoonSystem() {
               bodyRefs.current[body.id] = value
               if (value) {
                 value.layers.set(2)
+                value.layers.enable(1)
                 value.visible = false
                 value.userData.ignoreSunOcclusion = true
               }
@@ -291,7 +295,7 @@ export function PlanetMoonSystem() {
               color={hasPlanetTexture ? PLANET_TEXTURE_TINT : bodyColor()}
               transparent={false}
               opacity={1}
-              depthWrite={false}
+              depthWrite
               depthTest
               metalness={0.02}
               roughness={0.98}

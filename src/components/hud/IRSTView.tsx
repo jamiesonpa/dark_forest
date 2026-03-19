@@ -15,13 +15,39 @@ function clampInclination(deg: number): number {
 }
 
 function clampZoom(zoom: number): number {
-  return Math.max(1, Math.min(10, zoom))
+  return Math.max(1, Math.min(20, zoom))
 }
 
-const IRST_DRAG_DEG_PER_PX = 0.2
-const IRST_ZOOM_DELTA_PER_WHEEL = 0.0025
+const IRST_BASE_DRAG_DEG_PER_PX = 0.2
+const IRST_DISPLAY_WIDTH = 320
+const IRST_DISPLAY_HEIGHT = 240
+const IRST_ZOOM_LEVELS = Array.from({ length: 20 }, (_, i) => i + 1)
 
-export function IRSTView() {
+function dragDegPerPixelForZoom(zoom: number): number {
+  const safeZoom = clampZoom(zoom)
+  return IRST_BASE_DRAG_DEG_PER_PX / safeZoom
+}
+
+function closestZoomLevel(zoom: number): number {
+  let closest = IRST_ZOOM_LEVELS[0] ?? 1
+  let bestDistance = Math.abs(zoom - closest)
+  for (const level of IRST_ZOOM_LEVELS) {
+    const distance = Math.abs(zoom - level)
+    if (distance < bestDistance) {
+      closest = level
+      bestDistance = distance
+    }
+  }
+  return closest
+}
+
+type IRSTViewProps = {
+  displayScale?: number
+  showPowerToggle?: boolean
+  onPowerChange?: (on: boolean) => void
+}
+
+export function IRSTView({ displayScale = 1, showPowerToggle = false, onPowerChange }: IRSTViewProps) {
   const displayRef = useRef<HTMLCanvasElement>(null)
   const dragRef = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -29,10 +55,15 @@ export function IRSTView() {
   const irstBearing = useGameStore((s) => s.ship.irstBearing)
   const irstInclination = useGameStore((s) => s.ship.irstInclination)
   const irstMode = useGameStore((s) => s.ship.irstMode)
+  const irstSpectrumMode = useGameStore((s) => s.ship.irstSpectrumMode)
   const laserRange = useGameStore((s) => s.ship.laserRange)
   const actualSpeed = useGameStore((s) => s.ship.actualSpeed)
   const irstZoom = useGameStore((s) => s.ship.irstZoom)
+  const irstCameraOn = useGameStore((s) => s.irstCameraOn)
   const setShipState = useGameStore((s) => s.setShipState)
+  const setIrstCameraOn = useGameStore((s) => s.setIrstCameraOn)
+  const displayWidth = Math.round(IRST_DISPLAY_WIDTH * displayScale)
+  const displayHeight = Math.round(IRST_DISPLAY_HEIGHT * displayScale)
 
   useEffect(() => {
     if (!canvas || !displayRef.current) return
@@ -50,8 +81,10 @@ export function IRSTView() {
   }, [canvas])
 
   const zoom = irstZoom.toFixed(1)
+  const modeLabel = irstSpectrumMode === 'VIS' ? 'VIS' : irstMode
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!irstCameraOn) return
     if (e.button !== 0) return
     e.preventDefault()
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -60,6 +93,7 @@ export function IRSTView() {
   }
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!irstCameraOn) return
     const drag = dragRef.current
     if (!drag || drag.pointerId !== e.pointerId) return
     e.preventDefault()
@@ -72,8 +106,9 @@ export function IRSTView() {
     drag.lastY = e.clientY
 
     const ship = useGameStore.getState().ship
-    const nextBearing = normalizeBearing(ship.irstBearing - dx * IRST_DRAG_DEG_PER_PX)
-    const nextInclination = clampInclination(ship.irstInclination - dy * IRST_DRAG_DEG_PER_PX)
+    const dragDegPerPx = dragDegPerPixelForZoom(ship.irstZoom)
+    const nextBearing = normalizeBearing(ship.irstBearing - dx * dragDegPerPx)
+    const nextInclination = clampInclination(ship.irstInclination - dy * dragDegPerPx)
     useGameStore.getState().setShipState({
       irstBearing: nextBearing,
       irstInclination: nextInclination,
@@ -87,10 +122,15 @@ export function IRSTView() {
   }
 
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!irstCameraOn) return
     e.preventDefault()
     const ship = useGameStore.getState().ship
-    const deltaZoom = -e.deltaY * IRST_ZOOM_DELTA_PER_WHEEL
-    const nextZoom = clampZoom(ship.irstZoom + deltaZoom)
+    const currentZoom = closestZoomLevel(ship.irstZoom)
+    const currentIndex = IRST_ZOOM_LEVELS.indexOf(currentZoom)
+    const wheelDirection = Math.sign(e.deltaY)
+    const directionStep = wheelDirection > 0 ? -1 : 1
+    const nextIndex = Math.max(0, Math.min(IRST_ZOOM_LEVELS.length - 1, currentIndex + directionStep))
+    const nextZoom = clampZoom(IRST_ZOOM_LEVELS[nextIndex] ?? currentZoom)
     useGameStore.getState().setShipState({ irstZoom: nextZoom })
   }
 
@@ -100,7 +140,24 @@ export function IRSTView() {
         <div className="irst-panel">
           <div className="irst-header">
             <span className="irst-label">IRST</span>
-            <span className="irst-status">TRK</span>
+            {showPowerToggle ? (
+              <div className="irst-header-controls">
+                <button
+                  type="button"
+                  className={`irst-power-btn${irstCameraOn ? ' on' : ''}`}
+                  onClick={() => {
+                    const nextOn = !irstCameraOn
+                    setIrstCameraOn(nextOn)
+                    onPowerChange?.(nextOn)
+                  }}
+                  aria-label="Toggle IRST camera power"
+                >
+                  {irstCameraOn ? 'ON' : 'OFF'}
+                </button>
+              </div>
+            ) : (
+              <span className="irst-status">{irstCameraOn ? 'TRK' : 'OFF'}</span>
+            )}
           </div>
           <div
             className={`irst-viewport${isDragging ? ' is-dragging' : ''}`}
@@ -113,10 +170,15 @@ export function IRSTView() {
           >
             <canvas
               ref={displayRef}
-              width={320}
-              height={240}
+              width={displayWidth}
+              height={displayHeight}
               className="irst-canvas"
+              style={{
+                width: `${displayWidth}px`,
+                height: `${displayHeight}px`,
+              }}
             />
+            <div className="irst-vcr-overlay" />
             <div className="irst-overlay">
               <div className="irst-bracket">
                 <div className="bracket-corner tl" />
@@ -130,7 +192,7 @@ export function IRSTView() {
               </div>
 
               <div className="irst-hud-bl">
-                <span className="irst-mode">{irstMode}</span>
+                <span className="irst-mode">{modeLabel}</span>
               </div>
 
               <div className="irst-hud-br">
@@ -156,14 +218,15 @@ export function IRSTView() {
         </div>
       </div>
       <div className="irst-zoom-slider">
-        <span className="irst-zoom-label">10x</span>
+        <span className="irst-zoom-label">20x</span>
         <input
           type="range"
           min={1}
-          max={10}
-          step={0.5}
+          max={20}
+          step={1}
           value={irstZoom}
-          onChange={(e) => setShipState({ irstZoom: Number(e.target.value) })}
+          disabled={!irstCameraOn}
+          onChange={(e) => setShipState({ irstZoom: closestZoomLevel(Number(e.target.value)) })}
           className="irst-zoom-input"
         />
         <span className="irst-zoom-label">1x</span>

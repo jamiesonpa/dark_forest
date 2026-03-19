@@ -1,0 +1,155 @@
+Dark Forest - Player Manual
+Version: Living document (updated with gameplay changes)
+
+Introduction
+Dark Forest is a multi-station ship operations game. Crew members can switch stations at any time, but the best results come from coordinated roles:
+- Pilot controls ship motion, attitude, warp entry, and defensive systems.
+- EWO (Electronic Warfare Officer) manages sensors, contact tracking, lock management, and target data for the team.
+- WSO (Weapons and Systems Officer) is present as a station slot, with core gameplay systems still in progress.
+
+This manual documents controls and workflows that are currently implemented in the game build.
+
+========================================
+Global Controls (All Stations)
+========================================
+
+Station Switching
+- F1 -> Pilot station
+- F2 -> EW Officer station
+- F3 -> WS Officer station
+
+Ship-Wide Quick Toggles
+- Backspace -> Toggle nav attitude mode (AA <-> DAC)
+  - Only triggers when you are not typing in an input field.
+- Enter -> Activate MWD
+  - Only triggers when you are not typing in an input field.
+  - If MWD cannot activate (cooldown/capacitor/other gating), the request is ignored.
+
+========================================
+Role: Pilot
+========================================
+
+Pilot Responsibilities
+- Fly and orient the ship.
+- Manage speed, dampeners, shields, MWD timing, and warp execution.
+- Keep the ship aligned with EW targeting and mission objectives.
+
+Pilot Keyboard Flight Controls
+- A / D -> Yaw command (bearing left/right)
+- W / S -> Pitch command (inclination up/down)
+- Shift (left or right) -> Increase target speed
+- Ctrl (left or right) -> Decrease target speed
+- Space -> Toggle inertial dampeners on/off
+- G -> Engage warp to selected destination (only if alignment and capacitor checks pass)
+- Q / E -> Roll control in DAC mode
+
+Pilot HUD / Mouse Controls
+- Nav Mode toggle:
+  - AA = Attitude Assist
+  - DAC = Direct Attitude Control
+- Nav solution panel (AA + dampeners online):
+  - Click/point in bearing scope to set commanded bearing.
+  - Click/point in inclination meter to set commanded inclination.
+- DMP button -> Toggle dampeners.
+- SHD button -> Raise/lower shields.
+- MWD panel:
+  - Set MWD duration with the slider.
+  - Press MWD button to start burn when available.
+- Warp panel:
+  - Set warp arrival distance with slider.
+  - Press WARP button when ready.
+- Launch controls:
+  - LAUNCH fires a locked cylinder (requires at least one EW soft/hard lock).
+  - FLARE deploys flares.
+
+Pilot Operating Notes
+- In AA mode, ship tracks commanded attitude.
+- In DAC mode, controls become direct attitude inputs and Q/E roll is active.
+- With dampeners offline, movement/inertia behavior changes significantly; coordinate this with EW before aggressive maneuvers.
+
+========================================
+Role: EWO (Electronic Warfare Officer)
+========================================
+
+EWO Responsibilities
+- Build and maintain tactical awareness.
+- Detect and classify contacts.
+- Manage lock states and feed target quality to the ship/crew.
+- Control scanner configuration and emissions discipline.
+
+Primary EWO Console Areas
+- Scanner A and Scanner B:
+  - Each scanner can be set to GRAV or IR.
+  - Each scanner can be powered ON/OFF.
+  - RESET clears scanner gate state.
+- Multi-Function Display tabs:
+  - MAP tab: 3D tactical map interaction.
+  - RADAR tab: B-scope style radar picture and lock management.
+
+EWO Scanner Controls (Mouse)
+- GRAV/IR analyzer canvases:
+  - Left drag to set gate region.
+  - Mouse wheel to zoom gate width.
+  - Right click to clear gate.
+- GRAV scanner:
+  - Adjust GAIN and HPF sliders.
+  - ANALYZE button starts gravimetric analysis when a valid in-gate target is available.
+- IR scanner:
+  - Adjust GAIN slider.
+  - IRST SEND pushes the gated thermal target to ship IRST bearing/inclination when valid.
+
+EWO Map Controls (MAP tab)
+- Left drag -> Orbit map camera.
+- Mouse wheel -> Zoom.
+- Click marker -> Select track/celestial marker.
+
+EWO Radar Controls (RADAR tab)
+- Range controls:
+  - Use + / - buttons to change B-scope range scale.
+  - Mouse wheel over radar scope also adjusts range.
+- Contact locking:
+  - Right click a radar track -> Set HARD lock on that track.
+  - Right click empty radar scope -> Clear hard lock(s).
+- Bearing display mode:
+  - REL and ABS toggle changes bearing reference readout.
+
+EWO Operating Notes
+- During warp transit, radar page is inoperable.
+- Radar emissions increase observability (EMCON warning in header/status).
+- Scanner power state and mode selection directly affect available sensor workflows.
+
+========================================
+Role: WSO (Weapons and Systems Officer)
+========================================
+
+Current Status
+- WSO station is selectable (F3) and online.
+- Dedicated WSO gameplay systems and controls are not yet implemented in this build.
+
+Current WSO Responsibility
+- Monitor role handoff needs and be ready to assume pilot/EW duties when required.
+
+Planned Documentation Expansion
+- Add WSO subsystem controls and hotkeys as soon as the station receives interactive systems.
+
+========================================
+Crew Coordination Checklist
+========================================
+
+Startup Flow
+1) Pilot confirms dampener/nav mode baseline and propulsion readiness.
+2) EWO powers/configures scanners and establishes initial contact picture.
+3) Pilot and EWO agree on maneuver profile (AA vs DAC, EMCON posture, warp timing).
+
+Combat / Contact Flow
+1) EWO identifies and locks contacts.
+2) Pilot keeps geometry favorable for sensors and launch opportunities.
+3) Pilot executes LAUNCH/FLARE timing based on EW lock quality and threat updates.
+
+========================================
+Change Log Policy
+========================================
+
+This file is intended to stay current with gameplay changes.
+- Whenever controls, station behavior, or roles change, update this manual in the same work session when possible.
+- If a feature is present in UI but not functionally complete, document it as "in progress" rather than fully operational.

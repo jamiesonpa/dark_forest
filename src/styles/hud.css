@@ -66,7 +66,7 @@ body {
 
 .irst-panel-wrap {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 6px;
 }
 
@@ -89,13 +89,13 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 3px 8px;
+  padding: 5px 12px;
   background: rgba(0, 255, 100, 0.08);
   border-bottom: 1px solid rgba(0, 255, 100, 0.3);
 }
 
 .irst-label {
-  font-size: var(--hud-title-size);
+  font-size: calc(var(--hud-title-size) * 1.35);
   font-weight: var(--hud-title-weight);
   font-family: var(--font-mono);
   color: #44ff66;
@@ -104,10 +104,34 @@ body {
 }
 
 .irst-status {
-  font-size: 9px;
+  font-size: 12px;
   font-family: var(--font-mono);
   color: #44ff66;
   animation: irst-blink 2s ease-in-out infinite;
+}
+
+.irst-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.irst-power-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  border-radius: 1px;
+  border: 1px solid rgba(130,130,130,0.5);
+  background: rgba(90,90,90,0.16);
+  color: rgba(180,180,180,0.85);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+
+.irst-power-btn.on {
+  border: 1px solid rgba(0, 255, 100, 0.55);
+  background: rgba(0, 255, 100, 0.14);
+  color: #88ffaa;
 }
 
 @keyframes irst-blink {
@@ -140,6 +164,49 @@ body {
   right: 0;
   bottom: 0;
   pointer-events: none;
+}
+
+.irst-vcr-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.32) 100%),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.18) 0px,
+      rgba(0, 0, 0, 0.18) 1px,
+      rgba(255, 255, 255, 0.03) 2px,
+      rgba(255, 255, 255, 0.03) 3px
+    ),
+    repeating-linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0.02) 0px,
+      rgba(255, 255, 255, 0.02) 1px,
+      rgba(0, 0, 0, 0) 4px,
+      rgba(0, 0, 0, 0) 6px
+    );
+  mix-blend-mode: screen;
+  opacity: 0.42;
+  animation: irst-vcr-flicker 0.18s steps(2, end) infinite, irst-vcr-jitter 2.6s linear infinite;
+}
+
+@keyframes irst-vcr-flicker {
+  0% { opacity: 0.24; }
+  25% { opacity: 0.31; }
+  50% { opacity: 0.27; }
+  75% { opacity: 0.34; }
+  100% { opacity: 0.26; }
+}
+
+@keyframes irst-vcr-jitter {
+  0%, 89%, 100% { transform: translateX(0); }
+  90% { transform: translateX(-0.7px); }
+  92% { transform: translateX(0.9px); }
+  94% { transform: translateX(-0.4px); }
+  96% { transform: translateX(0.5px); }
+  98% { transform: translateX(0); }
 }
 
 .irst-bracket {
@@ -266,15 +333,16 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 2px;
+  padding: 8px 5px;
   background: rgba(0, 0, 0, 0.75);
   border: 1px solid rgba(0, 255, 100, 0.3);
   border-radius: 2px;
   pointer-events: auto;
+  align-self: stretch;
 }
 
 .irst-zoom-label {
-  font-size: 8px;
+  font-size: 11px;
   font-family: var(--font-mono);
   color: rgba(0, 255, 100, 0.6);
 }
@@ -283,9 +351,9 @@ body {
   writing-mode: vertical-lr;
   direction: rtl;
   appearance: slider-vertical;
-  width: 16px;
+  width: 20px;
   flex: 1;
-  min-height: 120px;
+  min-height: 0;
   accent-color: #44ff66;
   cursor: pointer;
 }
@@ -445,6 +513,10 @@ body {
 
 .eng-bar-fill.radio {
   background: #8866ff;
+}
+
+.eng-bar-fill.cap-recharge {
+  background: #5fd7ff;
 }
 
 /* Left: speed readout, 25% in from left edge, vertically centered */
@@ -3141,4 +3213,15 @@ body {
   border: 2px dotted var(--hud-danger);
   box-shadow: 0 0 8px rgba(255, 68, 68, 0.8);
   transform: translate(-50%, -50%);
+}
+
+.pilot-target-cue-world-diamond {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 24px;
+  height: 24px;
+  border: 2px dotted #44ff66;
+  box-shadow: 0 0 8px rgba(68, 255, 102, 0.8);
+  transform: translate(-50%, -50%) rotate(45deg);
 }

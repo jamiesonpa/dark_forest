@@ -722,6 +722,9 @@ export function EWSystemMap({ time }: { time: number }) {
   const shipHeadingDeg = useGameStore((s) => s.ship.actualHeading)
   const ewLockState = useGameStore((s) => s.ewLockState)
   const setEwLockState = useGameStore((s) => s.setEwLockState)
+  const ewRadarOn = useGameStore((s) => s.ewRadarOn)
+  const ewRadarPower = useGameStore((s) => s.ewRadarPower)
+  const setEwRadar = useGameStore((s) => s.setEwRadar)
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const warpState = useGameStore((s) => s.warpState)
   const warpSourceCelestialId = useGameStore((s) => s.warpSourceCelestialId)
@@ -729,6 +732,7 @@ export function EWSystemMap({ time }: { time: number }) {
   const warpTravelProgress = useGameStore((s) => s.warpTravelProgress)
   const revealedCelestialIds = useGameStore((s) => s.ewRevealedCelestialIds)
   const radarWarpInterference = warpState === 'warping' || warpState === 'landing'
+  const radarOperational = ewRadarOn && !radarWarpInterference
 
   const star = useMemo(
     () => getCelestialById('star', starSystem) ?? starSystem.celestials[0] ?? null,
@@ -918,6 +922,13 @@ export function EWSystemMap({ time }: { time: number }) {
     ) / WORLD_UNITS_PER_AU
   const bScopeRangeKm = B_SCOPE_RANGE_OPTIONS_KM[bScopeRangeIdx] ?? 160
   const bScopeMaxRangeM = bScopeRangeKm * 1000
+  const bScopeAbsoluteMaxRangeKm = B_SCOPE_RANGE_OPTIONS_KM[B_SCOPE_RANGE_OPTIONS_KM.length - 1] ?? bScopeRangeKm
+  const bScopeAbsoluteMaxRangeM = bScopeAbsoluteMaxRangeKm * 1000
+  const radarPowerClamped = clamp(ewRadarPower, 0, 100)
+  const radarPowerNorm = radarPowerClamped / 100
+  const bScopeDetectionRangeAbsM = bScopeAbsoluteMaxRangeM * (0.15 + radarPowerNorm * 0.85)
+  const bScopeDetectionRangeDisplayM = Math.min(bScopeDetectionRangeAbsM, bScopeMaxRangeM)
+  const bScopeDetectionRangePct = clamp((bScopeDetectionRangeDisplayM / Math.max(1, bScopeMaxRangeM)) * 100, 0, 100)
   const bScopeViewSpanDeg = Math.max(1, bScopeViewMaxDeg - bScopeViewMinDeg)
   const bScopeAzTicks = useMemo(() => {
     const start = Math.ceil(bScopeViewMinDeg / B_SCOPE_AZ_GRID_STEP_DEG) * B_SCOPE_AZ_GRID_STEP_DEG
@@ -966,7 +977,7 @@ export function EWSystemMap({ time }: { time: number }) {
   }, [currentCelestialId, localPlayerId, shipHeadingDeg, shipPosition, shipsById])
 
   const bScopeTracks = useMemo<BScopeTrack[]>(() => {
-    if (radarWarpInterference) return []
+    if (!radarOperational) return []
     return bScopeAllTracks.filter(
       (track) =>
         !track.id.startsWith('planet-')
@@ -978,28 +989,12 @@ export function EWSystemMap({ time }: { time: number }) {
         track.relBearingDeg >= bScopeViewMinDeg
         && track.relBearingDeg <= bScopeViewMaxDeg
         && track.rangeM <= bScopeMaxRangeM
+        && track.rangeM <= bScopeDetectionRangeAbsM
     )
-  }, [bScopeAllTracks, bScopeMaxRangeM, bScopeViewMaxDeg, bScopeViewMinDeg, radarWarpInterference])
+  }, [bScopeAllTracks, bScopeDetectionRangeAbsM, bScopeMaxRangeM, bScopeViewMaxDeg, bScopeViewMinDeg, radarOperational])
   const bScopeTargetTracks = useMemo(
-    () => (radarWarpInterference ? [] : bScopeAllTracks),
-    [bScopeAllTracks, radarWarpInterference]
-  )
-  const bScopeTargetsInConeCount = useMemo(
-    () =>
-      bScopeTargetTracks.filter(
-        (track) =>
-          track.relBearingDeg >= bScopeViewMinDeg
-          && track.relBearingDeg <= bScopeViewMaxDeg
-      ).length,
-    [bScopeTargetTracks, bScopeViewMaxDeg, bScopeViewMinDeg]
-  )
-  const bScopeTargetsInRangeCount = useMemo(
-    () => bScopeTargetTracks.filter((track) => track.rangeM <= bScopeMaxRangeM).length,
-    [bScopeMaxRangeM, bScopeTargetTracks]
-  )
-  const bScopeVisibleTargetCount = useMemo(
-    () => bScopeTracks.length,
-    [bScopeTracks]
+    () => (radarOperational ? bScopeAllTracks.filter((track) => track.rangeM <= bScopeDetectionRangeAbsM) : []),
+    [bScopeAllTracks, bScopeDetectionRangeAbsM, radarOperational]
   )
   const bScopeNearestTarget = useMemo(() => {
     if (bScopeTargetTracks.length === 0) return null
@@ -1014,7 +1009,7 @@ export function EWSystemMap({ time }: { time: number }) {
   }, [bScopeAllTracks])
 
   useEffect(() => {
-    if (radarWarpInterference) {
+    if (!radarOperational) {
       setEwLockState((prev) => {
         if (Object.keys(prev).length === 0) return prev
         return {}
@@ -1035,10 +1030,10 @@ export function EWSystemMap({ time }: { time: number }) {
       })
       return changed ? next : prev
     })
-  }, [bScopeTrackRelBearingById, ewLockState, radarWarpInterference, setEwLockState])
+  }, [bScopeTrackRelBearingById, ewLockState, radarOperational, setEwLockState])
 
   const handleBScopeWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (radarWarpInterference) return
+    if (!radarOperational) return
     event.preventDefault()
     const rect = event.currentTarget.getBoundingClientRect()
     const mouseXNorm = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
@@ -1067,6 +1062,12 @@ export function EWSystemMap({ time }: { time: number }) {
   const bScopeLeftAbsDeg = normalizeBearingDeg(shipHeadingDeg + bScopeViewMinDeg)
   const bScopeCenterAbsDeg = normalizeBearingDeg(shipHeadingDeg + (bScopeViewMinDeg + bScopeViewMaxDeg) * 0.5)
   const bScopeRightAbsDeg = normalizeBearingDeg(shipHeadingDeg + bScopeViewMaxDeg)
+
+  useEffect(() => {
+    const shouldRadarBeOn = radarPowerClamped > 0
+    if (ewRadarOn === shouldRadarBeOn) return
+    setEwRadar({ radarOn: shouldRadarBeOn })
+  }, [ewRadarOn, radarPowerClamped, setEwRadar])
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (activeTab !== 'MAP') return
@@ -1413,7 +1414,35 @@ export function EWSystemMap({ time }: { time: number }) {
                       }}
                     >
                       <span>B-SCOPE</span>
-                      <span style={{ color: B_SCOPE_GREEN_DIM }}>{`AZ ${bScopeViewSpanDeg.toFixed(0)}° | RNG ${bScopeRangeKm}km`}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ color: B_SCOPE_GREEN_DIM }}>
+                          {`PWR ${ewRadarOn ? 'ON' : 'OFF'} | AZ ${bScopeViewSpanDeg.toFixed(0)}° | RNG ${bScopeRangeKm}km`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (ewRadarOn) {
+                              setEwRadar({ radarOn: false, radarPower: 0 })
+                              return
+                            }
+                            setEwRadar({ radarOn: true, radarPower: Math.max(1, radarPowerClamped) })
+                          }}
+                          style={{
+                            minWidth: 84,
+                            padding: '2px 8px',
+                            border: `1px solid ${B_SCOPE_GREEN_DIM}77`,
+                            background: ewRadarOn ? 'rgba(68,255,102,0.16)' : 'rgba(0,0,0,0.35)',
+                            color: ewRadarOn ? B_SCOPE_GREEN_GLOW : B_SCOPE_GREEN_DIM,
+                            fontFamily: "'Consolas', 'Monaco', monospace",
+                            fontSize: 10,
+                            letterSpacing: 1,
+                            cursor: 'pointer',
+                          }}
+                          aria-label={ewRadarOn ? 'Turn radar off' : 'Turn radar on'}
+                        >
+                          {`RADAR ${ewRadarOn ? 'ON' : 'OFF'}`}
+                        </button>
+                      </div>
                     </div>
                     <div
                       style={{
@@ -1426,9 +1455,6 @@ export function EWSystemMap({ time }: { time: number }) {
                         flexWrap: 'wrap',
                       }}
                     >
-                      <span>
-                        {`DBG targets total:${bScopeTargetTracks.length} cone:${bScopeTargetsInConeCount} range:${bScopeTargetsInRangeCount} visible:${bScopeVisibleTargetCount}`}
-                      </span>
                       <span>
                         {bScopeNearestTarget
                           ? `nearest ${bScopeNearestTarget.label} brg:${Math.round(bScopeNearestTarget.relBearingDeg)} rng:${(bScopeNearestTarget.rangeM / 1000).toFixed(1)}km`
@@ -1446,7 +1472,7 @@ export function EWSystemMap({ time }: { time: number }) {
                       }}
                       onWheel={handleBScopeWheel}
                       onContextMenu={(event) => {
-                        if (radarWarpInterference) return
+                        if (!radarOperational) return
                         event.preventDefault()
                         setEwLockState((prev) => {
                           const next = { ...prev }
@@ -1479,6 +1505,52 @@ export function EWSystemMap({ time }: { time: number }) {
                         >
                           RADAR INOPERABLE DURING WARP TRANSIT
                         </div>
+                      ) : !ewRadarOn ? (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: 'rgba(0,0,0,0.62)',
+                            color: B_SCOPE_GREEN_GLOW,
+                            fontSize: 12,
+                            letterSpacing: 1,
+                            textAlign: 'center',
+                            padding: '0 20px',
+                            zIndex: 5,
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          RADAR STANDBY - POWER ON TO SCAN
+                        </div>
+                      ) : null}
+                      {radarOperational ? (
+                        <>
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              right: 0,
+                              top: 0,
+                              bottom: `${bScopeDetectionRangePct}%`,
+                              background: 'rgba(0,0,0,0.32)',
+                              pointerEvents: 'none',
+                            }}
+                          />
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              right: 0,
+                              bottom: `${bScopeDetectionRangePct}%`,
+                              borderTop: `1px dotted ${B_SCOPE_GREEN_GLOW}`,
+                              opacity: 0.95,
+                              pointerEvents: 'none',
+                            }}
+                          />
+                        </>
                       ) : null}
                       <div
                         style={{
@@ -1565,7 +1637,7 @@ export function EWSystemMap({ time }: { time: number }) {
                               }}
                               title={`${track.label} | BRG ${track.relBearingDeg.toFixed(0)}° | RNG ${(track.rangeM / 1000).toFixed(1)}km | INC ${incLabel}`}
                               onContextMenu={(event) => {
-                                if (radarWarpInterference) return
+                                if (!radarOperational) return
                                 event.preventDefault()
                                 event.stopPropagation()
                                 setEwLockState((prev) => {
@@ -1634,13 +1706,64 @@ export function EWSystemMap({ time }: { time: number }) {
                       )}
                     </div>
                   </div>
+                  <div
+                    style={{
+                      width: 64,
+                      border: `1px solid ${B_SCOPE_GREEN_DIM}77`,
+                      background: 'rgba(0,0,0,0.38)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 6px',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span style={{ fontSize: 9, color: B_SCOPE_GREEN_DIM, letterSpacing: 1 }}>PWR</span>
+                    <div
+                      style={{
+                        height: 132,
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={Math.round(radarPowerClamped)}
+                        onChange={(event) => {
+                          const next = clamp(Number(event.currentTarget.value), 0, 100)
+                          setEwRadar({
+                            radarPower: next,
+                            radarOn: next > 0,
+                          })
+                        }}
+                        style={{
+                          width: 118,
+                          transform: 'rotate(-90deg)',
+                          accentColor: B_SCOPE_GREEN,
+                          cursor: 'pointer',
+                        }}
+                        aria-label="Adjust radar power"
+                      />
+                    </div>
+                    <span style={{ fontSize: 10, color: B_SCOPE_GREEN_GLOW, letterSpacing: 0.5 }}>
+                      {`${Math.round(radarPowerClamped)}%`}
+                    </span>
+                  </div>
                 </div>
 
                 <div
                   style={{
                     display: 'flex',
-                    justifyContent: 'flex-start',
+                    justifyContent: 'flex-end',
+                    alignItems: 'center',
                     paddingLeft: 70,
+                    paddingRight: 70,
                   }}
                 >
                   <div

@@ -28,7 +28,8 @@ describe('shipMath', () => {
       capacitor: 200,
       capacitorMax: 800,
       selectedSpeedRatio: 0,
-      scannerPanelsOfflineCount: 0,
+      sensorSystemsOfflineCount: 0,
+      radarPowerPct: 100,
       dampenersActive: true,
       drainTimeAtMaxSpeedSec: 120,
       rechargeFractionOfMaxDrain: 0.6,
@@ -47,6 +48,7 @@ describe('shipMath', () => {
       capacitorMax: 800,
       selectedSpeedRatio: 0,
       dampenersActive: false,
+      radarPowerPct: 100,
       drainTimeAtMaxSpeedSec: 120,
       rechargeFractionOfMaxDrain: 0.6,
       dampenersDrainFractionOfMaxDrain: 0.15,
@@ -56,19 +58,76 @@ describe('shipMath', () => {
 
     const baseRecharge = getNextCapacitor({
       ...baseInput,
-      scannerPanelsOfflineCount: 0,
+      sensorSystemsOfflineCount: 0,
     }) - baseInput.capacitor
     const oneOfflineRecharge = getNextCapacitor({
       ...baseInput,
-      scannerPanelsOfflineCount: 1,
+      sensorSystemsOfflineCount: 1,
     }) - baseInput.capacitor
     const twoOfflineRecharge = getNextCapacitor({
       ...baseInput,
-      scannerPanelsOfflineCount: 2,
+      sensorSystemsOfflineCount: 2,
+    }) - baseInput.capacitor
+    const threeOfflineRecharge = getNextCapacitor({
+      ...baseInput,
+      sensorSystemsOfflineCount: 3,
     }) - baseInput.capacitor
 
     expect(oneOfflineRecharge).toBeCloseTo(baseRecharge * 1.1)
     expect(twoOfflineRecharge).toBeCloseTo(baseRecharge * 1.2)
+    expect(threeOfflineRecharge).toBeCloseTo(baseRecharge * 1.3)
+  })
+
+  it('applies +20% capacitor recharge bonus at zero radar power', () => {
+    const baseInput = {
+      capacitor: 200,
+      capacitorMax: 800,
+      selectedSpeedRatio: 0,
+      sensorSystemsOfflineCount: 0,
+      dampenersActive: false,
+      drainTimeAtMaxSpeedSec: 120,
+      rechargeFractionOfMaxDrain: 0.6,
+      dampenersDrainFractionOfMaxDrain: 0.15,
+      dampenersRecoveryDrain: 0,
+      dt: 1,
+    }
+
+    const fullPowerRecharge = getNextCapacitor({
+      ...baseInput,
+      radarPowerPct: 100,
+    }) - baseInput.capacitor
+    const zeroPowerRecharge = getNextCapacitor({
+      ...baseInput,
+      radarPowerPct: 0,
+    }) - baseInput.capacitor
+
+    expect(zeroPowerRecharge).toBeCloseTo(fullPowerRecharge * 1.2)
+  })
+
+  it('linearly reduces radar low-power recharge bonus as power increases', () => {
+    const baseInput = {
+      capacitor: 200,
+      capacitorMax: 800,
+      selectedSpeedRatio: 0,
+      sensorSystemsOfflineCount: 0,
+      dampenersActive: false,
+      drainTimeAtMaxSpeedSec: 120,
+      rechargeFractionOfMaxDrain: 0.6,
+      dampenersDrainFractionOfMaxDrain: 0.15,
+      dampenersRecoveryDrain: 0,
+      dt: 1,
+    }
+
+    const fullPowerRecharge = getNextCapacitor({
+      ...baseInput,
+      radarPowerPct: 100,
+    }) - baseInput.capacitor
+    const halfPowerRecharge = getNextCapacitor({
+      ...baseInput,
+      radarPowerPct: 50,
+    }) - baseInput.capacitor
+
+    expect(halfPowerRecharge).toBeCloseTo(fullPowerRecharge * 1.1)
   })
 
   it('does not recharge or drain capacitor when shield recharge rate is zero', () => {

@@ -25,6 +25,10 @@ export function useAppHotkeys({
         event.preventDefault()
         setStation('ew')
       }
+      if (event.key === 'F3') {
+        event.preventDefault()
+        setStation('ws')
+      }
       if (event.key === 'Backspace' && !isEditableTarget(event.target)) {
         event.preventDefault()
         setNavAttitudeMode(navAttitudeMode === 'DAC' ? 'AA' : 'DAC')

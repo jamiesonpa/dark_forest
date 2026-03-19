@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
+import { useIRSTStore } from '@/state/irstStore'
 import { IRSTCameraSphereRadius } from './IRSTCamera'
 
 const CONE_LENGTH = 260
@@ -12,6 +13,14 @@ const CONE_POS = new THREE.Vector3()
 const CONE_QUAT = new THREE.Quaternion()
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 
+function normalizeBearing(deg: number): number {
+  return ((deg % 360) + 360) % 360
+}
+
+function clampInclination(deg: number): number {
+  return Math.max(-85, Math.min(85, deg))
+}
+
 export function IRSTCameraDebugCone() {
   const coneRef = useRef<THREE.Mesh>(null)
   const showIRSTCone = useGameStore((s) => s.showIRSTCone)
@@ -21,8 +30,15 @@ export function IRSTCameraDebugCone() {
     if (!cone) return
 
     const ship = useGameStore.getState().ship
-    const bearingRad = THREE.MathUtils.degToRad(ship.irstBearing)
-    const inclinationRad = THREE.MathUtils.degToRad(ship.irstInclination)
+    const stabilized = useIRSTStore.getState().stabilized
+    const effectiveBearing = stabilized
+      ? ship.irstBearing
+      : normalizeBearing(360 - ship.actualHeading + ship.irstBearing)
+    const effectiveInclination = stabilized
+      ? ship.irstInclination
+      : clampInclination(ship.actualInclination + ship.irstInclination)
+    const bearingRad = THREE.MathUtils.degToRad(effectiveBearing)
+    const inclinationRad = THREE.MathUtils.degToRad(effectiveInclination)
 
     OUT_DIR.set(
       Math.sin(bearingRad) * Math.cos(inclinationRad),

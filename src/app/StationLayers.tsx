@@ -1,6 +1,7 @@
 import { PilotStation } from '@/ui/stations/PilotStation'
 import { type StationId } from '@/ui/stations/StationSelector'
 import { EWStation } from '@/ui/stations/EWStation'
+import { WSStation } from '@/ui/stations/WSStation'
 
 interface StationLayersProps {
   station: StationId
@@ -22,6 +23,9 @@ export function StationLayers({ station }: StationLayersProps) {
       </div>
       <div style={stationLayerStyle(station, 'ew')}>
         <EWStation />
+      </div>
+      <div style={stationLayerStyle(station, 'ws')}>
+        <WSStation />
       </div>
     </>
   )

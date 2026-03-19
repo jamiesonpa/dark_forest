@@ -25,6 +25,7 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
   ewRadarPRF: 'MED',
   ewUpperScannerOn: true,
   ewLowerScannerOn: true,
+  irstCameraOn: true,
   ewActiveGravAnalysis: null,
   ewLastGravAnalysisResult: null,
   ewRevealedCelestialIds: [],
@@ -37,6 +38,7 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
   setEwJammers: (jammers) => set({ ewJammers: jammers }),
   setEwUpperScannerOn: (on) => set({ ewUpperScannerOn: on }),
   setEwLowerScannerOn: (on) => set({ ewLowerScannerOn: on }),
+  setIrstCameraOn: (on) => set({ irstCameraOn: on }),
   startEwGravAnalysis: (session) =>
     set({
       ewActiveGravAnalysis: session,

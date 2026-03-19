@@ -11,6 +11,7 @@ const RAVEN_TEX = '/models/raven_tex.png'
 export const PLAYER_SHIP_HULL_OBJECT_NAME = 'player-ship-hull'
 export const PLAYER_SHIP_PIVOT_ANCHOR_NAME = 'player-ship-pivot-anchor'
 export const getPlayerPivotAnchorName = (playerId: string) => `${PLAYER_SHIP_PIVOT_ANCHOR_NAME}-${playerId}`
+export const getPlayerHullObjectName = (playerId: string) => `${PLAYER_SHIP_HULL_OBJECT_NAME}-${playerId}`
 const MAX_SUBWARP_SPEED = 215
 const MWD_SPEED = 800
 const THRUSTER_PARTICLE_COUNT = 74
@@ -748,7 +749,7 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
       <group name={isLocal ? getPlayerPivotAnchorName(playerId) : undefined} position={[0, 0, 0]} />
       {isLocal && <WarpBubbleEffect ship={ship} phase={warpBubblePhase} />}
       <group position={visualOriginCorrection}>
-        <primitive object={centeredObj} scale={1} />
+        <primitive object={centeredObj} name={getPlayerHullObjectName(playerId)} scale={1} />
         {ship.shieldsUp && (
           <>
             <primitive object={shieldSurfaceObj} scale={1.006} renderOrder={3} />

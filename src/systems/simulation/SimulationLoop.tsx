@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
+import { useIRSTStore } from '@/state/irstStore'
 import {
   ACCELERATION,
   DAMPENERS_ACCEL_MULT,
@@ -92,6 +93,30 @@ const DAC_DIRECT_INCLINATION_RATE_MULTIPLIER = 0.55
 const DAC_ROLL_RATE_MULTIPLIER = 0.9
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 const TORPEDO_DAMAGE = 7000
+const PT_TRACK_MAX_RANGE_M = 100_000
+
+function normalizeBearing(deg: number): number {
+  return ((deg % 360) + 360) % 360
+}
+
+function clampInclination(deg: number): number {
+  return Math.max(-85, Math.min(85, deg))
+}
+
+function getBearingInclinationAndRange(
+  from: [number, number, number],
+  to: [number, number, number]
+) {
+  const dx = to[0] - from[0]
+  const dy = to[1] - from[1]
+  const dz = to[2] - from[2]
+  const horizontal = Math.sqrt(dx * dx + dz * dz)
+  const range = Math.sqrt(dx * dx + dy * dy + dz * dz)
+  if (!Number.isFinite(range) || range <= 0) return null
+  const bearing = normalizeBearing((Math.atan2(dx, dz) * 180) / Math.PI)
+  const inclination = clampInclination((Math.atan2(dy, Math.max(horizontal, 0.000001)) * 180) / Math.PI)
+  return { bearing, inclination, range }
+}
 
 const EMPTY_KEY_STATE: Record<SimControlKey, boolean> = {
   KeyA: false,
@@ -744,18 +769,48 @@ export function SimulationLoop() {
       shipPatch.position = newPos
       shipPatch.rollAngle = rollRef.current
 
+      const irstState = useIRSTStore.getState()
+      if (state.irstCameraOn && irstState.pointTrackEnabled && irstState.pointTrackTargetId) {
+        const targetId = irstState.pointTrackTargetId
+        const targetShip = state.shipsById[targetId]
+        const iff = String(state.ewIffState[targetId] ?? '').toUpperCase()
+        const isEnemy = Boolean(state.npcShips[targetId]) || iff === 'HOSTILE'
+        if (
+          !targetShip ||
+          !isEnemy ||
+          targetShip.currentCelestialId !== ship.currentCelestialId
+        ) {
+          irstState.setPointTrackEnabled(false)
+          irstState.setPointTrackTargetId(null)
+        } else {
+          const targetSighting = getBearingInclinationAndRange(newPos, targetShip.position)
+          if (!targetSighting || targetSighting.range > PT_TRACK_MAX_RANGE_M) {
+            irstState.setPointTrackEnabled(false)
+            irstState.setPointTrackTargetId(null)
+          } else if (irstState.stabilized) {
+            shipPatch.irstBearing = targetSighting.bearing
+            shipPatch.irstInclination = targetSighting.inclination
+          } else {
+            shipPatch.irstBearing = normalizeBearing(targetSighting.bearing + newHeading)
+            shipPatch.irstInclination = clampInclination(targetSighting.inclination - newIncl)
+          }
+        }
+      }
+
       const requestedThrustRatio = effectiveMwdActive
         ? 1
         : clamp(effectiveTargetSpeed / MAX_SELECTED_SPEED, 0, 1)
       const selectedSpeedRatio = hasCapacitorForThrust ? requestedThrustRatio : 0
-      const scannerPanelsOfflineCount =
+      const sensorSystemsOfflineCount =
         (state.ewUpperScannerOn ? 0 : 1) +
-        (state.ewLowerScannerOn ? 0 : 1)
+        (state.ewLowerScannerOn ? 0 : 1) +
+        (state.irstCameraOn ? 0 : 1)
       let nextCapacitor = getNextCapacitor({
         capacitor: ship.capacitor,
         capacitorMax: ship.capacitorMax,
         selectedSpeedRatio,
-        scannerPanelsOfflineCount,
+        sensorSystemsOfflineCount,
+        radarPowerPct: state.ewRadarPower,
         dampenersActive: ship.dampenersActive,
         drainTimeAtMaxSpeedSec: CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC,
         rechargeFractionOfMaxDrain: CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN,
