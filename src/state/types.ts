@@ -104,12 +104,27 @@ export interface LaunchedFlare {
   flightTimeSeconds: number
 }
 
+export type FlareLaunchMode = 'pattern' | 'single'
+
+export interface FlareLaunchOptions {
+  count?: number
+  mode?: FlareLaunchMode
+}
+
 export interface TorpedoExplosion {
   id: string
   currentCelestialId: string
   position: [number, number, number]
   flightTimeSeconds: number
   targetShipId?: string
+}
+
+export interface DewBeam {
+  id: string
+  currentCelestialId: string
+  originPosition: [number, number, number]
+  targetPosition: [number, number, number]
+  firedAtMs: number
 }
 
 export interface GameStore {
@@ -211,6 +226,11 @@ export interface GameStore {
   launchedCylinders: LaunchedCylinder[]
   launchedFlares: LaunchedFlare[]
   torpedoExplosions: TorpedoExplosion[]
+  dewBeams: DewBeam[]
+  flareInventory: number
+  flareInventoryMax: number
+  countermeasuresPowered: boolean
+  dewPowered: boolean
   remoteLaunchedCylinders: LaunchedCylinder[]
   remoteLaunchedFlares: LaunchedFlare[]
   remoteTorpedoExplosions: TorpedoExplosion[]
@@ -233,12 +253,16 @@ export interface GameStore {
   setNpcShipConfig: (id: string, partial: Partial<NpcShipConfig>) => void
   advanceNpcShips: (deltaSeconds: number) => void
   setPlayerShipBoundingLength: (length: number) => void
+  setCountermeasuresPowered: (powered: boolean) => void
+  setDewPowered: (powered: boolean) => void
   launchLockedCylinder: (shipBoundingLength: number) => void
   advanceLaunchedCylinders: (deltaSeconds: number) => void
-  launchFlares: (shipBoundingLength: number) => void
+  launchFlares: (shipBoundingLength: number, options?: FlareLaunchOptions) => void
   advanceLaunchedFlares: (deltaSeconds: number) => void
   advanceTorpedoExplosions: (deltaSeconds: number) => void
   addTorpedoExplosion: (explosion: TorpedoExplosion) => void
+  fireDew: (originPosition: [number, number, number], targetPosition: [number, number, number], celestialId: string) => void
+  advanceDewBeams: () => void
   setRemoteOrdnanceSnapshot: (snapshot: OrdnanceSnapshotMessage) => void
   clearRemoteOrdnance: () => void
   randomizePlanetTextures: () => void

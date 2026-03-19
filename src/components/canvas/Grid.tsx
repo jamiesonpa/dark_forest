@@ -6,6 +6,7 @@ import { CelestialGridContents } from './CelestialGridContents'
 import { LaunchedCylinders } from './LaunchedCylinders'
 import { LaunchedFlares } from './LaunchedFlares'
 import { TorpedoExplosions } from './TorpedoExplosions'
+import { DewBeamEffects } from './DewBeamEffects'
 import { useGameStore } from '@/state/gameStore'
 import { getCelestialById } from '@/utils/systemData'
 
@@ -48,6 +49,7 @@ export function Grid() {
       <LaunchedCylinders />
       <TorpedoExplosions />
       <LaunchedFlares />
+      <DewBeamEffects />
       {!offGridWarpActive && (
         <>
           <AsteroidBelt />

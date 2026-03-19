@@ -72,6 +72,7 @@ const MAX_SELECTED_SPEED = 215
 const WARP_MIN_POST_CAPACITOR = 1
 const CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC = 120
 const CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN = 0.6
+const CAPACITOR_RECHARGE_COUNTERMEASURES_OFF_MULTIPLIER = 1.1
 const CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN = 0.15
 const SHIELD_RECHARGE_PER_SECOND_AT_100_PCT = 100
 const SHIELD_RECHARGE_CAP_DRAIN_FRACTION_PER_SECOND_AT_100_PCT = 0.01
@@ -214,7 +215,8 @@ export function SimulationLoop() {
         e.preventDefault()
         if (e.repeat) return
         const { ship, setDampenersActive } = useGameStore.getState()
-        setDampenersActive(!ship.dampenersActive)
+        const nextDampenersActive = !ship.dampenersActive
+        setDampenersActive(nextDampenersActive)
         return
       }
       if (!CONTROL_KEYS.includes(e.code as SimControlKey)) return
@@ -548,7 +550,8 @@ export function SimulationLoop() {
           newHeading = ship.bearing
           turnRateRef.current *= 0.65
         } else if (!dampenersOnline) {
-          turnRateRef.current = 0
+          // AA inertial attitude drift: preserve yaw rate while DMP is offline.
+          newHeading = ((newHeading + turnRateRef.current * dt) % 360 + 360) % 360
         }
       }
 
@@ -610,7 +613,8 @@ export function SimulationLoop() {
           newIncl = ship.inclination
           pitchRateRef.current *= 0.65
         } else if (!dampenersOnline) {
-          pitchRateRef.current = 0
+          // AA inertial attitude drift: preserve pitch rate while DMP is offline.
+          newIncl = clamp(newIncl + pitchRateRef.current * dt, -90, 90)
         }
       }
 
@@ -756,7 +760,7 @@ export function SimulationLoop() {
       const remainingHeading = Math.abs(shortestAngleDelta(newHeading, ship.bearing))
       const rollFade = remainingHeading < 15 ? remainingHeading / 15 : 1
       const targetRoll = (turnRateRef.current / maxTurnRate) * MAX_ROLL_DEG * rollFade
-      if (!dacActive) {
+      if (!dacActive && (dampenersOnline || orientDebugActive)) {
         rollRef.current = lerp(rollRef.current, targetRoll, ROLL_SMOOTH * dt)
       }
 
@@ -805,6 +809,9 @@ export function SimulationLoop() {
         (state.ewUpperScannerOn ? 0 : 1) +
         (state.ewLowerScannerOn ? 0 : 1) +
         (state.irstCameraOn ? 0 : 1)
+      const capacitorRechargeFraction = state.countermeasuresPowered
+        ? CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN
+        : CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN * CAPACITOR_RECHARGE_COUNTERMEASURES_OFF_MULTIPLIER
       let nextCapacitor = getNextCapacitor({
         capacitor: ship.capacitor,
         capacitorMax: ship.capacitorMax,
@@ -813,7 +820,7 @@ export function SimulationLoop() {
         radarPowerPct: state.ewRadarPower,
         dampenersActive: ship.dampenersActive,
         drainTimeAtMaxSpeedSec: CAPACITOR_DRAIN_TIME_AT_MAX_SPEED_SEC,
-        rechargeFractionOfMaxDrain: CAPACITOR_RECHARGE_FRACTION_OF_MAX_DRAIN,
+        rechargeFractionOfMaxDrain: capacitorRechargeFraction,
         dampenersDrainFractionOfMaxDrain: CAPACITOR_DAMPENERS_DRAIN_FRACTION_OF_MAX_DRAIN,
         dampenersRecoveryDrain: dampenersRecoveryDrainThisFrame,
         dt,

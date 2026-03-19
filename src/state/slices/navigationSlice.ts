@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import type { GameStore } from '@/state/types'
+import type { FlareLaunchMode, GameStore } from '@/state/types'
 import type {
   OrdnanceSnapshotMessage,
   WireLaunchedCylinder,
@@ -33,7 +33,10 @@ const FLARE_EJECTION_SPEED = 1680
 const FLARE_LIFETIME_SECONDS = 3
 const FLARE_VELOCITY_DECAY_RATE = 0.8
 const FLARE_ANGLE_RANDOM_JITTER_DEG = 5
-const FLARE_SPREAD_DEGREES = [0, -20, 20, -40, 40] as const
+const FLARE_PATTERN_MAX_SPREAD_DEG = 80
+const FLARE_PATTERN_STEP_DEG = 18
+const FLARE_MAX_COUNT = 20
+const FLARE_STARTING_INVENTORY = 40
 const TORPEDO_MIN_PN_SPEED = 20
 const TORPEDO_HIT_RADIUS = 50
 const TORPEDO_EXPLOSION_LIFETIME_SECONDS = 7.2
@@ -129,6 +132,19 @@ function rotateVectorAroundAxis(
     vector[1] * cos + cross[1] * sin + axisNormalized[1] * dot * (1 - cos),
     vector[2] * cos + cross[2] * sin + axisNormalized[2] * dot * (1 - cos),
   ]
+}
+
+function clampFlareCount(value: number | undefined) {
+  if (!Number.isFinite(value)) return 1
+  return Math.max(1, Math.min(FLARE_MAX_COUNT, Math.floor(value ?? 1)))
+}
+
+function buildPatternAngles(count: number): number[] {
+  if (count <= 1) return [0]
+  const totalSpread = Math.min(FLARE_PATTERN_MAX_SPREAD_DEG, (count - 1) * FLARE_PATTERN_STEP_DEG)
+  const leftmost = -totalSpread / 2
+  const step = totalSpread / (count - 1)
+  return Array.from({ length: count }, (_, index) => leftmost + step * index)
 }
 
 function resolveLockTargetPosition(
@@ -323,6 +339,11 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   launchedCylinders: [],
   launchedFlares: [],
   torpedoExplosions: [],
+  dewBeams: [],
+  flareInventory: FLARE_STARTING_INVENTORY,
+  flareInventoryMax: FLARE_STARTING_INVENTORY,
+  countermeasuresPowered: true,
+  dewPowered: false,
   remoteLaunchedCylinders: [],
   remoteLaunchedFlares: [],
   remoteTorpedoExplosions: [],
@@ -479,6 +500,14 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
     set({
       playerShipBoundingLength:
         Number.isFinite(length) && length > 1 ? length : FALLBACK_PLAYER_SHIP_BOUNDING_LENGTH,
+    }),
+  setCountermeasuresPowered: (powered) =>
+    set({
+      countermeasuresPowered: powered,
+    }),
+  setDewPowered: (powered) =>
+    set({
+      dewPowered: powered,
     }),
   launchLockedCylinder: (shipBoundingLength) =>
     set((s) => {
@@ -693,10 +722,22 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
           : s.torpedoExplosions,
       }
     }),
-  launchFlares: (shipBoundingLength) =>
+  launchFlares: (shipBoundingLength, options) =>
     set((s) => {
+      if (!s.countermeasuresPowered) {
+        return {}
+      }
       const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
       const localShip = s.shipsById[localId] ?? s.ship
+      const launchMode: FlareLaunchMode = options?.mode === 'single' ? 'single' : 'pattern'
+      const defaultCount = launchMode === 'single' ? 1 : 5
+      const requestedCount = clampFlareCount(options?.count ?? defaultCount)
+      const availableFlares = Math.max(0, Math.floor(s.flareInventory))
+      const flareCount = Math.min(requestedCount, availableFlares)
+      if (flareCount <= 0) {
+        return {}
+      }
+      const launchAngles = launchMode === 'single' ? [0] : buildPatternAngles(flareCount)
       const baseLength =
         Number.isFinite(shipBoundingLength) && shipBoundingLength > 1
           ? shipBoundingLength
@@ -717,7 +758,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       return {
         launchedFlares: [
           ...s.launchedFlares,
-          ...FLARE_SPREAD_DEGREES.map((angleDeg, index) => {
+          ...launchAngles.map((angleDeg, index) => {
             const bearingJitterDeg = (Math.random() * 2 - 1) * FLARE_ANGLE_RANDOM_JITTER_DEG
             const inclinationJitterDeg = (Math.random() * 2 - 1) * FLARE_ANGLE_RANDOM_JITTER_DEG
             const randomizedBearingDeg = angleDeg + bearingJitterDeg
@@ -747,6 +788,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
             }
           }),
         ],
+        flareInventory: Math.max(0, availableFlares - flareCount),
       }
     }),
   advanceLaunchedFlares: (deltaSeconds) =>
@@ -802,6 +844,28 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
         },
       ],
     })),
+  fireDew: (originPosition, targetPosition, celestialId) =>
+    set((s) => ({
+      dewBeams: [
+        ...s.dewBeams,
+        {
+          id: `dew-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          currentCelestialId: celestialId,
+          originPosition,
+          targetPosition,
+          firedAtMs: performance.now(),
+        },
+      ],
+    })),
+  advanceDewBeams: () =>
+    set((s) => {
+      if (s.dewBeams.length === 0) return {}
+      const now = performance.now()
+      const DEW_BEAM_LIFETIME_MS = 1800
+      return {
+        dewBeams: s.dewBeams.filter((beam) => now - beam.firedAtMs <= DEW_BEAM_LIFETIME_MS),
+      }
+    }),
   setRemoteOrdnanceSnapshot: (snapshot) =>
     set({
       remoteLaunchedCylinders: sanitizeNetworkCylinders(snapshot),

@@ -198,7 +198,17 @@ export const createShipSlice: StateCreator<GameStore, [], [], Partial<GameStore>
     ),
   setDampenersActive: (active) =>
     set((s) =>
-      withLocalShipUpdate(s as GameStore, (ship) => ({ ...ship, dampenersActive: active }))
+      withLocalShipUpdate(s as GameStore, (ship) => {
+        if (!active && s.navAttitudeMode === 'AA') {
+          return {
+            ...ship,
+            dampenersActive: active,
+            bearing: clampAngle(ship.actualHeading),
+            inclination: Math.max(-90, Math.min(90, ship.actualInclination)),
+          }
+        }
+        return { ...ship, dampenersActive: active }
+      })
     ),
   setBearing: (deg) =>
     set((s) =>

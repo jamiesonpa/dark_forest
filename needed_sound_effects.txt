@@ -1,0 +1,797 @@
+================================================================================
+DARK FOREST — COMPREHENSIVE SOUND EFFECTS LIST
+================================================================================
+
+Legend:
+  Type:      ONE-SHOT  = fire-and-forget, plays once
+             LOOP      = continuous, starts/stops with state
+             RAMP      = crossfades or pitch-shifts based on a parameter
+             SEQUENCE  = multiple sounds played in timed order
+  Priority:  CRITICAL  = core gameplay feel, needed first
+             HIGH      = important feedback, noticeable if absent
+             MEDIUM    = polish layer, adds texture
+             LOW       = nice-to-have, ambient seasoning
+  Spatial:   2D        = UI/cockpit, no positional falloff
+             3D        = world-space, distance + direction attenuation
+
+
+================================================================================
+1. FLIGHT & PROPULSION
+================================================================================
+
+1.1  ENGINE IDLE HUM
+     Type:     LOOP
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Always playing when ship is powered on
+     Notes:    Low rumble/hum, very subtle. Provides baseline "you are in a ship"
+               texture. Should feel like sitting in a submarine or cockpit.
+
+1.2  THRUST INCREASE / ACCELERATION
+     Type:     RAMP (pitch/volume scales with targetSpeed)
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Shift held, speed increasing
+     Notes:    Layered over engine idle. Higher pitch and volume as speed climbs.
+               Think jet turbine spool-up. Could crossfade between 2-3 intensity
+               layers (low/med/high thrust).
+
+1.3  THRUST DECREASE / DECELERATION
+     Type:     RAMP (pitch/volume scales down with speed)
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Ctrl held, speed decreasing
+     Notes:    Reverse of 1.2. Engine winding down, slight braking texture.
+
+1.4  MWD ACTIVATION
+     Type:     ONE-SHOT (leading into 1.5 loop)
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Enter key / MWD button pressed
+     Notes:    Dramatic ignition burst. Deep bass punch + high-frequency crackle.
+               Capacitor drain audible as power surge. ~0.5-1s.
+
+1.5  MWD BURN (SUSTAINED)
+     Type:     LOOP
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  mwdActive === true (5-20s duration)
+     Notes:    Roaring sustained burn. Should feel powerful and urgent. Deep
+               rumbling with slight oscillation. Distinct from normal thrust.
+
+1.6  MWD SHUTDOWN
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  mwdRemaining reaches 0
+     Notes:    Engine flame-out / power-down. Inverse of activation.
+               Descending pitch, ~0.5s. Transitions back to normal engine.
+
+1.7  MWD COOLDOWN TICK (OPTIONAL)
+     Type:     ONE-SHOT (repeating)
+     Spatial:  2D
+     Priority: LOW
+     Notes:    Subtle tick/pulse while MWD is on cooldown. Lets pilot know
+               system is recovering without looking at the UI.
+
+1.8  DAMPENERS ENGAGE
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Space key / DMP button — dampenersActive → true
+     Notes:    Mechanical clunk + electromagnetic hum onset. "Systems coming
+               online" feel. ~0.3s.
+
+1.9  DAMPENERS DISENGAGE
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Space key / DMP button — dampenersActive → false
+     Notes:    Power-down whine, mechanical release. Ship now drifting free.
+               ~0.3s.
+
+1.10 CAPACITOR DEPLETED WARNING
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Capacitor reaches 0, targetSpeed forced to 0
+     Notes:    Alarm beep or power-failure stinger. Short, attention-grabbing.
+               Distinct from combat warnings.
+
+
+================================================================================
+2. WARP DRIVE
+================================================================================
+
+2.1  WARP SPOOL-UP / ALIGNMENT
+     Type:     RAMP (builds over alignment period)
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  warpState → 'aligning'
+     Notes:    Rising energy buildup. Oscillating hum that increases in pitch
+               and intensity. Capacitor drain audible. ~2-4s depending on
+               alignment time.
+
+2.2  WARP DEPARTURE (GRID EXIT)
+     Type:     ONE-SHOT + TRANSITION
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  warpState → 'warping', SOURCE_GRID_EXIT_DURATION_MS (1.5s)
+     Notes:    Climactic burst as ship enters warp. Bass drop + high-frequency
+               stretch effect. The "jump" moment. Transitions into 2.3.
+
+2.3  WARP CRUISE
+     Type:     LOOP
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  In warp transit (distance-dependent duration)
+     Notes:    Sustained warp tunnel sound. Deep, resonant, slightly unsettling
+               hum. Muffled quality — everything else feels far away. Could
+               have subtle pitch variation over time.
+
+2.4  WARP DECELERATION / LANDING
+     Type:     RAMP (descending over 4.2s)
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  warpState → 'landing', LANDING_DURATION_MS (4.2s)
+     Notes:    Warp sound winding down, reality reasserting. Descending pitch,
+               increasing clarity of normal ship sounds. Ends with a thud/boom.
+
+2.5  WARP COMPLETE
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  warpState → 'idle' after landing
+     Notes:    Final arrival punctuation. Short bass thump + systems
+               normalizing. ~0.5s.
+
+
+================================================================================
+3. COMBAT — ORDNANCE
+================================================================================
+
+3.1  TORPEDO LAUNCH
+     Type:     ONE-SHOT
+     Spatial:  2D (own ship), 3D (other ships)
+     Priority: CRITICAL
+     Trigger:  LAUNCH button, launchLockedCylinder()
+     Notes:    Mechanical tube release + propulsion ignition. Concussive thump
+               felt through the hull, then a fading whoosh as torpedo departs.
+               ~1s.
+
+3.2  TORPEDO IN FLIGHT (NEARBY)
+     Type:     LOOP (3D positioned, Doppler)
+     Spatial:  3D
+     Priority: MEDIUM
+     Trigger:  Torpedo within audible range (~2000m)
+     Notes:    High-pitched whine/hiss of torpedo motor. Should Doppler shift
+               as it passes. Fades with distance. Only heard if torpedo is
+               close to player ship.
+
+3.3  TORPEDO IMPACT / EXPLOSION
+     Type:     ONE-SHOT
+     Spatial:  3D (distant), 2D (when hitting own ship)
+     Priority: CRITICAL
+     Trigger:  Torpedo reaches target within TORPEDO_HIT_RADIUS (50m)
+     Notes:    Two variants needed:
+               a) DISTANT: Muffled explosion, bass-heavy. Attenuates with
+                  distance.
+               b) OWN SHIP HIT: Full-body impact. Screen-shaking bass + metal
+                  stress sounds. Layered with shield/armor/hull impact (3.6-3.8).
+               Explosion visual lasts 7.2s but sound should be ~2-3s.
+
+3.4  FLARE LAUNCH
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  FLARE button, launchFlares()
+     Notes:    Burst of 5 flares at 1680 m/s. Pop-pop-pop rapid ejection
+               sound, like pyrotechnic charges. ~0.5s.
+
+3.5  FLARE BURN (NEARBY)
+     Type:     LOOP (short, 3s lifetime)
+     Spatial:  3D
+     Priority: LOW
+     Trigger:  Flares in flight
+     Notes:    Crackling/hissing of burning flares. Fades as they disperse.
+
+
+================================================================================
+4. COMBAT — DAMAGE & DEFENSE
+================================================================================
+
+4.1  SHIELD ACTIVATION
+     Type:     ONE-SHOT + RAMP (online level ramps over ~2s)
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  SHD button → shieldsUp = true
+     Notes:    Electromagnetic power-up. Rising hum that stabilizes as
+               shieldOnlineLevel reaches full. Energy field engaging.
+
+4.2  SHIELD DEACTIVATION
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  SHD button → shieldsUp = false
+     Notes:    Power-down, shield field collapsing. Descending whine. ~0.5s.
+
+4.3  SHIELD AMBIENT HUM
+     Type:     LOOP
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  While shields are online
+     Notes:    Very subtle background hum indicating shields are up. Almost
+               subliminal. Mixed low under engine sounds.
+
+4.4  SHIELD RECHARGE
+     Type:     LOOP (subtle)
+     Spatial:  2D
+     Priority: LOW
+     Trigger:  Shield recharging (capacitor draining to shields)
+     Notes:    Quiet electrical pulsing. Indicates cap-to-shield transfer.
+               Intensity could scale with recharge rate (0-100%).
+
+4.5  SHIELD IMPACT
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Torpedo hits while shields absorb damage
+     Notes:    Energy dispersal crackle. Electric/plasma discharge sound.
+               Shield absorbing the blow. Should feel protective but alarming.
+
+4.6  ARMOR IMPACT
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Torpedo hits armor (shields depleted or bypassed)
+     Notes:    Metallic crunch/grinding. Physical impact on hull plating.
+               More visceral and concerning than shield hit.
+
+4.7  HULL IMPACT
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Torpedo hits hull (armor depleted)
+     Notes:    Deep structural groan + rupture. Most alarming damage sound.
+               Metal tearing, pressurization alarms. Player should feel dread.
+
+4.8  DAMAGE LAYER TRANSITION (OPTIONAL)
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Shield → Armor or Armor → Hull transition (layer fully depleted)
+     Notes:    Warning stinger indicating defensive layer is gone.
+               "Shields down!" moment.
+
+
+================================================================================
+5. ELECTRONIC WARFARE — RADAR & DETECTION
+================================================================================
+
+5.1  RADAR POWER ON
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  RADAR ON button in EWSystemMap
+     Notes:    Radar system boot. CRT-style power-on hum + static burst.
+               ~0.5s.
+
+5.2  RADAR POWER OFF
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  RADAR OFF button
+     Notes:    System shutdown. Descending tone + static fadeout. ~0.3s.
+
+5.3  RADAR SWEEP (AMBIENT)
+     Type:     LOOP
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Radar powered on and scanning
+     Notes:    Subtle rotating sweep pulse. Classic radar ping at low volume.
+               Provides texture to the EW station experience.
+
+5.4  RADAR — NEW CONTACT DETECTED
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  New track appears on B-scope
+     Notes:    Already defined in rwrAudio.ts as playNewContactTone().
+               Two-note descending chirp. Keep this procedural tone or replace
+               with sample.
+
+5.5  RADAR — SOFT LOCK ACQUIRED
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  ewLockState[id] → 'soft'
+     Notes:    Short confirmation beep. Single rising tone. ~0.2s.
+
+5.6  RADAR — HARD LOCK ACQUIRED
+     Type:     ONE-SHOT (followed by 5.7 loop)
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Right-click track → ewLockState[id] → 'hard'
+     Notes:    Already defined in rwrAudio.ts as startLockTone(). Repeating
+               chirp at 250ms interval. Confirmation that STT lock is held.
+
+5.7  RADAR — LOCK TONE (SUSTAINED)
+     Type:     LOOP
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  While hard lock is held
+     Notes:    Repeating chirp/pulse. Already coded as playChirp() at 250ms.
+               Indicates continuous track. Should be audible but not annoying.
+
+5.8  RADAR — LOCK LOST
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Track exits radar cone, lock cleared
+     Notes:    Descending warble or broken tone. "Connection lost" feel. ~0.3s.
+
+5.9  RADAR — RANGE CHANGE
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: LOW
+     Trigger:  +/- range buttons on B-scope
+     Notes:    Soft click/blip. UI feedback. ~0.1s.
+
+
+================================================================================
+6. ELECTRONIC WARFARE — SCANNERS
+================================================================================
+
+6.1  SCANNER POWER ON
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Scanner slot toggled ON (GRAV or IR)
+     Notes:    System boot tone. Slightly different timbre for GRAV vs IR.
+               ~0.3s.
+
+6.2  SCANNER POWER OFF
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Scanner slot toggled OFF
+     Notes:    Power-down chirp. ~0.2s.
+
+6.3  SCANNER RESET
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Scanner RESET button
+     Notes:    Brief system reset sound. Static burst. ~0.3s.
+
+6.4  GRAV SCANNER AMBIENT
+     Type:     LOOP
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  GRAV scanner powered on
+     Notes:    Low-frequency pulsing hum. Gravimetric sensor texture.
+               Subtle enough to sit under other sounds.
+
+6.5  IR SCANNER AMBIENT
+     Type:     LOOP
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  IR scanner powered on
+     Notes:    Higher-frequency subtle whine. Infrared sensor texture.
+               Distinct from GRAV.
+
+6.6  GRAV ANALYSIS START
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  ANALYZE button (mass locked in gate)
+     Notes:    Processing initiation. Data crunching onset sound. Rising
+               digital texture. ~0.5s.
+
+6.7  GRAV ANALYSIS RUNNING
+     Type:     LOOP
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Analysis in progress (variable duration from gravQuality)
+     Notes:    Rhythmic processing pulse. Digital computation texture.
+               Could increase in rate as analysis nears completion.
+
+6.8  GRAV ANALYSIS COMPLETE
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  completeEwGravAnalysis() — celestial revealed
+     Notes:    Success chime. Satisfying confirmation. Celestial discovered.
+               ~0.5s.
+
+6.9  GRAV ANALYSIS CANCELLED
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  cancelEwGravAnalysis() — scanner turned off during analysis
+     Notes:    Failure/abort tone. Descending interrupted sound. ~0.3s.
+
+6.10 SCANNER GATE DRAG
+     Type:     ONE-SHOT (repeating on drag)
+     Spatial:  2D
+     Priority: LOW
+     Trigger:  Dragging gate edges on GRAV/IR analyzer
+     Notes:    Soft tick/click as gate edges move. Very subtle UI feedback.
+
+6.11 IRST SEND
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  IR scanner IRST SEND button
+     Notes:    Data transfer chirp. Thermal target pushed to IRST. ~0.3s.
+
+
+================================================================================
+7. ELECTRONIC WARFARE — IRST
+================================================================================
+
+7.1  IRST POWER ON
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  IRST camera toggled on
+     Notes:    Camera/optics initializing. Lens servo + static. ~0.5s.
+
+7.2  IRST POWER OFF
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  IRST camera toggled off
+     Notes:    System shutdown. ~0.3s.
+
+7.3  IRST SLEW
+     Type:     LOOP (while dragging)
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Pointer drag on IRST viewport
+     Notes:    Servo motor sound. Gimbal moving. Pitch could vary with
+               slew speed. Stops when drag stops.
+
+7.4  IRST ZOOM
+     Type:     ONE-SHOT (per zoom step)
+     Spatial:  2D
+     Priority: LOW
+     Trigger:  Mouse wheel on IRST viewport (1x-20x)
+     Notes:    Lens adjustment click/whir. Very short. ~0.1s.
+
+7.5  POINT TRACK ACQUIRED
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  setPointTrackEnabled(true)
+     Notes:    Target locked in IRST. Confirmation tone + servo stabilization
+               sound. ~0.3s.
+
+7.6  POINT TRACK LOST
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  setPointTrackEnabled(false) — target invalid or out of range
+     Notes:    Track broken. Warning chirp. ~0.3s.
+
+
+================================================================================
+8. ELECTRONIC WARFARE — RWR (RADAR WARNING RECEIVER)
+================================================================================
+
+8.1  RWR — NEW CONTACT
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  New NPC scan contact appears in rwrContacts
+     Notes:    Already coded in rwrAudio.ts (playNewContactTone). Two-note
+               descending sine chirp. Alert: "someone is scanning us."
+
+8.2  RWR — ENEMY LOCK (STT)
+     Type:     LOOP
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  NPC enters STT mode on player (sttLock: true)
+     Notes:    Already coded in rwrAudio.ts (startLockTone). Repeating
+               square-wave chirp at 250ms. Urgent: "we are being tracked."
+
+8.3  RWR — MISSILE LAUNCH WARNING
+     Type:     LOOP
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Incoming torpedo detected
+     Notes:    Already coded in rwrAudio.ts (startMissileAlarm). Sawtooth
+               horn at 800ms interval. Most urgent alarm in the game.
+
+8.4  RWR — DECEPTION JAMMER ACTIVE
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Jammer in DRFM/RGPO mode active
+     Notes:    Already coded in rwrAudio.ts (playDeceptionTone). Triangle-wave
+               sequence. Indicates countermeasure deployment.
+
+8.5  RWR — CONTACT LOST
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  RWR contact disappears (NPC stopped scanning)
+     Notes:    Brief fading tone. Tension relief. ~0.2s.
+
+
+================================================================================
+9. ELECTRONIC WARFARE — JAMMER
+================================================================================
+
+9.1  JAMMER SLOT ACTIVATE
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Jammer slot engaged (NJ/SJ/DRFM/RGPO)
+     Notes:    Electronic warfare system engaging. Buzzy, aggressive tone.
+               Different character per mode would be ideal but not required.
+
+9.2  JAMMER SLOT DEACTIVATE
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Jammer slot disengaged
+     Notes:    System powering down. ~0.2s.
+
+9.3  JAMMER AMBIENT (ACTIVE)
+     Type:     LOOP
+     Spatial:  2D
+     Priority: LOW
+     Trigger:  While any jammer slot is active
+     Notes:    Subtle electronic interference texture. White noise / digital
+               static undertone.
+
+
+================================================================================
+10. UI & COCKPIT INTERACTION
+================================================================================
+
+10.1 STATION SWITCH
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  F1/F2/F3 or station selector click
+     Notes:    Console switching sound. Screens powering/swapping. Mechanical
+               chair rotation feel. ~0.5s.
+
+10.2 BUTTON PRESS (GENERIC)
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Any cockpit button click (DMP, SHD, MWD, WARP, etc.)
+     Notes:    Tactile click. Physical button depression. Should feel like
+               military-grade hardware. ~0.1s. This is the BASE layer —
+               specific buttons (MWD, shields) layer their own sounds on top.
+
+10.3 BUTTON PRESS (DISABLED / REJECTED)
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Clicking a disabled button (MWD on cooldown, WARP not aligned)
+     Notes:    Error buzz / rejection tone. ~0.15s.
+
+10.4 SLIDER ADJUSTMENT
+     Type:     ONE-SHOT (per step)
+     Spatial:  2D
+     Priority: LOW
+     Trigger:  Shield recharge slider, MWD duration slider, warp distance slider
+     Notes:    Soft detent click per slider notch. ~0.05s.
+
+10.5 TAB SWITCH (EW CONSOLE)
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: LOW
+     Trigger:  MAP/RADAR tab switch in EWSystemMap
+     Notes:    Soft screen transition blip. ~0.1s.
+
+10.6 SPEED ARC CLICK
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Click on speed arc to set target speed
+     Notes:    Throttle set confirmation click. ~0.1s.
+
+10.7 BEARING/INCLINATION SET
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Click on bearing scope or inclination meter
+     Notes:    Navigation input confirmation. Short blip. ~0.1s.
+
+10.8 AA/DAC MODE SWITCH
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Backspace key or AA/DAC buttons
+     Notes:    Flight mode transition. Mechanical switch feel + HUD
+               reconfiguration texture. ~0.3s.
+
+10.9 WARP DESTINATION SELECT
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Click warp target marker
+     Notes:    Navigation target selected. Confirmation beep. ~0.2s.
+
+10.10 WARP DESTINATION DOUBLE-CLICK (ALIGN)
+      Type:     ONE-SHOT
+      Spatial:  2D
+      Priority: MEDIUM
+      Trigger:  Double-click warp target (auto-aligns bearing/inclination)
+      Notes:    Navigation alignment initiated. Slightly more emphatic than
+                single-click selection. ~0.3s.
+
+
+================================================================================
+11. AMBIENT & ENVIRONMENTAL
+================================================================================
+
+11.1 COCKPIT AMBIENT
+     Type:     LOOP
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Always playing (underlays everything)
+     Notes:    Ship interior atmosphere. Very quiet: air circulation, faint
+               electrical hum, subtle mechanical sounds. The "room tone" of
+               being inside a warship. Essential for immersion.
+
+11.2 CONSOLE AMBIENCE — PILOT STATION
+     Type:     LOOP
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  While on Pilot station
+     Notes:    Slight variation of cockpit ambient. More engine-forward,
+               navigation beeps in background.
+
+11.3 CONSOLE AMBIENCE — EW STATION
+     Type:     LOOP
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  While on EW station
+     Notes:    More electronic. Faint static, scanner hums, CRT buzz.
+               Denser electronic texture than pilot station.
+
+11.4 CONSOLE AMBIENCE — WSO STATION
+     Type:     LOOP
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  While on WSO station
+     Notes:    Weapons systems hum. Mechanical loading sounds in background.
+               Torpedo tube servos.
+
+11.5 WARP INTERFERENCE STATIC
+     Type:     LOOP
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  During warp (scanners/radar show interference overlays)
+     Notes:    Static/interference texture overlaid on cockpit ambient during
+               warp. Reinforces that sensors are degraded.
+
+
+================================================================================
+12. WARNINGS & ALARMS
+================================================================================
+
+12.1 CAPACITOR LOW WARNING
+     Type:     ONE-SHOT (repeating at threshold)
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Capacitor below ~20%
+     Notes:    Warning beep. Periodic reminder. Not as urgent as combat alarms.
+               Every ~3-5 seconds while below threshold.
+
+12.2 HULL CRITICAL WARNING
+     Type:     LOOP
+     Spatial:  2D
+     Priority: CRITICAL
+     Trigger:  Hull below critical threshold (e.g. <25%)
+     Notes:    Klaxon or repeating alarm. Ship is in danger of destruction.
+               Most urgent ship-status alarm.
+
+12.3 SHIELDS DOWN ALERT
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Shield HP reaches 0
+     Notes:    Shield failure stinger. Single alarming tone. ~0.5s.
+
+12.4 DMP BRAKE WARNING STATES
+     Type:     ONE-SHOT (per state transition)
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  DMP meter transitions: idle → warning → caution → critical
+     Notes:    Escalating warning tones as dampener authority decreases.
+               Each state slightly more urgent than the last.
+
+
+================================================================================
+13. FUTURE / WSO STATION (PLANNED)
+================================================================================
+
+These are based on planned WSO features in the todo file.
+
+13.1 TORPEDO TUBE LOADING
+     Type:     SEQUENCE (~2-3s)
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Torpedo tube state: empty → loading
+     Notes:    Mechanical loading sequence. Autoloader sounds, hydraulics,
+               heavy ordnance being moved into place.
+
+13.2 TORPEDO TUBE READY
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Torpedo tube state: loading → ready
+     Notes:    Tube sealed and armed confirmation. Mechanical clunk + ready
+               chime. ~0.5s.
+
+13.3 WEAPON TYPE SELECT
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: MEDIUM
+     Trigger:  Selecting Active/Semi-active/IR seeker torpedo type
+     Notes:    System configuration beep. ~0.2s.
+
+13.4 TORPEDO FUEL QTY ADJUST
+     Type:     ONE-SHOT (per step)
+     Spatial:  2D
+     Priority: LOW
+     Trigger:  Setting torpedo fuel quantity (10-60s)
+     Notes:    Dial click / rotary input. ~0.1s.
+
+13.5 CHAFF LAUNCH
+     Type:     ONE-SHOT
+     Spatial:  2D
+     Priority: HIGH
+     Trigger:  Chaff deploy button (planned)
+     Notes:    Explosive burst + metallic scatter. Chaff cloud deployment.
+               ~0.5s.
+
+13.6 LASER FIRE
+     Type:     ONE-SHOT or LOOP (depends on weapon design)
+     Spatial:  2D (own) / 3D (others)
+     Priority: CRITICAL
+     Trigger:  Laser weapon fired (planned)
+     Notes:    High-energy discharge. Sustained beam would be a loop with
+               start/stop transients. Pulse laser would be one-shot.
+
+
+================================================================================
+14. IMPLEMENTATION NOTES
+================================================================================
+
+EXISTING CODE:
+  - rwrAudio.ts has Web Audio API procedural tones for RWR events (8.1-8.4)
+    but they are NOT wired into the game yet. These should be connected first
+    as they're already implemented.
+
+AUDIO ENGINE RECOMMENDATIONS:
+  - Use Howler.js or Tone.js for sample playback alongside existing Web Audio
+  - Implement an audio manager with:
+    * Channel system (master, SFX, ambient, UI, alarms)
+    * Per-channel volume control
+    * Sound pooling for frequently-fired one-shots
+    * Ducking (reduce ambient during alarms)
+    * Crossfading for RAMP-type sounds
+    * 3D spatial audio via Web Audio panner nodes
+
+VOLUME HIERARCHY (loudest → quietest):
+  1. Combat alarms (RWR missile, hull critical)
+  2. Combat events (impacts, launches)
+  3. Propulsion (MWD, thrust)
+  4. Warnings (capacitor, shields)
+  5. System feedback (locks, analysis)
+  6. UI interactions (buttons, sliders)
+  7. Ambient (cockpit, console, shields hum)
+
+TOTAL SOUND EFFECTS:  ~70 distinct sounds
+  - CRITICAL priority:  ~18
+  - HIGH priority:      ~22
+  - MEDIUM priority:    ~18
+  - LOW priority:       ~12

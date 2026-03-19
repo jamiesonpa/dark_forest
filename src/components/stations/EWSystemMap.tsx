@@ -708,6 +708,7 @@ export function EWSystemMap({ time }: { time: number }) {
   const [bScopeBearingMode, setBScopeBearingMode] = useState<'REL' | 'ABS'>('REL')
   const [bScopeViewMinDeg, setBScopeViewMinDeg] = useState(-B_SCOPE_AZ_LIMIT_DEG)
   const [bScopeViewMaxDeg, setBScopeViewMaxDeg] = useState(B_SCOPE_AZ_LIMIT_DEG)
+  const [bScopeCursor, setBScopeCursor] = useState<{ xPct: number; yPct: number } | null>(null)
   const [orbit, setOrbit] = useState<OrbitState>({ yaw: -0.7, pitch: 0.62 })
   const [zoomDistance, setZoomDistance] = useState(10.5)
   const [isDragging, setIsDragging] = useState(false)
@@ -1062,6 +1063,22 @@ export function EWSystemMap({ time }: { time: number }) {
   const bScopeLeftAbsDeg = normalizeBearingDeg(shipHeadingDeg + bScopeViewMinDeg)
   const bScopeCenterAbsDeg = normalizeBearingDeg(shipHeadingDeg + (bScopeViewMinDeg + bScopeViewMaxDeg) * 0.5)
   const bScopeRightAbsDeg = normalizeBearingDeg(shipHeadingDeg + bScopeViewMaxDeg)
+  const bScopeCursorRelBearingDeg = bScopeCursor
+    ? bScopeViewMinDeg + (bScopeCursor.xPct / 100) * bScopeViewSpanDeg
+    : null
+  const bScopeCursorAbsBearingDeg = bScopeCursorRelBearingDeg === null
+    ? null
+    : normalizeBearingDeg(shipHeadingDeg + bScopeCursorRelBearingDeg)
+  const bScopeCursorRangeKm = bScopeCursor
+    ? clamp((1 - bScopeCursor.yPct / 100) * bScopeRangeKm, 0, bScopeRangeKm)
+    : null
+  const bScopeCursorBearingLabel = bScopeCursorRelBearingDeg === null
+    ? null
+    : bScopeBearingMode === 'REL'
+      ? bScopeCursorRelBearingDeg < 0
+        ? `L${Math.round(Math.abs(bScopeCursorRelBearingDeg))}`
+        : `R${Math.round(bScopeCursorRelBearingDeg)}`
+      : String(Math.round(bScopeCursorAbsBearingDeg ?? 0)).padStart(3, '0')
 
   useEffect(() => {
     const shouldRadarBeOn = radarPowerClamped > 0
@@ -1471,6 +1488,15 @@ export function EWSystemMap({ time }: { time: number }) {
                         overflow: 'hidden',
                       }}
                       onWheel={handleBScopeWheel}
+                      onMouseMove={(event) => {
+                        const bounds = event.currentTarget.getBoundingClientRect()
+                        const xPct = clamp(((event.clientX - bounds.left) / Math.max(1, bounds.width)) * 100, 0, 100)
+                        const yPct = clamp(((event.clientY - bounds.top) / Math.max(1, bounds.height)) * 100, 0, 100)
+                        setBScopeCursor({ xPct, yPct })
+                      }}
+                      onMouseLeave={() => {
+                        setBScopeCursor(null)
+                      }}
                       onContextMenu={(event) => {
                         if (!radarOperational) return
                         event.preventDefault()
@@ -1606,6 +1632,78 @@ export function EWSystemMap({ time }: { time: number }) {
                           </div>
                         )
                       })}
+                      {bScopeCursor ? (
+                        <>
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: `${bScopeCursor.xPct}%`,
+                              top: 0,
+                              bottom: 0,
+                              width: 1,
+                              background: 'rgba(136,255,170,0.42)',
+                              boxShadow: `0 0 8px ${B_SCOPE_GREEN_DIM}`,
+                              zIndex: 4,
+                              pointerEvents: 'none',
+                            }}
+                          />
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              right: 0,
+                              top: `${bScopeCursor.yPct}%`,
+                              height: 1,
+                              background: 'rgba(136,255,170,0.42)',
+                              boxShadow: `0 0 8px ${B_SCOPE_GREEN_DIM}`,
+                              zIndex: 4,
+                              pointerEvents: 'none',
+                            }}
+                          />
+                          {bScopeCursorBearingLabel ? (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: `${bScopeCursor.xPct}%`,
+                                bottom: 2,
+                                transform: 'translateX(-50%)',
+                                color: B_SCOPE_GREEN_GLOW,
+                                border: `1px solid ${B_SCOPE_GREEN_DIM}aa`,
+                                background: 'rgba(0,0,0,0.82)',
+                                padding: '1px 5px',
+                                fontSize: 10,
+                                letterSpacing: 0.3,
+                                zIndex: 6,
+                                pointerEvents: 'none',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {bScopeCursorBearingLabel}
+                            </div>
+                          ) : null}
+                          {bScopeCursorRangeKm !== null ? (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: 2,
+                                top: `${bScopeCursor.yPct}%`,
+                                transform: 'translateY(-50%)',
+                                color: B_SCOPE_GREEN_GLOW,
+                                border: `1px solid ${B_SCOPE_GREEN_DIM}aa`,
+                                background: 'rgba(0,0,0,0.82)',
+                                padding: '1px 5px',
+                                fontSize: 10,
+                                letterSpacing: 0.3,
+                                zIndex: 6,
+                                pointerEvents: 'none',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {`${bScopeCursorRangeKm.toFixed(1)} km`}
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
 
                       {bScopeTracks.map((track) => {
                         const xPct =
