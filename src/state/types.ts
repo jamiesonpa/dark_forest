@@ -271,6 +271,8 @@ export interface GameStore {
   chaffInventoryMax: number
   countermeasuresPowered: boolean
   dewPowered: boolean
+  /** When false, torpedo tubes cannot load or launch (WS console). */
+  torpedoTubesPowered: boolean
   dewCharging: boolean
   remoteLaunchedCylinders: LaunchedCylinder[]
   remoteLaunchedFlares: LaunchedFlare[]
@@ -297,6 +299,7 @@ export interface GameStore {
   setPlayerShipBoundingLength: (length: number) => void
   setCountermeasuresPowered: (powered: boolean) => void
   setDewPowered: (powered: boolean) => void
+  setTorpedoTubesPowered: (powered: boolean) => void
   setDewCharging: (charging: boolean) => void
   launchLockedCylinder: (
     shipBoundingLength: number,

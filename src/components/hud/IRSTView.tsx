@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { useIRSTStore } from '@/state/irstStore'
+import { useIRSTStore, irstDragOverride } from '@/state/irstStore'
 import { useGameStore } from '@/state/gameStore'
 
 function pad3(n: number): string {
@@ -104,6 +104,10 @@ export function IRSTView({ displayScale = 1, showPowerToggle = false, onPowerCha
     if (e.button !== 0) return
     e.preventDefault()
     e.currentTarget.setPointerCapture(e.pointerId)
+    const ship = useGameStore.getState().ship
+    irstDragOverride.bearing = ship.irstBearing
+    irstDragOverride.inclination = ship.irstInclination
+    irstDragOverride.active = true
     dragRef.current = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY }
     setIsDragging(true)
   }
@@ -123,16 +127,28 @@ export function IRSTView({ displayScale = 1, showPowerToggle = false, onPowerCha
 
     const ship = useGameStore.getState().ship
     const dragDegPerPx = dragDegPerPixelForZoom(ship.irstZoom)
-    const nextBearing = normalizeBearing(ship.irstBearing - dx * dragDegPerPx)
-    const nextInclination = clampInclination(ship.irstInclination - dy * dragDegPerPx)
-    useGameStore.getState().setShipState({
-      irstBearing: nextBearing,
-      irstInclination: nextInclination,
-    })
+    const curBearing = irstDragOverride.active ? irstDragOverride.bearing : ship.irstBearing
+    const curInclination = irstDragOverride.active ? irstDragOverride.inclination : ship.irstInclination
+    const nextBearing = normalizeBearing(curBearing - dx * dragDegPerPx)
+    const nextInclination = clampInclination(curInclination - dy * dragDegPerPx)
+    irstDragOverride.bearing = nextBearing
+    irstDragOverride.inclination = nextInclination
+    if (hdgRef.current) hdgRef.current.textContent = pad3(nextBearing)
+    if (elRef.current) {
+      const sign = nextInclination >= 0 ? '+' : ''
+      elRef.current.textContent = `EL ${sign}${pad3(Math.abs(nextInclination))}`
+    }
   }
 
   const endDrag = (pointerId: number) => {
     if (!dragRef.current || dragRef.current.pointerId !== pointerId) return
+    if (irstDragOverride.active) {
+      irstDragOverride.active = false
+      useGameStore.getState().setShipState({
+        irstBearing: irstDragOverride.bearing,
+        irstInclination: irstDragOverride.inclination,
+      })
+    }
     dragRef.current = null
     setIsDragging(false)
   }

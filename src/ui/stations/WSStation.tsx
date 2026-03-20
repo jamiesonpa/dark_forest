@@ -162,6 +162,10 @@ function torpedoTypeLaunchAllowed(
 function TorpedoTubesPanel({
   hasRadarLock,
   hasIrstPointTrackTarget,
+  isPowered,
+  isArmed,
+  onTogglePower,
+  onToggleArmed,
   onLaunchTubeTorpedo,
   tubes,
   reserves,
@@ -171,6 +175,10 @@ function TorpedoTubesPanel({
 }: {
   hasRadarLock: boolean
   hasIrstPointTrackTarget: boolean
+  isPowered: boolean
+  isArmed: boolean
+  onTogglePower: () => void
+  onToggleArmed: () => void
   onLaunchTubeTorpedo: (tubeId: number) => boolean
   tubes: TubeStatus[]
   reserves: TorpedoReserves
@@ -179,13 +187,66 @@ function TorpedoTubesPanel({
   onLaunchTube: (tubeId: number) => void
 }) {
   const loadedCount = tubes.filter((tube) => tube.state === 'READY').length
+  const tubesActive = isPowered && isArmed
 
   return (
     <WsPanel
       title="Torpedo Tubes"
-      headerRight={<span style={{ color: AMBER_DIM, fontSize: 9 }}>{loadedCount}/{TUBE_COUNT} LOADED</span>}
+      dimmed={!isPowered}
+      headerRight={(
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ color: AMBER_DIM, fontSize: 9 }}>{loadedCount}/{TUBE_COUNT} LOADED</span>
+          <button
+            type="button"
+            onClick={onTogglePower}
+            style={{
+              minWidth: 42,
+              height: 20,
+              border: `1px solid ${isPowered ? WS_GREEN : AMBER_DIM}`,
+              background: isPowered ? 'rgba(0,255,100,0.14)' : 'rgba(80,60,20,0.2)',
+              color: isPowered ? '#9dffc4' : AMBER_DIM,
+              fontFamily: FONT,
+              fontSize: 9,
+              borderRadius: 2,
+              cursor: 'pointer',
+              letterSpacing: 1,
+            }}
+          >
+            {isPowered ? 'PWR ON' : 'PWR OFF'}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleArmed}
+            disabled={!isPowered}
+            style={{
+              minWidth: 44,
+              height: 20,
+              border: `1px solid ${isArmed ? AMBER : AMBER_GLOW}`,
+              background: isArmed ? 'rgba(255,176,0,0.15)' : 'rgba(255,176,0,0.18)',
+              color: isArmed ? AMBER_GLOW : '#f2d38a',
+              fontFamily: FONT,
+              fontSize: 9,
+              borderRadius: 2,
+              cursor: isPowered ? 'pointer' : 'not-allowed',
+              letterSpacing: 1,
+              boxShadow: isArmed ? 'none' : '0 0 4px rgba(255,176,0,0.45)',
+              opacity: isPowered ? 1 : 0.45,
+            }}
+          >
+            {isArmed ? 'ARMED' : 'ARM'}
+          </button>
+        </div>
+      )}
     >
-      <div style={{ padding: '6px 8px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      <div style={{
+        padding: '6px 8px',
+        display: 'flex',
+        gap: 6,
+        flexWrap: 'wrap',
+        opacity: tubesActive ? 1 : 0.4,
+        filter: tubesActive ? 'none' : 'grayscale(1)',
+        pointerEvents: tubesActive ? 'auto' : 'none',
+      }}>
         {tubes.map((tube) => {
           const readyLaunchOk = torpedoTypeLaunchAllowed(
             tube.selectedType,
@@ -229,7 +290,7 @@ function TorpedoTubesPanel({
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <select
                 value={tube.selectedType}
-                disabled={tube.state !== 'EMPTY'}
+                disabled={!tubesActive || tube.state !== 'EMPTY'}
                 onChange={(event) => {
                   const nextType = event.target.value as TorpedoType
                   onSetTubeType(tube.id, nextType)
@@ -265,7 +326,8 @@ function TorpedoTubesPanel({
                   }
                 }}
                 disabled={
-                  tube.state === 'LOADING'
+                  !tubesActive
+                  || tube.state === 'LOADING'
                   || (tube.state === 'READY' && !readyLaunchOk)
                   || (tube.state === 'EMPTY' && (reserves[tube.selectedType] ?? 0) <= 0)
                 }
@@ -298,7 +360,8 @@ function TorpedoTubesPanel({
                   fontSize: 10,
                   borderRadius: 2,
                   cursor:
-                    tube.state === 'LOADING' || (tube.state === 'READY' && !readyLaunchOk)
+                    !tubesActive
+                    || tube.state === 'LOADING' || (tube.state === 'READY' && !readyLaunchOk)
                     || (tube.state === 'EMPTY' && (reserves[tube.selectedType] ?? 0) <= 0)
                       ? 'not-allowed'
                       : 'pointer',
@@ -1418,11 +1481,14 @@ export function WSStation() {
   const setCountermeasuresPowered = useGameStore((state) => state.setCountermeasuresPowered)
   const dewPowered = useGameStore((state) => state.dewPowered)
   const setDewPowered = useGameStore((state) => state.setDewPowered)
+  const torpedoTubesPowered = useGameStore((state) => state.torpedoTubesPowered)
+  const setTorpedoTubesPowered = useGameStore((state) => state.setTorpedoTubesPowered)
   const setDewCharging = useGameStore((state) => state.setDewCharging)
   const fireDew = useGameStore((state) => state.fireDew)
   const currentCelestialId = useGameStore((state) => state.currentCelestialId)
   const [isCountermeasuresArmed, setIsCountermeasuresArmed] = useState(true)
   const [isDewArmed, setIsDewArmed] = useState(false)
+  const [isTorpedoTubesArmed, setIsTorpedoTubesArmed] = useState(false)
   const [dewFocusAlignment, setDewFocusAlignment] = useState(0)
   const [flareLaunchCount, setFlareLaunchCount] = useState(3)
   const [flareLaunchMode, setFlareLaunchMode] = useState<'PTN' | 'SGL'>('PTN')
@@ -1547,6 +1613,7 @@ export function WSStation() {
   }
 
   const beginLoadingTube = (tubeId: number) => {
+    if (!torpedoTubesPowered || !isTorpedoTubesArmed) return
     const tube = torpedoTubes.find((entry) => entry.id === tubeId)
     if (!tube || tube.state !== 'EMPTY') return
     const selectedType = tube.selectedType
@@ -1599,6 +1666,12 @@ export function WSStation() {
       clearQueuedSingleFlares()
     }
   }, [countermeasuresPowered, isCountermeasuresArmed])
+
+  useEffect(() => {
+    if (!torpedoTubesPowered && isTorpedoTubesArmed) {
+      setIsTorpedoTubesArmed(false)
+    }
+  }, [torpedoTubesPowered, isTorpedoTubesArmed])
 
   const stopSlew = () => {
     slewActiveRef.current = false
@@ -1913,12 +1986,25 @@ export function WSStation() {
           <TorpedoTubesPanel
             hasRadarLock={hasRadarLock}
             hasIrstPointTrackTarget={hasIrstPointTrackTarget}
+            isPowered={torpedoTubesPowered}
+            isArmed={isTorpedoTubesArmed}
+            onTogglePower={() => {
+              if (torpedoTubesPowered) {
+                setIsTorpedoTubesArmed(false)
+              }
+              setTorpedoTubesPowered(!torpedoTubesPowered)
+            }}
+            onToggleArmed={() => {
+              if (!torpedoTubesPowered) return
+              setIsTorpedoTubesArmed((previous) => !previous)
+            }}
             tubes={torpedoTubes}
             reserves={torpedoReserves}
             onSetTubeType={setTubeType}
             onBeginLoadingTube={beginLoadingTube}
             onLaunchTube={clearTubeAfterLaunch}
             onLaunchTubeTorpedo={(tubeId) => {
+              if (!torpedoTubesPowered || !isTorpedoTubesArmed) return false
               const tube = torpedoTubes.find((t) => t.id === tubeId)
               if (!tube || tube.state !== 'READY') return false
               if (tube.selectedType === 'IR SEEKER') {

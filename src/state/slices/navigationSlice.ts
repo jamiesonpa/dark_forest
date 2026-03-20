@@ -521,6 +521,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   chaffInventoryMax: CHAFF_STARTING_INVENTORY,
   countermeasuresPowered: true,
   dewPowered: false,
+  torpedoTubesPowered: true,
   dewCharging: false,
   remoteLaunchedCylinders: [],
   remoteLaunchedFlares: [],
@@ -733,12 +734,17 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       dewPowered: powered,
       dewCharging: powered ? s.dewCharging : false,
     })),
+  setTorpedoTubesPowered: (powered) =>
+    set({
+      torpedoTubesPowered: powered,
+    }),
   setDewCharging: (charging) =>
     set((s) => ({
       dewCharging: s.dewPowered ? charging : false,
     })),
   launchLockedCylinder: (shipBoundingLength, options) =>
     set((s) => {
+      if (!s.torpedoTubesPowered) return {}
       const explicitTarget =
         typeof options?.targetLockId === 'string' && options.targetLockId.length > 0
           ? options.targetLockId

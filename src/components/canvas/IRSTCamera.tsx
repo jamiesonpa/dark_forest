@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback } from 'react'
 import { useThree, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
-import { useIRSTStore } from '@/state/irstStore'
+import { useIRSTStore, irstDragOverride } from '@/state/irstStore'
 import { getPlayerHullObjectName } from './PlayerShip'
 
 const IRST_W = 320
@@ -174,12 +174,14 @@ export function IRSTCamera() {
 
     const ship = state.ship
     const stabilized = useIRSTStore.getState().stabilized
+    const rawBearing = irstDragOverride.active ? irstDragOverride.bearing : ship.irstBearing
+    const rawInclination = irstDragOverride.active ? irstDragOverride.inclination : ship.irstInclination
     const effectiveBearing = stabilized
-      ? ship.irstBearing
-      : normalizeBearing(360 - ship.actualHeading + ship.irstBearing)
+      ? rawBearing
+      : normalizeBearing(360 - ship.actualHeading + rawBearing)
     const effectiveInclination = stabilized
-      ? ship.irstInclination
-      : clampInclination(ship.actualInclination + ship.irstInclination)
+      ? rawInclination
+      : clampInclination(ship.actualInclination + rawInclination)
     const bearingRad = THREE.MathUtils.degToRad(effectiveBearing)
     const inclinationRad = THREE.MathUtils.degToRad(effectiveInclination)
     const outX = Math.sin(bearingRad) * Math.cos(inclinationRad)
