@@ -5,14 +5,37 @@ import { useGameStore } from '@/state/gameStore'
 import { useIRSTStore } from '@/state/irstStore'
 import { getPlayerHullObjectName } from './PlayerShip'
 
-const IRST_W = 720
-const IRST_H = 540
+const IRST_W = 320
+const IRST_H = 240
 export const IRSTCameraSphereRadius = 600
-const IRST_EXTREME_HOT_BLOOM_THRESHOLD = 245
-const IRST_EXTREME_HOT_BLOOM_MULTIPLIER = 20
-const VIS_EXTREME_HOT_BLOOM_SCALE = 0.5
 const TRACK_BOX_COLOR = '#44ff66'
 const TRACK_BOX_LINE_WIDTH = 1.5
+
+const BLIT_VERT = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}`
+
+const BLIT_FRAG = /* glsl */ `
+precision mediump float;
+uniform sampler2D tScene;
+uniform int uMode;
+varying vec2 vUv;
+void main() {
+  vec3 c = texture2D(tScene, vUv).rgb;
+  if (uMode == 2) {
+    gl_FragColor = vec4(c, 1.0);
+    return;
+  }
+  float luma = dot(c, vec3(0.30078, 0.58594, 0.11328));
+  float bHot = luma < 0.05882
+    ? 0.5490 - luma * 0.25
+    : max(0.0, 0.5490 - luma);
+  float v = uMode == 1 ? 1.0 - bHot : bHot;
+  gl_FragColor = vec4(v, v, v, 1.0);
+}`
 
 function normalizeBearing(deg: number): number {
   return ((deg % 360) + 360) % 360
@@ -27,13 +50,16 @@ export function IRSTCamera() {
   const cam = useRef<THREE.PerspectiveCamera>(null!)
   const rt = useRef<THREE.WebGLRenderTarget>(null!)
   const canvas2d = useRef<HTMLCanvasElement | null>(null)
-  const frame = useRef(0)
-  const buf = useRef<Uint8Array>(null!)
-  const lumBuf = useRef<Float32Array>(null!)
-  const bloomBuf = useRef<Float32Array>(null!)
-  const imageData = useRef<ImageData | null>(null)
+  const ctx2d = useRef<CanvasRenderingContext2D | null>(null)
+  const mountedRef = useRef(true)
   const trackedBounds = useRef(new THREE.Box3())
   const projectedCorner = useRef(new THREE.Vector3())
+  const blitScene = useRef<THREE.Scene>(null!)
+  const blitCam = useRef<THREE.Camera>(null!)
+  const blitMat = useRef<THREE.ShaderMaterial>(null!)
+  const savedViewport = useRef(new THREE.Vector4())
+  const savedScissor = useRef(new THREE.Vector4())
+  const savedScissorTest = useRef(false)
 
   const drawTrackedTargetBounds = useCallback((ctx: CanvasRenderingContext2D) => {
     const irstState = useIRSTStore.getState()
@@ -104,169 +130,45 @@ export function IRSTCamera() {
     cam.current.layers.enable(1)
   }
   if (!rt.current) rt.current = new THREE.WebGLRenderTarget(IRST_W, IRST_H)
-  if (!buf.current) buf.current = new Uint8Array(IRST_W * IRST_H * 4)
-  if (!lumBuf.current) lumBuf.current = new Float32Array(IRST_W * IRST_H)
-  if (!bloomBuf.current) bloomBuf.current = new Float32Array(IRST_W * IRST_H)
+  if (!blitScene.current) {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { tScene: { value: null }, uMode: { value: 2 } },
+      vertexShader: BLIT_VERT,
+      fragmentShader: BLIT_FRAG,
+      depthWrite: false,
+      depthTest: false,
+    })
+    blitMat.current = mat
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat)
+    const sc = new THREE.Scene()
+    sc.add(quad)
+    blitScene.current = sc
+    blitCam.current = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+  }
 
   useEffect(() => {
+    mountedRef.current = true
     const c = document.createElement('canvas')
     c.width = IRST_W
     c.height = IRST_H
     canvas2d.current = c
+    ctx2d.current = c.getContext('2d')
     useIRSTStore.getState().setCanvas(c)
-    return () => { rt.current?.dispose() }
+    return () => {
+      mountedRef.current = false
+      rt.current?.dispose()
+      blitMat.current?.dispose()
+    }
   }, [])
 
-  const copyToCanvas = useCallback(() => {
-    const c = canvas2d.current
-    if (!c) return
-    const ctx = c.getContext('2d')
-    if (!ctx) return
-    if (!imageData.current) imageData.current = ctx.createImageData(IRST_W, IRST_H)
-    const shipState = useGameStore.getState().ship
-    const irstMode = shipState.irstMode
-    const irstSpectrumMode = shipState.irstSpectrumMode
-    gl.readRenderTargetPixels(rt.current, 0, 0, IRST_W, IRST_H, buf.current)
-
-    const src = buf.current
-    const lum = lumBuf.current
-    for (let row = 0; row < IRST_H; row++) {
-      const srcRow = (IRST_H - 1 - row) * IRST_W * 4
-      for (let col = 0; col < IRST_W; col++) {
-        const si = srcRow + col * 4
-        const luma = ((src[si] ?? 0) * 77 + (src[si + 1] ?? 0) * 150 + (src[si + 2] ?? 0) * 29) / 256
-        lum[row * IRST_W + col] = luma
-      }
-    }
-
-    const BLOOM_THRESH = 100
-    const BG_CEIL = 8
-    const BLOOM_R = 8
-    const BLOOM_R_REDUCED = 3
-    const MAX_BLOOM_HOT_PIXELS = 5000
-    const bloom = bloomBuf.current
-    bloom.fill(0)
-
-    let hotPixelCount = 0
-    for (let i = 0; i < IRST_W * IRST_H; i++) {
-      if (lum[i]! > BLOOM_THRESH) hotPixelCount++
-    }
-
-    const overloaded = hotPixelCount > MAX_BLOOM_HOT_PIXELS
-    const effectiveR = overloaded ? BLOOM_R_REDUCED : BLOOM_R
-    const stride = overloaded
-      ? Math.max(1, Math.ceil(hotPixelCount / MAX_BLOOM_HOT_PIXELS))
-      : 1
-
-    const kSize = effectiveR * 2 + 1
-    const falloffLUT = new Float32Array(kSize * kSize)
-    for (let ky = 0; ky < kSize; ky++) {
-      for (let kx = 0; kx < kSize; kx++) {
-        const dy = ky - effectiveR
-        const dx = kx - effectiveR
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist > effectiveR) {
-          falloffLUT[ky * kSize + kx] = -1
-        } else {
-          const f = 1 - dist / effectiveR
-          falloffLUT[ky * kSize + kx] = f * f * 0.5
-        }
-      }
-    }
-
-    let hotIdx = 0
-    for (let y = 0; y < IRST_H; y++) {
-      for (let x = 0; x < IRST_W; x++) {
-        const v = lum[y * IRST_W + x]!
-        if (v <= BLOOM_THRESH) continue
-        hotIdx++
-        if (stride > 1 && hotIdx % stride !== 0) continue
-
-        if (!overloaded) {
-          let hotNeighbors = 0
-          for (let ny = Math.max(0, y - 1); ny <= Math.min(IRST_H - 1, y + 1); ny++) {
-            for (let nx = Math.max(0, x - 1); nx <= Math.min(IRST_W - 1, x + 1); nx++) {
-              if (ny === y && nx === x) continue
-              if (lum[ny * IRST_W + nx]! > BLOOM_THRESH * 0.5) hotNeighbors++
-            }
-          }
-          if (hotNeighbors < 2) continue
-        }
-
-        const hotBoost = v >= IRST_EXTREME_HOT_BLOOM_THRESHOLD
-          ? IRST_EXTREME_HOT_BLOOM_MULTIPLIER *
-            (irstSpectrumMode === 'VIS' ? VIS_EXTREME_HOT_BLOOM_SCALE : 1)
-          : 1
-        const excess = (v - BLOOM_THRESH) * hotBoost * stride
-        for (let ky = 0; ky < kSize; ky++) {
-          const ny = y - effectiveR + ky
-          if (ny < 0 || ny >= IRST_H) continue
-          for (let kx = 0; kx < kSize; kx++) {
-            const nx = x - effectiveR + kx
-            if (nx < 0 || nx >= IRST_W) continue
-            const falloff = falloffLUT[ky * kSize + kx]!
-            if (falloff < 0) continue
-            if (!overloaded) {
-              const targetLum = lum[ny * IRST_W + nx]!
-              if (targetLum > BG_CEIL && targetLum < BLOOM_THRESH) continue
-            }
-            bloom[ny * IRST_W + nx] += excess * falloff
-          }
-        }
-      }
-    }
-
-    const imgData = imageData.current
-    if (!imgData) return
-    const dst = imgData.data
-    if (irstSpectrumMode === 'VIS') {
-      const VIS_BLOOM_GAIN = 0.55
-      for (let row = 0; row < IRST_H; row++) {
-        const srcRow = (IRST_H - 1 - row) * IRST_W * 4
-        const dstRow = row * IRST_W * 4
-        for (let col = 0; col < IRST_W; col++) {
-          const si = srcRow + col * 4
-          const di = dstRow + col * 4
-          const bloomValue = (bloom[row * IRST_W + col] ?? 0) * VIS_BLOOM_GAIN
-          dst[di] = Math.min(255, (src[si] ?? 0) + bloomValue)
-          dst[di + 1] = Math.min(255, (src[si + 1] ?? 0) + bloomValue)
-          dst[di + 2] = Math.min(255, (src[si + 2] ?? 0) + bloomValue)
-          dst[di + 3] = 255
-        }
-      }
-      ctx.putImageData(imgData, 0, 0)
-      drawTrackedTargetBounds(ctx)
-      return
-    }
-    for (let i = 0; i < IRST_W * IRST_H; i++) {
-      const raw = lum[i]!
-      const bloomValue = bloom[i]!
-      const combined = Math.min(255, raw + bloomValue)
-      const bHotLuma = combined < 15 ? 140 - (combined >> 2) : Math.max(0, 140 - combined)
-      const outputLuma = irstMode === 'WHOT' ? 255 - bHotLuma : bHotLuma
-      const di = i * 4
-      dst[di] = outputLuma
-      dst[di + 1] = outputLuma
-      dst[di + 2] = outputLuma
-      dst[di + 3] = 255
-    }
-    ctx.putImageData(imgData, 0, 0)
-    drawTrackedTargetBounds(ctx)
-  }, [drawTrackedTargetBounds, gl])
-
   useFrame(() => {
-    frame.current++
-    if (frame.current % 6 !== 0) return
-    if (!canvas2d.current) return
+    const ctx = ctx2d.current
+    if (!ctx) return
 
     const state = useGameStore.getState()
     if (!state.irstCameraOn) {
-      const offCanvas = canvas2d.current
-      const offCtx = offCanvas?.getContext('2d')
-      if (offCanvas && offCtx) {
-        offCtx.fillStyle = '#000'
-        offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height)
-      }
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, IRST_W, IRST_H)
       return
     }
 
@@ -295,13 +197,54 @@ export function IRSTCamera() {
     cam.current.lookAt(camX + outX * 100, camY + outY * 100, camZ + outZ * 100)
     cam.current.updateMatrixWorld()
 
-    const prev = gl.getRenderTarget()
+    const prevShadowAutoUpdate = gl.shadowMap.autoUpdate
+    const prevShadowNeedsUpdate = gl.shadowMap.needsUpdate
+    gl.shadowMap.autoUpdate = false
+    gl.shadowMap.needsUpdate = false
+    const prevMatAutoUpdate = scene.matrixWorldAutoUpdate
+    scene.matrixWorldAutoUpdate = false
+
+    const prevRT = gl.getRenderTarget()
     gl.setRenderTarget(rt.current)
     gl.clear()
     gl.render(scene, cam.current)
-    gl.setRenderTarget(prev)
 
-    copyToCanvas()
+    gl.shadowMap.autoUpdate = prevShadowAutoUpdate
+    gl.shadowMap.needsUpdate = prevShadowNeedsUpdate
+    scene.matrixWorldAutoUpdate = prevMatAutoUpdate
+
+    const mode: 'BHOT' | 'WHOT' | 'VIS' =
+      ship.irstSpectrumMode === 'VIS' ? 'VIS'
+        : ship.irstMode === 'WHOT' ? 'WHOT' : 'BHOT'
+
+    blitMat.current.uniforms.tScene!.value = rt.current.texture
+    blitMat.current.uniforms.uMode!.value = mode === 'VIS' ? 2 : mode === 'WHOT' ? 1 : 0
+
+    gl.getViewport(savedViewport.current)
+    gl.getScissor(savedScissor.current)
+    savedScissorTest.current = gl.getScissorTest()
+
+    gl.setRenderTarget(null)
+    gl.setViewport(0, 0, IRST_W, IRST_H)
+    gl.setScissorTest(true)
+    gl.setScissor(0, 0, IRST_W, IRST_H)
+    gl.render(blitScene.current, blitCam.current)
+
+    const dpr = gl.getPixelRatio()
+    const actualW = Math.round(IRST_W * dpr)
+    const actualH = Math.round(IRST_H * dpr)
+    const canvasH = gl.domElement.height
+    ctx.drawImage(
+      gl.domElement,
+      0, canvasH - actualH, actualW, actualH,
+      0, 0, IRST_W, IRST_H,
+    )
+    drawTrackedTargetBounds(ctx)
+
+    gl.setScissorTest(savedScissorTest.current)
+    gl.setScissor(savedScissor.current)
+    gl.setViewport(savedViewport.current)
+    gl.setRenderTarget(prevRT)
   })
 
   return null

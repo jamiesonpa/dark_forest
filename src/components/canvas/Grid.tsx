@@ -5,8 +5,10 @@ import { AsteroidBelt } from './AsteroidBelt'
 import { CelestialGridContents } from './CelestialGridContents'
 import { LaunchedCylinders } from './LaunchedCylinders'
 import { LaunchedFlares } from './LaunchedFlares'
+import { LaunchedChaff } from './LaunchedChaff'
 import { TorpedoExplosions } from './TorpedoExplosions'
 import { DewBeamEffects } from './DewBeamEffects'
+import { ColliderDebugVisualizer } from './ColliderDebugVisualizer'
 import { useGameStore } from '@/state/gameStore'
 import { getCelestialById } from '@/utils/systemData'
 
@@ -19,6 +21,7 @@ export function Grid() {
   const localPlayerId = useGameStore((s) => s.localPlayerId)
   const localShipInWarpTransit = useGameStore((s) => s.ship.inWarpTransit)
   const showCelestialGridCenterMarker = useGameStore((s) => s.showCelestialGridCenterMarker)
+  const showColliderDebug = useGameStore((s) => s.showColliderDebug)
   const offGridWarpActive = localShipInWarpTransit
   const celestial = useMemo(
     () => getCelestialById(currentCelestialId, starSystem),
@@ -50,10 +53,12 @@ export function Grid() {
       <LaunchedCylinders />
       <TorpedoExplosions />
       <LaunchedFlares />
+      <LaunchedChaff />
       <DewBeamEffects />
       {!offGridWarpActive && (
         <>
           <AsteroidBelt />
+          {showColliderDebug && <ColliderDebugVisualizer shipEntries={ships} />}
           <CelestialGridContents celestial={celestial} />
           {showCelestialGridCenterMarker && (
             <mesh castShadow receiveShadow>

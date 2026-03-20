@@ -52,8 +52,6 @@ export function IRSTView({ displayScale = 1, showPowerToggle = false, onPowerCha
   const dragRef = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const canvas = useIRSTStore((s) => s.canvas)
-  const irstBearing = useGameStore((s) => s.ship.irstBearing)
-  const irstInclination = useGameStore((s) => s.ship.irstInclination)
   const irstMode = useGameStore((s) => s.ship.irstMode)
   const irstSpectrumMode = useGameStore((s) => s.ship.irstSpectrumMode)
   const laserRange = useGameStore((s) => s.ship.laserRange)
@@ -64,21 +62,39 @@ export function IRSTView({ displayScale = 1, showPowerToggle = false, onPowerCha
   const setIrstCameraOn = useGameStore((s) => s.setIrstCameraOn)
   const displayWidth = Math.round(IRST_DISPLAY_WIDTH * displayScale)
   const displayHeight = Math.round(IRST_DISPLAY_HEIGHT * displayScale)
+  const hdgRef = useRef<HTMLSpanElement>(null)
+  const elRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
     if (!canvas || !displayRef.current) return
     const display = displayRef.current
     const ctx = display.getContext('2d')
     if (!ctx) return
-
-    let raf = 0
-    const draw = () => {
+    ctx.drawImage(canvas, 0, 0, display.width, display.height)
+    const id = setInterval(() => {
       ctx.drawImage(canvas, 0, 0, display.width, display.height)
-      raf = requestAnimationFrame(draw)
-    }
-    draw()
-    return () => cancelAnimationFrame(raf)
+    }, 50)
+    return () => clearInterval(id)
   }, [canvas])
+
+  useEffect(() => {
+    let prevB = -1
+    let prevI = -999
+    const sync = () => {
+      const { irstBearing, irstInclination } = useGameStore.getState().ship
+      if (irstBearing !== prevB && hdgRef.current) {
+        prevB = irstBearing
+        hdgRef.current.textContent = pad3(irstBearing)
+      }
+      if (irstInclination !== prevI && elRef.current) {
+        prevI = irstInclination
+        const sign = irstInclination >= 0 ? '+' : ''
+        elRef.current.textContent = `EL ${sign}${pad3(Math.abs(irstInclination))}`
+      }
+    }
+    sync()
+    return useGameStore.subscribe(sync)
+  }, [])
 
   const zoom = irstZoom.toFixed(1)
   const modeLabel = irstSpectrumMode === 'VIS' ? 'VIS' : irstMode
@@ -178,7 +194,6 @@ export function IRSTView({ displayScale = 1, showPowerToggle = false, onPowerCha
                 height: `${displayHeight}px`,
               }}
             />
-            <div className="irst-vcr-overlay" />
             <div className="irst-overlay">
               <div className="irst-bracket">
                 <div className="bracket-corner tl" />
@@ -188,7 +203,7 @@ export function IRSTView({ displayScale = 1, showPowerToggle = false, onPowerCha
               </div>
 
               <div className="irst-hud-heading">
-                <span className="irst-hdg-value">{pad3(irstBearing)}</span>
+                <span className="irst-hdg-value" ref={hdgRef} />
               </div>
 
               <div className="irst-hud-bl">
@@ -207,7 +222,7 @@ export function IRSTView({ displayScale = 1, showPowerToggle = false, onPowerCha
               </div>
 
               <div className="irst-hud-tr">
-                <span className="irst-data">EL {irstInclination >= 0 ? '+' : ''}{pad3(Math.abs(irstInclination))}</span>
+                <span className="irst-data" ref={elRef} />
               </div>
 
               <div className="irst-hud-bc">

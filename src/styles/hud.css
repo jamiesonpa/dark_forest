@@ -1,4 +1,4 @@
-/* Eve-style HUD - base variables and resets */
+/* HUD base variables and resets */
 :root {
   --hud-bg: rgba(10, 14, 23, 0.75);
   --hud-border: rgba(0, 212, 255, 0.5);
@@ -164,49 +164,6 @@ body {
   right: 0;
   bottom: 0;
   pointer-events: none;
-}
-
-.irst-vcr-overlay {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 1;
-  background:
-    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.32) 100%),
-    repeating-linear-gradient(
-      to bottom,
-      rgba(0, 0, 0, 0.18) 0px,
-      rgba(0, 0, 0, 0.18) 1px,
-      rgba(255, 255, 255, 0.03) 2px,
-      rgba(255, 255, 255, 0.03) 3px
-    ),
-    repeating-linear-gradient(
-      to right,
-      rgba(255, 255, 255, 0.02) 0px,
-      rgba(255, 255, 255, 0.02) 1px,
-      rgba(0, 0, 0, 0) 4px,
-      rgba(0, 0, 0, 0) 6px
-    );
-  mix-blend-mode: screen;
-  opacity: 0.42;
-  animation: irst-vcr-flicker 0.18s steps(2, end) infinite, irst-vcr-jitter 2.6s linear infinite;
-}
-
-@keyframes irst-vcr-flicker {
-  0% { opacity: 0.24; }
-  25% { opacity: 0.31; }
-  50% { opacity: 0.27; }
-  75% { opacity: 0.34; }
-  100% { opacity: 0.26; }
-}
-
-@keyframes irst-vcr-jitter {
-  0%, 89%, 100% { transform: translateX(0); }
-  90% { transform: translateX(-0.7px); }
-  92% { transform: translateX(0.9px); }
-  94% { transform: translateX(-0.4px); }
-  96% { transform: translateX(0.5px); }
-  98% { transform: translateX(0); }
 }
 
 .irst-bracket {
@@ -2417,6 +2374,31 @@ body {
   border-right: 5px solid transparent;
   border-top: 6px solid rgba(0, 212, 255, 0.95);
   transform: translateX(-50%);
+}
+
+.dac-flight-hud-warp-grid {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 81px);
+  transform: translateX(-50%);
+  text-align: center;
+  pointer-events: none;
+}
+
+.dac-flight-hud-warp-grid-name {
+  color: rgba(255, 210, 122, 0.96);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1.15;
+  max-width: min(320px, 72vw);
+  text-transform: uppercase;
+  text-shadow: 0 0 12px rgba(255, 200, 100, 0.35);
+}
+
+.dac-flight-hud.is-shields-up .dac-flight-hud-warp-grid-name {
+  color: rgba(140, 255, 190, 0.95);
+  text-shadow: 0 0 12px rgba(80, 255, 140, 0.28);
 }
 
 .dac-flight-hud-center-marker {

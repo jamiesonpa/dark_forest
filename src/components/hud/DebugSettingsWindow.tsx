@@ -10,6 +10,8 @@ export function DebugSettingsWindow() {
   const setShowIRSTCone = useGameStore((s) => s.setShowIRSTCone)
   const showBScopeRadarCone = useGameStore((s) => s.showBScopeRadarCone)
   const setShowBScopeRadarCone = useGameStore((s) => s.setShowBScopeRadarCone)
+  const showColliderDebug = useGameStore((s) => s.showColliderDebug)
+  const setShowColliderDebug = useGameStore((s) => s.setShowColliderDebug)
   const unlimitAaOrbitZoomOut = useGameStore((s) => s.unlimitAaOrbitZoomOut)
   const setUnlimitAaOrbitZoomOut = useGameStore((s) => s.setUnlimitAaOrbitZoomOut)
   const showCelestialGridCenterMarker = useGameStore((s) => s.showCelestialGridCenterMarker)
@@ -20,20 +22,20 @@ export function DebugSettingsWindow() {
   const shield = useGameStore((s) => s.ship.shield)
   const shieldMax = useGameStore((s) => s.ship.shieldMax)
   const pivotPosition = useGameStore((s) => s.debugPivotPosition)
-  const asteroidBeltThickness = useGameStore((s) => s.asteroidBeltThickness)
-  const asteroidBeltJitter = useGameStore((s) => s.asteroidBeltJitter)
-  const asteroidBeltDensity = useGameStore((s) => s.asteroidBeltDensity)
-  const asteroidBeltArcLength = useGameStore((s) => s.asteroidBeltArcLength)
-  const asteroidBeltRadius = useGameStore((s) => s.asteroidBeltRadius)
-  const asteroidBeltMinSize = useGameStore((s) => s.asteroidBeltMinSize)
-  const asteroidBeltMaxSize = useGameStore((s) => s.asteroidBeltMaxSize)
-  const setAsteroidBeltSettings = useGameStore((s) => s.setAsteroidBeltSettings)
-  const spawnAsteroidBelt = useGameStore((s) => s.spawnAsteroidBelt)
-  const clearSpawnedAsteroidBelt = useGameStore((s) => s.clearSpawnedAsteroidBelt)
   const npcSpawnPosition = useGameStore((s) => s.npcSpawnPosition)
   const setNpcSpawnPosition = useGameStore((s) => s.setNpcSpawnPosition)
   const spawnNpcShip = useGameStore((s) => s.spawnNpcShip)
   const clearNpcShips = useGameStore((s) => s.clearNpcShips)
+  const debugAsteroids = useGameStore((s) => s.debugAsteroids)
+  const debugAsteroidSpawnOffset = useGameStore((s) => s.debugAsteroidSpawnOffset)
+  const setDebugAsteroidSpawnOffset = useGameStore((s) => s.setDebugAsteroidSpawnOffset)
+  const debugAsteroidDefaultScale = useGameStore((s) => s.debugAsteroidDefaultScale)
+  const setDebugAsteroidDefaultScale = useGameStore((s) => s.setDebugAsteroidDefaultScale)
+  const debugAsteroidRandomizeScale = useGameStore((s) => s.debugAsteroidRandomizeScale)
+  const setDebugAsteroidRandomizeScale = useGameStore((s) => s.setDebugAsteroidRandomizeScale)
+  const spawnDebugAsteroid = useGameStore((s) => s.spawnDebugAsteroid)
+  const clearDebugAsteroids = useGameStore((s) => s.clearDebugAsteroids)
+  const removeDebugAsteroid = useGameStore((s) => s.removeDebugAsteroid)
   const removeNpcShip = useGameStore((s) => s.removeNpcShip)
   const setNpcShipConfig = useGameStore((s) => s.setNpcShipConfig)
   const npcShips = useGameStore((s) => s.npcShips)
@@ -44,6 +46,7 @@ export function DebugSettingsWindow() {
   const shipsById = useGameStore((s) => s.shipsById)
 
   const [perf, setPerf] = useState({ fps: 0, avgFps: 0, frameMs: 0 })
+  const [debugAstModel, setDebugAstModel] = useState('')
   const [remoteActivityMs, setRemoteActivityMs] = useState<Record<string, number>>({})
   const [remoteNowMs, setRemoteNowMs] = useState(() => Date.now())
   const rafRef = useRef<number | null>(null)
@@ -142,6 +145,13 @@ export function DebugSettingsWindow() {
     setNpcSpawnPosition(next)
   }
 
+  const updateDebugAsteroidOffsetAxis = (axisIndex: 0 | 1 | 2, value: string) => {
+    const parsed = Number(value)
+    const next = [...debugAsteroidSpawnOffset] as [number, number, number]
+    next[axisIndex] = Number.isFinite(parsed) ? parsed : 0
+    setDebugAsteroidSpawnOffset(next)
+  }
+
   return (
     <div className="hud-debug-values">
       <button
@@ -231,6 +241,13 @@ export function DebugSettingsWindow() {
       </button>
       <button
         type="button"
+        className={`hud-debug-toggle ${showColliderDebug ? 'active' : ''}`}
+        onClick={() => setShowColliderDebug(!showColliderDebug)}
+      >
+        SHOW COLLIDERS
+      </button>
+      <button
+        type="button"
         className={`hud-debug-toggle ${unlimitAaOrbitZoomOut ? 'active' : ''}`}
         onClick={() => setUnlimitAaOrbitZoomOut(!unlimitAaOrbitZoomOut)}
       >
@@ -242,20 +259,6 @@ export function DebugSettingsWindow() {
         onClick={() => setShowCelestialGridCenterMarker(!showCelestialGridCenterMarker)}
       >
         SHOW GRID CENTER
-      </button>
-      <button
-        type="button"
-        className="hud-debug-spawn-roids"
-        onClick={spawnAsteroidBelt}
-      >
-        SPAWN ROIDS
-      </button>
-      <button
-        type="button"
-        className="hud-debug-spawn-roids"
-        onClick={clearSpawnedAsteroidBelt}
-      >
-        CLEAR SPAWNED ROIDS
       </button>
       <div className="hud-debug-row">
         <span className="hud-debug-axis">NPC SHIPS</span>
@@ -290,6 +293,125 @@ export function DebugSettingsWindow() {
           />
         </label>
       </div>
+      <div className="hud-debug-row">
+        <span className="hud-debug-axis">DBG ROIDS</span>
+        <span className="hud-debug-value">{debugAsteroids.length}</span>
+      </div>
+      <div className="hud-debug-target-pos">
+        <span className="hud-debug-axis" style={{ gridColumn: '1 / -1', fontSize: '0.65rem', opacity: 0.85 }}>
+          spawn: X = 2× scaled mesh radius · Y/Z from ship (world)
+        </span>
+        <label className="hud-debug-target-axis" title="X is set automatically when spawning (2 × scale × model radius)">
+          X
+          <span
+            className="hud-debug-target-input"
+            style={{ opacity: 0.75, cursor: 'default', display: 'flex', alignItems: 'center' }}
+          >
+            auto
+          </span>
+        </label>
+        <label className="hud-debug-target-axis">
+          Y
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            value={debugAsteroidSpawnOffset[1]}
+            onChange={(event) => updateDebugAsteroidOffsetAxis(1, event.target.value)}
+          />
+        </label>
+        <label className="hud-debug-target-axis">
+          Z
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            value={debugAsteroidSpawnOffset[2]}
+            onChange={(event) => updateDebugAsteroidOffsetAxis(2, event.target.value)}
+          />
+        </label>
+      </div>
+      <div className="hud-debug-slider-group">
+        <label className="hud-debug-slider-label">
+          AST SIZE
+          <span className="hud-debug-slider-value">{Math.round(debugAsteroidDefaultScale)}</span>
+        </label>
+        <input
+          className="hud-debug-slider"
+          type="range"
+          min={4}
+          max={500}
+          step={1}
+          value={debugAsteroidDefaultScale}
+          disabled={debugAsteroidRandomizeScale}
+          onChange={(e) => setDebugAsteroidDefaultScale(Number(e.target.value))}
+        />
+      </div>
+      <div className="hud-debug-target-pos">
+        <label className="hud-debug-target-axis">
+          SIZE
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            min={4}
+            max={500}
+            disabled={debugAsteroidRandomizeScale}
+            value={debugAsteroidDefaultScale}
+            onChange={(e) => setDebugAsteroidDefaultScale(Number(e.target.value) || 4)}
+          />
+        </label>
+        <label className="hud-debug-target-axis" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={debugAsteroidRandomizeScale}
+            onChange={(e) => setDebugAsteroidRandomizeScale(e.target.checked)}
+          />
+          RND
+        </label>
+      </div>
+      <div className="hud-debug-target-pos">
+        <label className="hud-debug-target-axis">
+          MDL 0–4
+          <input
+            className="hud-debug-target-input"
+            type="number"
+            min={0}
+            max={4}
+            placeholder="rnd"
+            value={debugAstModel}
+            onChange={(e) => setDebugAstModel(e.target.value)}
+          />
+        </label>
+      </div>
+      <button
+        type="button"
+        className="hud-debug-spawn-roids"
+        onClick={() => {
+          const m = debugAstModel.trim() === '' ? undefined : Number(debugAstModel)
+          spawnDebugAsteroid({
+            modelIndex: m !== undefined && Number.isFinite(m) ? m : undefined,
+          })
+        }}
+      >
+        SPAWN DEBUG ASTEROID
+      </button>
+      <button type="button" className="hud-debug-spawn-roids" onClick={clearDebugAsteroids}>
+        CLEAR DEBUG ASTEROIDS
+      </button>
+      {debugAsteroids.map((a) => (
+        <div key={a.id} className="hud-debug-row">
+          <span className="hud-debug-axis">{a.id.slice(0, 10)}</span>
+          <span className="hud-debug-value" style={{ flex: 1, fontSize: '0.65rem' }}>
+            m{a.modelIndex} s{a.scale.toFixed(0)}
+          </span>
+          <button
+            type="button"
+            className="hud-debug-reset"
+            style={{ marginLeft: 4, fontSize: '0.65rem', padding: '1px 4px' }}
+            onClick={() => removeDebugAsteroid(a.id)}
+          >
+            X
+          </button>
+        </div>
+      ))}
       <button
         type="button"
         className="hud-debug-spawn-roids"
@@ -444,125 +566,6 @@ export function DebugSettingsWindow() {
       >
         REVEAL ALL CELESTIALS
       </button>
-      <div className="hud-debug-slider-group">
-        <label className="hud-debug-slider-label">
-          THICK
-          <span className="hud-debug-slider-value">{Math.round(asteroidBeltThickness)}</span>
-        </label>
-        <input
-          className="hud-debug-slider"
-          type="range"
-          min={50}
-          max={2500}
-          step={25}
-          value={asteroidBeltThickness}
-          onChange={(event) =>
-            setAsteroidBeltSettings({ thickness: Number(event.target.value) })
-          }
-        />
-      </div>
-      <div className="hud-debug-slider-group">
-        <label className="hud-debug-slider-label">
-          RADIUS
-          <span className="hud-debug-slider-value">{Math.round(asteroidBeltRadius)}</span>
-        </label>
-        <input
-          className="hud-debug-slider"
-          type="range"
-          min={2000}
-          max={80000}
-          step={200}
-          value={asteroidBeltRadius}
-          onChange={(event) =>
-            setAsteroidBeltSettings({ radius: Number(event.target.value) })
-          }
-        />
-      </div>
-      <div className="hud-debug-slider-group">
-        <label className="hud-debug-slider-label">
-          JITTER
-          <span className="hud-debug-slider-value">{Math.round(asteroidBeltJitter)}</span>
-        </label>
-        <input
-          className="hud-debug-slider"
-          type="range"
-          min={0}
-          max={3000}
-          step={25}
-          value={asteroidBeltJitter}
-          onChange={(event) =>
-            setAsteroidBeltSettings({ jitter: Number(event.target.value) })
-          }
-        />
-      </div>
-      <div className="hud-debug-slider-group">
-        <label className="hud-debug-slider-label">
-          DENS
-          <span className="hud-debug-slider-value">{asteroidBeltDensity.toFixed(1)}</span>
-        </label>
-        <input
-          className="hud-debug-slider"
-          type="range"
-          min={0.1}
-          max={12}
-          step={0.1}
-          value={asteroidBeltDensity}
-          onChange={(event) =>
-            setAsteroidBeltSettings({ density: Number(event.target.value) })
-          }
-        />
-      </div>
-      <div className="hud-debug-slider-group">
-        <label className="hud-debug-slider-label">
-          SIZE MIN
-          <span className="hud-debug-slider-value">{Math.round(asteroidBeltMinSize)}</span>
-        </label>
-        <input
-          className="hud-debug-slider"
-          type="range"
-          min={4}
-          max={400}
-          step={1}
-          value={asteroidBeltMinSize}
-          onChange={(event) =>
-            setAsteroidBeltSettings({ sizeMin: Number(event.target.value) })
-          }
-        />
-      </div>
-      <div className="hud-debug-slider-group">
-        <label className="hud-debug-slider-label">
-          SIZE MAX
-          <span className="hud-debug-slider-value">{Math.round(asteroidBeltMaxSize)}</span>
-        </label>
-        <input
-          className="hud-debug-slider"
-          type="range"
-          min={6}
-          max={500}
-          step={1}
-          value={asteroidBeltMaxSize}
-          onChange={(event) =>
-            setAsteroidBeltSettings({ sizeMax: Number(event.target.value) })
-          }
-        />
-      </div>
-      <div className="hud-debug-slider-group">
-        <label className="hud-debug-slider-label">
-          ARC
-          <span className="hud-debug-slider-value">{Math.round(asteroidBeltArcLength)}°</span>
-        </label>
-        <input
-          className="hud-debug-slider"
-          type="range"
-          min={20}
-          max={360}
-          step={5}
-          value={asteroidBeltArcLength}
-          onChange={(event) =>
-            setAsteroidBeltSettings({ arcLength: Number(event.target.value) })
-          }
-        />
-      </div>
       <button
         type="button"
         className="hud-debug-reset"

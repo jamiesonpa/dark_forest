@@ -1,6 +1,6 @@
 # Dark Forest
 
-Eve Online–style space game: orbit camera around your Raven battleship, star system with warpable celestials, and Eve-style HUD. Multiplayer-ready via Colyseus server.
+Multicrew space combat game: pilot, EW, and weapons stations over a star system with warpable celestials. Multiplayer-ready via Colyseus server.
 
 ## Run the game
 

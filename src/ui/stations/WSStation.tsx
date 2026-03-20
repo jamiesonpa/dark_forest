@@ -150,8 +150,18 @@ type TubeStatus = {
 const TORPEDO_TYPES: TorpedoType[] = ['IR SEEKER', 'ACTIVE', 'SEMI ACTIVE']
 type TorpedoReserves = Record<TorpedoType, number>
 
+function torpedoTypeLaunchAllowed(
+  torpedoType: TorpedoType,
+  hasRadarLock: boolean,
+  hasIrstPointTrackTarget: boolean,
+): boolean {
+  if (torpedoType === 'IR SEEKER') return hasIrstPointTrackTarget
+  return hasRadarLock
+}
+
 function TorpedoTubesPanel({
   hasRadarLock,
+  hasIrstPointTrackTarget,
   onLaunchTubeTorpedo,
   tubes,
   reserves,
@@ -160,7 +170,8 @@ function TorpedoTubesPanel({
   onLaunchTube,
 }: {
   hasRadarLock: boolean
-  onLaunchTubeTorpedo: () => void
+  hasIrstPointTrackTarget: boolean
+  onLaunchTubeTorpedo: (tubeId: number) => boolean
   tubes: TubeStatus[]
   reserves: TorpedoReserves
   onSetTubeType: (tubeId: number, nextType: TorpedoType) => void
@@ -175,7 +186,13 @@ function TorpedoTubesPanel({
       headerRight={<span style={{ color: AMBER_DIM, fontSize: 9 }}>{loadedCount}/{TUBE_COUNT} LOADED</span>}
     >
       <div style={{ padding: '6px 8px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {tubes.map((tube) => (
+        {tubes.map((tube) => {
+          const readyLaunchOk = torpedoTypeLaunchAllowed(
+            tube.selectedType,
+            hasRadarLock,
+            hasIrstPointTrackTarget,
+          )
+          return (
           <div key={tube.id} style={{
             flex: '1 1 calc(50% - 4px)',
             minWidth: 90,
@@ -240,8 +257,7 @@ function TorpedoTubesPanel({
                 type="button"
                 onClick={() => {
                   if (tube.state === 'READY') {
-                    onLaunchTubeTorpedo()
-                    onLaunchTube(tube.id)
+                    if (onLaunchTubeTorpedo(tube.id)) onLaunchTube(tube.id)
                     return
                   }
                   if (tube.state === 'EMPTY') {
@@ -250,7 +266,7 @@ function TorpedoTubesPanel({
                 }}
                 disabled={
                   tube.state === 'LOADING'
-                  || (tube.state === 'READY' && !hasRadarLock)
+                  || (tube.state === 'READY' && !readyLaunchOk)
                   || (tube.state === 'EMPTY' && (reserves[tube.selectedType] ?? 0) <= 0)
                 }
                 style={{
@@ -258,22 +274,22 @@ function TorpedoTubesPanel({
                   // LOADING and LAUNCH visually distinct.
                   minWidth: 64,
                   height: 24,
-                  border: `1px solid ${tube.state === 'READY' && hasRadarLock ? AMBER : AMBER_DIM}`,
+                  border: `1px solid ${tube.state === 'READY' && readyLaunchOk ? AMBER : AMBER_DIM}`,
                   background: tube.state === 'READY'
-                    ? (hasRadarLock ? 'rgba(255,176,0,0.15)' : 'rgba(80,60,20,0.22)')
+                    ? (readyLaunchOk ? 'rgba(255,176,0,0.15)' : 'rgba(80,60,20,0.22)')
                     : tube.state === 'LOADING'
                       ? 'rgba(80,60,20,0.22)'
                       : (reserves[tube.selectedType] ?? 0) > 0 ? 'rgba(255,176,0,0.24)' : 'rgba(80,60,20,0.22)',
                   color:
                     tube.state === 'LOADING'
                       ? AMBER_DIM
-                      : tube.state === 'READY' && hasRadarLock
+                      : tube.state === 'READY' && readyLaunchOk
                         ? AMBER_GLOW
                         : (reserves[tube.selectedType] ?? 0) > 0 ? AMBER_GLOW : AMBER_DIM,
                   boxShadow:
                     tube.state === 'LOADING'
                       ? 'none'
-                      : tube.state === 'READY' && hasRadarLock
+                      : tube.state === 'READY' && readyLaunchOk
                         ? '0 0 10px rgba(255,176,0,0.35), inset 0 0 8px rgba(255,176,0,0.16)'
                         : (reserves[tube.selectedType] ?? 0) > 0
                           ? '0 0 8px rgba(255,176,0,0.25), inset 0 0 10px rgba(255,176,0,0.2)'
@@ -282,13 +298,15 @@ function TorpedoTubesPanel({
                   fontSize: 10,
                   borderRadius: 2,
                   cursor:
-                    tube.state === 'LOADING' || (tube.state === 'READY' && !hasRadarLock)
+                    tube.state === 'LOADING' || (tube.state === 'READY' && !readyLaunchOk)
                     || (tube.state === 'EMPTY' && (reserves[tube.selectedType] ?? 0) <= 0)
                       ? 'not-allowed'
                       : 'pointer',
                 }}
               >
-                {tube.state === 'READY' ? 'LAUNCH' : 'LOAD'}
+                {tube.state === 'READY'
+                  ? (tube.selectedType === 'IR SEEKER' && !hasIrstPointTrackTarget ? 'NO LOCK' : 'LAUNCH')
+                  : 'LOAD'}
               </button>
             </div>
             <div style={{
@@ -323,7 +341,7 @@ function TorpedoTubesPanel({
                 color: `${AMBER_DIM}cc`,
                 letterSpacing: 1,
               }}>
-                {tube.state === 'READY' && !hasRadarLock
+                {tube.state === 'READY' && !readyLaunchOk
                   ? 'NO LOCK'
                   : tube.state === 'LOADING'
                     ? `${Math.floor(tube.progressPct)}%`
@@ -333,7 +351,8 @@ function TorpedoTubesPanel({
               </span>
             </div>
           </div>
-        ))}
+          )
+        })}
       </div>
     </WsPanel>
   )
@@ -403,6 +422,8 @@ const DEW_DIAGRAM_W = 700
 const DEW_DIAGRAM_H = 150
 const DEW_SOURCE_X = 42
 const DEW_BEAM_HALF_H = 25
+/** ViewBox units: |ΔY| between upper/lower rays at target range ≥ this → spread score hits 0. */
+const DEW_FOCUS_SPREAD_REF = DEW_DIAGRAM_H
 const DEW_TARGET_MAX_RANGE_M = 20_000
 const DEW_CONVERGENCE_ZONE_LEFT = DEW_DIAGRAM_W / 2
 const DEW_CONVERGENCE_ZONE_RIGHT = DEW_DIAGRAM_W - 10
@@ -492,6 +513,26 @@ function findConvergenceX(
   return cx
 }
 
+/** Y on the traced ray polyline at x (diagram space); null if x is outside the polyline span. */
+function yOnRayPolylineAtX(segments: [number, number][], x: number): number | null {
+  const eps = 1e-5
+  for (let i = 0; i < segments.length - 1; i++) {
+    const p0 = segments[i]
+    const p1 = segments[i + 1]
+    if (!p0 || !p1) continue
+    const [x0, y0] = p0
+    const [x1, y1] = p1
+    const minX = Math.min(x0, x1) - eps
+    const maxX = Math.max(x0, x1) + eps
+    if (x < minX || x > maxX) continue
+    const dx = x1 - x0
+    if (Math.abs(dx) < 1e-9) return (y0 + y1) / 2
+    const t = (x - x0) / dx
+    return y0 + t * (y1 - y0)
+  }
+  return null
+}
+
 /* ── lens focus minigame ────────────────────────────────────── */
 const DEW_SCALE_H = 20
 const DEW_SCALE_MAJOR_KM = [0, 5, 10, 15, 20]
@@ -557,7 +598,7 @@ function LensFocusDiagram({
   const handleWheel = useCallback((idx: number) => (e: React.WheelEvent) => {
     if (!enabled) return
     e.stopPropagation()
-    if (e.ctrlKey) {
+    if (e.altKey) {
       e.preventDefault()
       const wStep = 0.5 * Math.sign(e.deltaY)
       setLensWidths((prev) => prev.map((w, i) => i === idx ? Math.max(3, Math.min(18, w + wStep)) : w))
@@ -579,11 +620,34 @@ function LensFocusDiagram({
   const convergenceX = findConvergenceX(rayTop, rayBot, midY)
   const targetX = targetInRange ? rangeToTargetX(targetRangeM) : null
 
-  const focusError = convergenceX !== null && targetX !== null ? Math.abs(convergenceX - targetX) : 999
   const focusZoneWidth = (DEW_CONVERGENCE_ZONE_RIGHT - DEW_CONVERGENCE_ZONE_LEFT)
-  const focusPct = convergenceX !== null && targetInRange
-    ? Math.max(0, Math.round((1 - focusError / (focusZoneWidth * 0.5)) * 100))
-    : 0
+  const halfZone = focusZoneWidth * 0.5
+  const hasAxial = convergenceX !== null && targetX !== null
+  const axialScore = hasAxial
+    ? Math.max(0, Math.min(1, 1 - Math.abs(convergenceX - targetX) / halfZone))
+    : null
+
+  const yTopAtTgt = targetX !== null ? yOnRayPolylineAtX(rayTop.segments, targetX) : null
+  const yBotAtTgt = targetX !== null ? yOnRayPolylineAtX(rayBot.segments, targetX) : null
+  const spreadAtTgt = yTopAtTgt !== null && yBotAtTgt !== null
+    ? Math.abs(yTopAtTgt - yBotAtTgt)
+    : null
+  const spreadScore = spreadAtTgt !== null
+    ? Math.max(0, Math.min(1, 1 - spreadAtTgt / DEW_FOCUS_SPREAD_REF))
+    : null
+
+  let focusCombined: number
+  if (axialScore !== null && spreadScore !== null) {
+    focusCombined = (axialScore + spreadScore) / 2
+  } else if (axialScore !== null) {
+    focusCombined = axialScore
+  } else if (spreadScore !== null) {
+    focusCombined = spreadScore
+  } else {
+    focusCombined = 0
+  }
+
+  const focusPct = targetInRange ? Math.max(0, Math.round(focusCombined * 100)) : 0
   const focusAlignment = enabled && targetInRange ? Math.max(0, Math.min(1, focusPct / 100)) : 0
 
   useEffect(() => {
@@ -622,23 +686,31 @@ function LensFocusDiagram({
           {enabled ? (targetInRange ? `${focusPct}%` : '—') : '—'}
         </span>
       </div>
-      <svg
-        ref={svgRef}
-        width="100%"
-        height={totalSvgH}
-        viewBox={`0 0 ${DEW_DIAGRAM_W} ${totalSvgH}`}
-        preserveAspectRatio="xMinYMid meet"
+      {/* Match viewBox aspect so the diagram scales uniformly to full width (no right-side letterboxing). */}
+      <div
         style={{
-          background: 'rgba(0,0,0,0.6)',
-          border: `1px solid ${AMBER_DIM}44`,
-          borderRadius: 2,
-          cursor: dragging !== null ? 'grabbing' : 'default',
-          display: 'block',
+          width: '100%',
+          minWidth: 0,
+          aspectRatio: `${DEW_DIAGRAM_W} / ${totalSvgH}`,
         }}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
       >
+        <svg
+          ref={svgRef}
+          width="100%"
+          height="100%"
+          viewBox={`0 0 ${DEW_DIAGRAM_W} ${totalSvgH}`}
+          preserveAspectRatio="xMidYMid meet"
+          style={{
+            background: 'rgba(0,0,0,0.6)',
+            border: `1px solid ${AMBER_DIM}44`,
+            borderRadius: 2,
+            cursor: dragging !== null ? 'grabbing' : 'default',
+            display: 'block',
+          }}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+        >
         {/* clip to diagram bounds (excludes scale strip) */}
         <defs>
           <clipPath id="dew-clip"><rect x={0} y={0} width={DEW_DIAGRAM_W} height={DEW_DIAGRAM_H} /></clipPath>
@@ -798,7 +870,8 @@ function LensFocusDiagram({
           fill={`${AMBER_DIM}aa`} fontFamily={FONT}>
           km
         </text>
-      </svg>
+        </svg>
+      </div>
     </div>
   )
 }
@@ -1081,11 +1154,14 @@ function CountermeasuresPanel({
   flareLaunching,
   flareInventory,
   flareInventoryMax,
+  chaffInventory,
+  chaffInventoryMax,
   isPowered,
   isArmed,
   onFlareCountChange,
   onFlareModeChange,
   onLaunchFlares,
+  onLaunchChaff,
   onTogglePower,
   onToggleArmed,
 }: {
@@ -1094,18 +1170,17 @@ function CountermeasuresPanel({
   flareLaunching: boolean
   flareInventory: number
   flareInventoryMax: number
+  chaffInventory: number
+  chaffInventoryMax: number
   isPowered: boolean
   isArmed: boolean
   onFlareCountChange: (count: number) => void
   onFlareModeChange: (mode: 'PTN' | 'SGL') => void
   onLaunchFlares: () => void
+  onLaunchChaff: () => void
   onTogglePower: () => void
   onToggleArmed: () => void
 }) {
-  const stores = [
-    { id: 'CHAFF', count: 40, max: 40 },
-  ]
-
   return (
     <WsPanel
       title="Countermeasures"
@@ -1160,57 +1235,7 @@ function CountermeasuresPanel({
         filter: isPowered && isArmed ? 'none' : 'grayscale(1)',
         pointerEvents: isPowered && isArmed ? 'auto' : 'none',
       }}>
-      <div style={{ padding: '6px 8px', display: 'flex', gap: 6, marginBottom: 6 }}>
-        {stores.map((s) => {
-          const pct = (s.count / s.max) * 100
-          return (
-            <div key={s.id} style={{
-              flex: 1,
-              border: `1px solid ${AMBER_DIM}55`,
-              borderRadius: 2,
-              padding: '5px 8px',
-              background: 'rgba(8,8,8,0.9)',
-            }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 3,
-              }}>
-                <span style={{ fontSize: 11, fontFamily: FONT, color: AMBER, letterSpacing: 2 }}>
-                  {s.id}
-                </span>
-                <span style={{ fontSize: 11, fontFamily: FONT, color: AMBER_GLOW }}>
-                  {s.count}
-                </span>
-              </div>
-              <div style={{
-                height: 3,
-                background: `${AMBER_DIM}55`,
-                borderRadius: 1,
-                overflow: 'hidden',
-              }}>
-                <div style={{
-                  width: `${pct}%`,
-                  height: '100%',
-                  background: pct > 25 ? AMBER : WS_RED,
-                }} />
-              </div>
-              <span style={{
-                fontSize: 8,
-                fontFamily: FONT,
-                color: `${AMBER_DIM}cc`,
-                letterSpacing: 1,
-                marginTop: 2,
-                display: 'block',
-              }}>
-                {s.count}/{s.max} RDY
-              </span>
-            </div>
-          )
-        })}
-      </div>
-      <div style={{ padding: '0 8px 8px 8px' }}>
+      <div style={{ padding: '6px 8px 8px 8px' }}>
         <div style={{
           border: `1px solid ${AMBER_DIM}55`,
           borderRadius: 2,
@@ -1305,6 +1330,41 @@ function CountermeasuresPanel({
             FLR
           </button>
         </div>
+        <div style={{
+          marginTop: 6,
+          border: `1px solid ${AMBER_DIM}55`,
+          borderRadius: 2,
+          padding: '6px 8px',
+          background: 'rgba(8,8,8,0.9)',
+          display: 'grid',
+          gridTemplateColumns: '1fr auto',
+          gap: 8,
+          alignItems: 'center',
+        }}>
+          <span style={{ fontSize: 10, fontFamily: FONT, color: AMBER, letterSpacing: 1 }}>
+            CHAFF SALVO · {chaffInventory}/{chaffInventoryMax}
+          </span>
+          <button
+            type="button"
+            onClick={onLaunchChaff}
+            disabled={!isPowered || !isArmed || chaffInventory <= 0}
+            style={{
+              minWidth: 44,
+              height: 22,
+              border: `1px solid ${!isPowered || !isArmed || chaffInventory <= 0 ? AMBER_DIM : AMBER}`,
+              background: !isPowered || !isArmed || chaffInventory <= 0
+                ? 'rgba(80,60,20,0.22)'
+                : 'rgba(255,176,0,0.14)',
+              color: !isPowered || !isArmed || chaffInventory <= 0 ? AMBER_DIM : AMBER_GLOW,
+              fontFamily: FONT,
+              fontSize: 11,
+              borderRadius: 2,
+              cursor: !isPowered || !isArmed || chaffInventory <= 0 ? 'not-allowed' : 'pointer',
+            }}
+          >
+            CHF
+          </button>
+        </div>
       </div>
       </div>
     </WsPanel>
@@ -1349,8 +1409,11 @@ export function WSStation() {
   const ewLockState = useGameStore((state) => state.ewLockState)
   const launchLockedCylinder = useGameStore((state) => state.launchLockedCylinder)
   const launchFlares = useGameStore((state) => state.launchFlares)
+  const launchChaff = useGameStore((state) => state.launchChaff)
   const flareInventory = useGameStore((state) => state.flareInventory)
   const flareInventoryMax = useGameStore((state) => state.flareInventoryMax)
+  const chaffInventory = useGameStore((state) => state.chaffInventory)
+  const chaffInventoryMax = useGameStore((state) => state.chaffInventoryMax)
   const countermeasuresPowered = useGameStore((state) => state.countermeasuresPowered)
   const setCountermeasuresPowered = useGameStore((state) => state.setCountermeasuresPowered)
   const dewPowered = useGameStore((state) => state.dewPowered)
@@ -1370,14 +1433,16 @@ export function WSStation() {
   const shipsById = useGameStore((s) => s.shipsById)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
   const npcShips = useGameStore((s) => s.npcShips)
-  const playerShip = useGameStore((s) => s.ship)
+  const shipPosition = useGameStore((s) => s.ship.position)
+  const shipCapacitor = useGameStore((s) => s.ship.capacitor)
+  const shipCapacitorMax = useGameStore((s) => s.ship.capacitorMax)
   const dewTargetRangeM = (() => {
     if (!pointTrackTargetId) return 50_000
     const tgt = shipsById[pointTrackTargetId]
     if (!tgt) return 50_000
-    const dx = tgt.position[0] - playerShip.position[0]
-    const dy = tgt.position[1] - playerShip.position[1]
-    const dz = tgt.position[2] - playerShip.position[2]
+    const dx = tgt.position[0] - shipPosition[0]
+    const dy = tgt.position[1] - shipPosition[1]
+    const dz = tgt.position[2] - shipPosition[2]
     return Math.sqrt(dx * dx + dy * dy + dz * dz)
   })()
   const [torpedoTubes, setTorpedoTubes] = useState<TubeStatus[]>(
@@ -1429,6 +1494,12 @@ export function WSStation() {
       }, i * FLARE_SINGLE_INTERVAL_MS)
       flareTimeoutsRef.current.push(timeoutId)
     }
+  }
+
+  const fireChaffFromWs = () => {
+    if (!countermeasuresPowered || !isCountermeasuresArmed) return
+    if (chaffInventory <= 0) return
+    launchChaff(playerShipBoundingLength)
   }
 
   useEffect(() => {
@@ -1841,13 +1912,22 @@ export function WSStation() {
         <div style={{ flex: '0 0 42%', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
           <TorpedoTubesPanel
             hasRadarLock={hasRadarLock}
+            hasIrstPointTrackTarget={hasIrstPointTrackTarget}
             tubes={torpedoTubes}
             reserves={torpedoReserves}
             onSetTubeType={setTubeType}
             onBeginLoadingTube={beginLoadingTube}
             onLaunchTube={clearTubeAfterLaunch}
-            onLaunchTubeTorpedo={() => {
+            onLaunchTubeTorpedo={(tubeId) => {
+              const tube = torpedoTubes.find((t) => t.id === tubeId)
+              if (!tube || tube.state !== 'READY') return false
+              if (tube.selectedType === 'IR SEEKER') {
+                if (!pointTrackTargetId) return false
+                launchLockedCylinder(playerShipBoundingLength, { targetLockId: pointTrackTargetId })
+                return true
+              }
               launchLockedCylinder(playerShipBoundingLength)
+              return true
             }}
           />
           <TorpedoReservesPanel reserves={torpedoReserves} />
@@ -1857,8 +1937,8 @@ export function WSStation() {
             hasTarget={hasIrstPointTrackTarget}
             targetRangeM={dewTargetRangeM}
             onFocusAlignmentChange={setDewFocusAlignment}
-            capacitor={playerShip.capacitor}
-            capacitorMax={playerShip.capacitorMax}
+            capacitor={shipCapacitor}
+            capacitorMax={shipCapacitorMax}
             onChargingChange={setDewCharging}
             onTogglePower={() => setDewPowered(!dewPowered)}
             onToggleArmed={() => setIsDewArmed((a) => !a)}
@@ -1866,9 +1946,9 @@ export function WSStation() {
               if (!pointTrackTargetId) return
               const tgt = shipsById[pointTrackTargetId]
               if (!tgt) return
-              const dx = tgt.position[0] - playerShip.position[0]
-              const dy = tgt.position[1] - playerShip.position[1]
-              const dz = tgt.position[2] - playerShip.position[2]
+              const dx = tgt.position[0] - shipPosition[0]
+              const dy = tgt.position[1] - shipPosition[1]
+              const dz = tgt.position[2] - shipPosition[2]
               const rangeM = Math.sqrt(dx * dx + dy * dy + dz * dz)
               const baseDamage = getDewBaseDamageByRange(rangeM)
               const alignment = Math.max(0, Math.min(1, dewFocusAlignment))
@@ -1880,7 +1960,7 @@ export function WSStation() {
                 && !isNpcTarget
                 && !isLocalTarget
               fireDew(
-                [...playerShip.position],
+                [...shipPosition],
                 [...tgt.position],
                 currentCelestialId,
                 pointTrackTargetId,
@@ -1901,6 +1981,8 @@ export function WSStation() {
             flareLaunching={queuedSingleFlares > 0}
             flareInventory={flareInventory}
             flareInventoryMax={flareInventoryMax}
+            chaffInventory={chaffInventory}
+            chaffInventoryMax={chaffInventoryMax}
             isPowered={countermeasuresPowered}
             isArmed={isCountermeasuresArmed}
             onFlareCountChange={(count) => setFlareLaunchCount(Math.max(1, Math.min(WS_FLARE_COUNT_MAX, count)))}
@@ -1909,6 +1991,7 @@ export function WSStation() {
               clearQueuedSingleFlares()
             }}
             onLaunchFlares={fireFlaresFromWs}
+            onLaunchChaff={fireChaffFromWs}
             onTogglePower={() => {
               if (countermeasuresPowered) {
                 setIsCountermeasuresArmed(false)
@@ -1957,7 +2040,7 @@ export function WSStation() {
       }}>
         <span>TUBES: 0/{TUBE_COUNT} LOADED</span>
         <span>LASER: STBY</span>
-        <span>CHAFF: 40</span>
+        <span>CHAFF: {chaffInventory}</span>
         <span>FLARES: {flareInventory}</span>
         <span>IRST: {irstCameraOn ? 'ONLINE' : 'OFF'}</span>
         <span style={{ color: pointTrackEnabled ? AMBER : AMBER_DIM }}>

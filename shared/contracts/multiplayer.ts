@@ -42,9 +42,20 @@ export interface WireLaunchedCylinder {
   direction: [number, number, number]
   targetLockId: string | null
   flightTimeSeconds: number
+  guidance?: 'radar' | 'ir_seeker'
 }
 
 export interface WireLaunchedFlare {
+  id: string
+  currentCelestialId: string
+  position: [number, number, number]
+  velocity: [number, number, number]
+  flightTimeSeconds: number
+  deployedByShipId?: string
+}
+
+/** Radar-decoy foil fragments; same wire shape as flares (kinematic point mass). */
+export interface WireLaunchedChaff {
   id: string
   currentCelestialId: string
   position: [number, number, number]
@@ -63,6 +74,7 @@ export interface WireTorpedoExplosion {
 export interface WireOrdnanceSnapshot {
   launchedCylinders: WireLaunchedCylinder[]
   launchedFlares: WireLaunchedFlare[]
+  launchedChaff: WireLaunchedChaff[]
   torpedoExplosions: WireTorpedoExplosion[]
 }
 
@@ -75,6 +87,7 @@ export interface MoveMessage {
   revealedCelestialIds?: string[]
   launchedCylinders?: WireLaunchedCylinder[]
   launchedFlares?: WireLaunchedFlare[]
+  launchedChaff?: WireLaunchedChaff[]
   torpedoExplosions?: WireTorpedoExplosion[]
   inWarpTransit?: boolean
   targetSpeed?: number
@@ -102,6 +115,7 @@ export interface ShipMoveUpdate {
   revealedCelestialIds: string[]
   launchedCylinders: WireLaunchedCylinder[]
   launchedFlares: WireLaunchedFlare[]
+  launchedChaff: WireLaunchedChaff[]
   torpedoExplosions: WireTorpedoExplosion[]
   inWarpTransit: boolean
   targetSpeed: number

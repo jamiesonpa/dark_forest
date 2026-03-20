@@ -94,9 +94,22 @@ export interface LaunchedCylinder {
   direction: [number, number, number]
   targetLockId: string | null
   flightTimeSeconds: number
+  /** IR seeker: home on IRST point-track `targetLockId`; if lock breaks, chase LOS from launcher IRST. */
+  guidance?: 'radar' | 'ir_seeker'
 }
 
 export interface LaunchedFlare {
+  id: string
+  currentCelestialId: string
+  position: [number, number, number]
+  velocity: [number, number, number]
+  flightTimeSeconds: number
+  /** Ship that launched this flare (for IR seeker vs decoy logic). */
+  deployedByShipId?: string
+}
+
+/** Single foil fragment from a chaff salvo. */
+export interface LaunchedChaffPiece {
   id: string
   currentCelestialId: string
   position: [number, number, number]
@@ -128,7 +141,19 @@ export interface DewBeam {
   currentCelestialId: string
   originPosition: [number, number, number]
   targetPosition: [number, number, number]
+  /** When set, visuals track this ship while it stays in `currentCelestialId`. */
+  originShipId?: string
+  targetShipId?: string
   firedAtMs: number
+}
+
+/** Single dev-spawned asteroid (matches `AsteroidInstance` in AsteroidBelt + stable id). */
+export type DebugAsteroidEntry = {
+  id: string
+  position: [number, number, number]
+  rotation: [number, number, number]
+  scale: number
+  modelIndex: number
 }
 
 export interface GameStore {
@@ -140,6 +165,7 @@ export interface GameStore {
   orientDebugEnabled: boolean
   showIRSTCone: boolean
   showBScopeRadarCone: boolean
+  showColliderDebug: boolean
   unlimitAaOrbitZoomOut: boolean
   showCelestialGridCenterMarker: boolean
   debugPivotPosition: [number, number, number]
@@ -198,6 +224,7 @@ export interface GameStore {
   setOrientDebugEnabled: (enabled: boolean) => void
   setShowIRSTCone: (enabled: boolean) => void
   setShowBScopeRadarCone: (enabled: boolean) => void
+  setShowColliderDebug: (enabled: boolean) => void
   setUnlimitAaOrbitZoomOut: (enabled: boolean) => void
   setShowCelestialGridCenterMarker: (enabled: boolean) => void
   setDebugPivotPosition: (position: [number, number, number]) => void
@@ -217,40 +244,50 @@ export interface GameStore {
   setWarpReferenceSpeed: (speed: number) => void
   setNavAttitudeMode: (mode: NavAttitudeMode) => void
   setGridObjects: (objects: GridObject[]) => void
-  asteroidBeltThickness: number
-  asteroidBeltJitter: number
-  asteroidBeltDensity: number
-  asteroidBeltArcLength: number
-  asteroidBeltRadius: number
+  /** Default random scale range for `spawnDebugAsteroid` when scale is omitted. */
   asteroidBeltMinSize: number
   asteroidBeltMaxSize: number
-  asteroidBeltSpawnNonce: number
-  asteroidBeltClearNonce: number
+  /** Dev-only asteroids spawned at world positions (e.g. ship.position + offset). */
+  debugAsteroids: DebugAsteroidEntry[]
+  debugAsteroidSpawnNonce: number
+  /**
+   * Y/Z offset from local ship when spawning from the debug menu (world space).
+   * X is computed as `2 × scale × merged mesh bounding-sphere radius` for that model.
+   */
+  debugAsteroidSpawnOffset: [number, number, number]
+  /** World scale used when spawning unless `spawnDebugAsteroid({ scale })` overrides or randomize is on. */
+  debugAsteroidDefaultScale: number
+  /** When true, spawn uses a random scale between `asteroidBeltMinSize` and `asteroidBeltMaxSize`. */
+  debugAsteroidRandomizeScale: boolean
   playerShipBoundingLength: number
   launchedCylinders: LaunchedCylinder[]
   launchedFlares: LaunchedFlare[]
+  launchedChaff: LaunchedChaffPiece[]
   torpedoExplosions: TorpedoExplosion[]
   dewBeams: DewBeam[]
   flareInventory: number
   flareInventoryMax: number
+  chaffInventory: number
+  chaffInventoryMax: number
   countermeasuresPowered: boolean
   dewPowered: boolean
   dewCharging: boolean
   remoteLaunchedCylinders: LaunchedCylinder[]
   remoteLaunchedFlares: LaunchedFlare[]
+  remoteLaunchedChaff: LaunchedChaffPiece[]
   remoteTorpedoExplosions: TorpedoExplosion[]
   planetTextureRandomizeNonce: number
-  setAsteroidBeltSettings: (partial: Partial<{
-    thickness: number
-    jitter: number
-    density: number
-    arcLength: number
-    radius: number
-    sizeMin: number
-    sizeMax: number
-  }>) => void
-  spawnAsteroidBelt: () => void
-  clearSpawnedAsteroidBelt: () => void
+  setDebugAsteroidSpawnOffset: (position: [number, number, number]) => void
+  setDebugAsteroidDefaultScale: (scale: number) => void
+  setDebugAsteroidRandomizeScale: (value: boolean) => void
+  /** Pass `offset` to use explicit X/Y/Z; omit to use auto X (2× extents) + store Y/Z. */
+  spawnDebugAsteroid: (options?: {
+    offset?: [number, number, number]
+    modelIndex?: number
+    scale?: number
+  }) => void
+  removeDebugAsteroid: (id: string) => void
+  clearDebugAsteroids: () => void
   setNpcSpawnPosition: (position: [number, number, number]) => void
   spawnNpcShip: (position?: [number, number, number], config?: Partial<NpcShipConfig>) => void
   removeNpcShip: (id: string) => void
@@ -261,10 +298,15 @@ export interface GameStore {
   setCountermeasuresPowered: (powered: boolean) => void
   setDewPowered: (powered: boolean) => void
   setDewCharging: (charging: boolean) => void
-  launchLockedCylinder: (shipBoundingLength: number) => void
+  launchLockedCylinder: (
+    shipBoundingLength: number,
+    options?: { targetLockId?: string | null }
+  ) => void
   advanceLaunchedCylinders: (deltaSeconds: number) => void
   launchFlares: (shipBoundingLength: number, options?: FlareLaunchOptions) => void
   advanceLaunchedFlares: (deltaSeconds: number) => void
+  launchChaff: (shipBoundingLength: number) => void
+  advanceLaunchedChaff: (deltaSeconds: number) => void
   advanceTorpedoExplosions: (deltaSeconds: number) => void
   addTorpedoExplosion: (explosion: TorpedoExplosion) => void
   applyShipDamage: (

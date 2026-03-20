@@ -41,6 +41,20 @@ import {
 } from '@/systems/simulation/shipMath'
 import { sendMoveIfDue } from '@/systems/simulation/networkSync'
 import { updateNpcElectronicWarfare } from '@/systems/simulation/npcSystems'
+import {
+  hasWorldObstacles,
+  isShipCollisionMeshReady,
+  resolveLocalShipCollision,
+  syncAsteroidColliderTransforms,
+  syncRemoteShipColliders,
+} from '@/systems/collision/collisionRegistry'
+import { ensureRapierLoaded } from '@/systems/collision/ensureRapier'
+import {
+  COLLISION_MAX_DAMAGE,
+  COLLISION_MIN_DAMAGE_SPEED,
+  COLLISION_MAX_DAMAGE_SPEED,
+  COLLISION_DAMAGE_COOLDOWN,
+} from '@/systems/collision/constants'
 import { isEditableTarget } from '@/utils/dom'
 
 type SimControlKey =
@@ -168,7 +182,12 @@ export function SimulationLoop() {
   const dampenersRecoveryActiveRef = useRef(false)
   const dampenersRecoveryCapDebtRef = useRef(0)
   const remoteExplosionDamageIdsRef = useRef(new Set<string>())
+  const lastCollisionDamageTimeRef = useRef(0)
   const knownShipHullRef = useRef<Record<string, number>>({})
+
+  useEffect(() => {
+    void ensureRapierLoaded()
+  }, [])
 
   useEffect(() => {
     const thrustEuler = new THREE.Euler(0, 0, 0, 'YXZ')
@@ -759,10 +778,97 @@ export function SimulationLoop() {
         pdz = thrustForward.z * newSpeed * dt
       }
 
-      const nextX = ship.position[0] + pdx
-      const nextY = ship.position[1] + pdy
-      const nextZ = ship.position[2] + pdz
-      const newPos: [number, number, number] = [nextX, nextY, nextZ]
+      const inertiaDrivenMovement =
+        dacInertialDriftActive || (inertialDriftInitialized && dampenersOnline)
+
+      let newPos: [number, number, number] = [
+        ship.position[0] + pdx,
+        ship.position[1] + pdy,
+        ship.position[2] + pdz,
+      ]
+      let actualVelocityForPatch: [number, number, number] =
+        dt > 0 ? [pdx / dt, pdy / dt, pdz / dt] : [0, 0, 0]
+
+      const preCollisionSpeed = newSpeed
+      if (
+        !ship.inWarpTransit &&
+        isShipCollisionMeshReady() &&
+        hasWorldObstacles()
+      ) {
+        const localId = state.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+        syncAsteroidColliderTransforms()
+        syncRemoteShipColliders({
+          shipsById: state.shipsById,
+          localPlayerId: localId,
+          currentCelestialId: ship.currentCelestialId,
+        })
+        const dacQuat = dacDirectActive
+          ? {
+              x: dacOrientationRef.current.x,
+              y: dacOrientationRef.current.y,
+              z: dacOrientationRef.current.z,
+              w: dacOrientationRef.current.w,
+            }
+          : null
+        const resolved = resolveLocalShipCollision({
+          dt,
+          currentPosition: ship.position,
+          displacement: [pdx, pdy, pdz],
+          velocityPerSec: actualVelocityForPatch,
+          speed: newSpeed,
+          dacActive: dacDirectActive,
+          dacQuat,
+          headingDeg: newHeading,
+          inclDeg: newIncl,
+          rollDeg: rollRef.current,
+          inertialDriftActive: inertiaDrivenMovement,
+          inertialVelocity: [
+            inertialVelocity.x,
+            inertialVelocity.y,
+            inertialVelocity.z,
+          ],
+        })
+        newPos = resolved.position
+        actualVelocityForPatch = resolved.velocityPerSec
+        newSpeed = resolved.speed
+        if (inertiaDrivenMovement) {
+          inertialVelocity.set(
+            resolved.inertialVelocity[0],
+            resolved.inertialVelocity[1],
+            resolved.inertialVelocity[2]
+          )
+        }
+
+        if (resolved.collided && simTime - lastCollisionDamageTimeRef.current >= COLLISION_DAMAGE_COOLDOWN) {
+          const speedAboveBase = preCollisionSpeed - COLLISION_MIN_DAMAGE_SPEED
+          if (speedAboveBase > 0) {
+            const t = Math.min(speedAboveBase / (COLLISION_MAX_DAMAGE_SPEED - COLLISION_MIN_DAMAGE_SPEED), 1)
+            const collisionDamage = t * COLLISION_MAX_DAMAGE
+            lastCollisionDamageTimeRef.current = simTime
+
+            let remaining = collisionDamage
+            let shield = ship.shield
+            let armor = ship.armor
+            let hull = ship.hull
+            if (ship.shieldsUp && shield > 0) {
+              const absorbed = Math.min(shield, remaining)
+              shield -= absorbed
+              remaining -= absorbed
+            }
+            if (remaining > 0 && armor > 0) {
+              const absorbed = Math.min(armor, remaining)
+              armor -= absorbed
+              remaining -= absorbed
+            }
+            if (remaining > 0) {
+              hull = Math.max(0, hull - remaining)
+            }
+            shipPatch.shield = shield
+            shipPatch.armor = armor
+            shipPatch.hull = hull
+          }
+        }
+      }
 
       const remainingHeading = Math.abs(shortestAngleDelta(newHeading, ship.bearing))
       const rollFade = remainingHeading < 15 ? remainingHeading / 15 : 1
@@ -774,9 +880,7 @@ export function SimulationLoop() {
       shipPatch.actualSpeed = newSpeed
       shipPatch.actualHeading = newHeading
       shipPatch.actualInclination = newIncl
-      shipPatch.actualVelocity = dt > 0
-        ? [pdx / dt, pdy / dt, pdz / dt]
-        : [0, 0, 0]
+      shipPatch.actualVelocity = actualVelocityForPatch
       shipPatch.position = newPos
       shipPatch.rollAngle = rollRef.current
 
@@ -958,6 +1062,7 @@ export function SimulationLoop() {
         revealedCelestialIds: latestState.ewRevealedCelestialIds,
         launchedCylinders: latestState.launchedCylinders,
         launchedFlares: latestState.launchedFlares,
+        launchedChaff: latestState.launchedChaff,
         torpedoExplosions: latestState.torpedoExplosions,
         inWarpTransit: shipPatch.inWarpTransit ?? ship.inWarpTransit,
         targetSpeed: shipPatch.targetSpeed ?? ship.targetSpeed,

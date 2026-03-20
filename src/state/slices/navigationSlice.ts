@@ -2,6 +2,7 @@ import type { StateCreator } from 'zustand'
 import type { FlareLaunchMode, GameStore } from '@/state/types'
 import type {
   OrdnanceSnapshotMessage,
+  WireLaunchedChaff,
   WireLaunchedCylinder,
   WireLaunchedFlare,
   WireTorpedoExplosion,
@@ -14,6 +15,9 @@ import {
   worldPositionForCelestial,
 } from '@/systems/warp/navigationMath'
 import { TORPEDO_ACCEL_DURATION_SECONDS } from '@/systems/simulation/torpedoConstants'
+import { getAsteroidMergedGeometryRadius } from '@/systems/asteroid/asteroidModelMetrics'
+import { DEW_BEAM_STORE_LIFETIME_MS } from '@/constants/dewBeam'
+import { useIRSTStore } from '@/state/irstStore'
 
 const SHIP_CENTER_PIVOT: [number, number, number] = [0, 0, 0]
 const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
@@ -22,6 +26,9 @@ const WARP_ARRIVAL_MIN_DISTANCE_KM = 15
 const WARP_ARRIVAL_MAX_DISTANCE_KM = 50
 const WARP_ARRIVAL_STEP_KM = 5
 const FALLBACK_PLAYER_SHIP_BOUNDING_LENGTH = 600
+/** Must match `ASTEROID_MODEL_URLS.length` in AsteroidBelt.tsx */
+const ASTEROID_MODEL_COUNT = 5
+const DEFAULT_DEBUG_ASTEROID_OFFSET: [number, number, number] = [0, 0, -1200]
 const LAUNCHED_CYLINDER_SCALE = 0.5
 const TORPEDO_THRUST_ACCELERATION = 130
 const TORPEDO_LAUNCH_ACCELERATION_MULTIPLIER = 10
@@ -37,9 +44,28 @@ const FLARE_PATTERN_MAX_SPREAD_DEG = 80
 const FLARE_PATTERN_STEP_DEG = 18
 const FLARE_MAX_COUNT = 20
 const FLARE_STARTING_INVENTORY = 40
+const CHAFF_PIECES_PER_SALVO = 56
+const CHAFF_EJECTION_SPEED_MIN = 360
+const CHAFF_EJECTION_SPEED_RANGE = 480
+const CHAFF_BEARING_JITTER_DEG = 78
+const CHAFF_INCLINATION_JITTER_DEG = 62
+const CHAFF_LIFETIME_SECONDS = 14
+const CHAFF_VELOCITY_DECAY_RATE = 0.2
+const CHAFF_STARTING_INVENTORY = 10
+const CHAFF_MAX_SIMULTANEOUS_PIECES = 1400
 const TORPEDO_MIN_PN_SPEED = 20
 const TORPEDO_HIT_RADIUS = 50
 const TORPEDO_EXPLOSION_LIFETIME_SECONDS = 7.2
+/** IR seeker: max range from missile to target ship for flare decoys to affect guidance. */
+const IR_FLARE_CONFUSION_MISSILE_TO_TARGET_MAX_M = 4200
+/** Only flares this young count as a “fresh” decoy deployment. */
+const IR_FLARE_CONFUSION_FLARE_MAX_AGE_S = 1.35
+/** Flares must stay near the defending ship to count. */
+const IR_FLARE_CONFUSION_FLARE_MAX_DIST_FROM_SHIP_M = 1500
+const IR_FLARE_CONFUSION_BASE_BLEND = 0.16
+const IR_FLARE_CONFUSION_BLEND_PER_FLARE = 0.065
+const IR_FLARE_CONFUSION_BLEND_MAX = 0.44
+const IR_FLARE_CONFUSION_POSITION_JITTER_M = 55
 const NETWORK_ORDNANCE_MAX_PER_CATEGORY = 512
 
 function mergeKnownCelestialId(existingIds: string[], celestialId: string, starSystem = DEFAULT_STAR_SYSTEM_SNAPSHOT.system) {
@@ -89,6 +115,35 @@ function getShipForwardVector(headingDeg: number, inclinationDeg: number): [numb
     Math.sin(inclinationRad),
     Math.cos(headingRad) * cosInclination,
   ]
+}
+
+/** Matches `IRSTCamera` / `SunSystem` IRST boresight (world +Y up). */
+const IR_SEEKER_LOS_RANGE_M = 5_000_000
+
+function normalizeIrstBearingDeg(deg: number): number {
+  return ((deg % 360) + 360) % 360
+}
+
+function clampIrstInclinationDeg(deg: number): number {
+  return Math.max(-85, Math.min(85, deg))
+}
+
+function getIrstLosUnitFromShip(
+  ship: GameStore['ship'],
+  stabilized: boolean,
+): [number, number, number] {
+  const effectiveBearing = stabilized
+    ? ship.irstBearing
+    : normalizeIrstBearingDeg(360 - ship.actualHeading + ship.irstBearing)
+  const effectiveInclination = stabilized
+    ? ship.irstInclination
+    : clampIrstInclinationDeg(ship.actualInclination + ship.irstInclination)
+  const bearingRad = (effectiveBearing * Math.PI) / 180
+  const inclinationRad = (effectiveInclination * Math.PI) / 180
+  const outX = Math.sin(bearingRad) * Math.cos(inclinationRad)
+  const outY = Math.sin(inclinationRad)
+  const outZ = Math.cos(bearingRad) * Math.cos(inclinationRad)
+  return [outX, outY, outZ]
 }
 
 function normalizeVector(vector: [number, number, number], fallback: [number, number, number]): [number, number, number] {
@@ -145,6 +200,65 @@ function buildPatternAngles(count: number): number[] {
   const leftmost = -totalSpread / 2
   const step = totalSpread / (count - 1)
   return Array.from({ length: count }, (_, index) => leftmost + step * index)
+}
+
+function flareDeployingShipId(flare: GameStore['launchedFlares'][number]): string | null {
+  if (typeof flare.deployedByShipId === 'string' && flare.deployedByShipId.length > 0) {
+    return flare.deployedByShipId
+  }
+  const parts = flare.id.split('::')
+  const ownerPrefix = parts.length >= 2 ? parts[0] : undefined
+  if (ownerPrefix != null && ownerPrefix.length > 0) return ownerPrefix
+  return null
+}
+
+function collectFlaresForIrSeekerConfusion(
+  s: GameStore,
+  targetShipId: string,
+  celestialId: string,
+  shipPos: [number, number, number],
+): GameStore['launchedFlares'] {
+  const out: GameStore['launchedFlares'] = []
+  for (const flare of [...s.launchedFlares, ...s.remoteLaunchedFlares]) {
+    if (flare.currentCelestialId !== celestialId) continue
+    if (flare.flightTimeSeconds > IR_FLARE_CONFUSION_FLARE_MAX_AGE_S) continue
+    if (flareDeployingShipId(flare) !== targetShipId) continue
+    const dx = flare.position[0] - shipPos[0]
+    const dy = flare.position[1] - shipPos[1]
+    const dz = flare.position[2] - shipPos[2]
+    if (Math.hypot(dx, dy, dz) > IR_FLARE_CONFUSION_FLARE_MAX_DIST_FROM_SHIP_M) continue
+    out.push(flare)
+  }
+  return out
+}
+
+function blendIrSeekerPnAimWithFlares(
+  shipPos: [number, number, number],
+  flares: GameStore['launchedFlares'],
+): [number, number, number] {
+  if (flares.length === 0) return shipPos
+  let sx = 0
+  let sy = 0
+  let sz = 0
+  for (const f of flares) {
+    sx += f.position[0]
+    sy += f.position[1]
+    sz += f.position[2]
+  }
+  const n = flares.length
+  const cx = sx / n
+  const cy = sy / n
+  const cz = sz / n
+  const blend = Math.min(
+    IR_FLARE_CONFUSION_BLEND_MAX,
+    IR_FLARE_CONFUSION_BASE_BLEND + n * IR_FLARE_CONFUSION_BLEND_PER_FLARE,
+  )
+  const j = IR_FLARE_CONFUSION_POSITION_JITTER_M
+  return [
+    shipPos[0] * (1 - blend) + cx * blend + (Math.random() * 2 - 1) * j,
+    shipPos[1] * (1 - blend) + cy * blend + (Math.random() * 2 - 1) * j,
+    shipPos[2] * (1 - blend) + cz * blend + (Math.random() * 2 - 1) * j,
+  ]
 }
 
 function resolveLockTargetPosition(
@@ -248,6 +362,7 @@ function sanitizeNetworkCylinders(
         direction,
         targetLockId: cylinder.targetLockId ?? null,
         flightTimeSeconds: Math.max(0, cylinder.flightTimeSeconds),
+        ...(cylinder.guidance === 'ir_seeker' ? { guidance: 'ir_seeker' as const } : {}),
       })
       if (next.length >= NETWORK_ORDNANCE_MAX_PER_CATEGORY) return next
     }
@@ -263,12 +378,38 @@ function sanitizeNetworkFlares(snapshot: OrdnanceSnapshotMessage): GameStore['re
       const position = sanitizeVector3(flare.position)
       const velocity = sanitizeVector3(flare.velocity)
       if (!position || !velocity || !isFiniteNumber(flare.flightTimeSeconds)) continue
+      const deployer =
+        typeof flare.deployedByShipId === 'string' && flare.deployedByShipId.length > 0
+          ? flare.deployedByShipId
+          : ownerId
       next.push({
         id: `${ownerId}::${flare.id}`,
         currentCelestialId: flare.currentCelestialId,
         position,
         velocity,
         flightTimeSeconds: Math.max(0, flare.flightTimeSeconds),
+        deployedByShipId: deployer,
+      })
+      if (next.length >= NETWORK_ORDNANCE_MAX_PER_CATEGORY) return next
+    }
+  }
+  return next
+}
+
+function sanitizeNetworkChaff(snapshot: OrdnanceSnapshotMessage): GameStore['remoteLaunchedChaff'] {
+  const next: GameStore['remoteLaunchedChaff'] = []
+  for (const [ownerId, ordnance] of Object.entries(snapshot)) {
+    for (const piece of asCollection<WireLaunchedChaff>(ordnance?.launchedChaff)) {
+      if (!piece || typeof piece.id !== 'string' || typeof piece.currentCelestialId !== 'string') continue
+      const position = sanitizeVector3(piece.position)
+      const velocity = sanitizeVector3(piece.velocity)
+      if (!position || !velocity || !isFiniteNumber(piece.flightTimeSeconds)) continue
+      next.push({
+        id: `${ownerId}::${piece.id}`,
+        currentCelestialId: piece.currentCelestialId,
+        position,
+        velocity,
+        flightTimeSeconds: Math.max(0, piece.flightTimeSeconds),
       })
       if (next.length >= NETWORK_ORDNANCE_MAX_PER_CATEGORY) return next
     }
@@ -341,6 +482,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   orientDebugEnabled: false,
   showIRSTCone: false,
   showBScopeRadarCone: false,
+  showColliderDebug: false,
   unlimitAaOrbitZoomOut: false,
   showCelestialGridCenterMarker: false,
   debugPivotPosition: SHIP_CENTER_PIVOT,
@@ -360,27 +502,29 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   warpAligned: false,
   navAttitudeMode: 'AA',
   gridObjects: [],
-  asteroidBeltThickness: 2600,
-  asteroidBeltJitter: 420,
-  asteroidBeltDensity: 2.4,
-  asteroidBeltArcLength: 180,
-  asteroidBeltRadius: 18000,
   asteroidBeltMinSize: 26,
   asteroidBeltMaxSize: 140,
-  asteroidBeltSpawnNonce: 0,
-  asteroidBeltClearNonce: 0,
+  debugAsteroids: [],
+  debugAsteroidSpawnNonce: 0,
+  debugAsteroidSpawnOffset: [...DEFAULT_DEBUG_ASTEROID_OFFSET] as [number, number, number],
+  debugAsteroidDefaultScale: 80,
+  debugAsteroidRandomizeScale: false,
   playerShipBoundingLength: FALLBACK_PLAYER_SHIP_BOUNDING_LENGTH,
   launchedCylinders: [],
   launchedFlares: [],
+  launchedChaff: [],
   torpedoExplosions: [],
   dewBeams: [],
   flareInventory: FLARE_STARTING_INVENTORY,
   flareInventoryMax: FLARE_STARTING_INVENTORY,
+  chaffInventory: CHAFF_STARTING_INVENTORY,
+  chaffInventoryMax: CHAFF_STARTING_INVENTORY,
   countermeasuresPowered: true,
   dewPowered: false,
   dewCharging: false,
   remoteLaunchedCylinders: [],
   remoteLaunchedFlares: [],
+  remoteLaunchedChaff: [],
   remoteTorpedoExplosions: [],
   planetTextureRandomizeNonce: 0,
   setStarSystemSnapshot: (snapshot) =>
@@ -451,6 +595,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   setOrientDebugEnabled: (enabled) => set({ orientDebugEnabled: enabled }),
   setShowIRSTCone: (enabled) => set({ showIRSTCone: enabled }),
   setShowBScopeRadarCone: (enabled) => set({ showBScopeRadarCone: enabled }),
+  setShowColliderDebug: (enabled) => set({ showColliderDebug: enabled }),
   setUnlimitAaOrbitZoomOut: (enabled) => set({ unlimitAaOrbitZoomOut: enabled }),
   setShowCelestialGridCenterMarker: (enabled) => set({ showCelestialGridCenterMarker: enabled }),
   setDebugPivotPosition: (position) => set({ debugPivotPosition: sanitizePivot(position) }),
@@ -485,52 +630,95 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   setNavAttitudeMode: (mode) =>
     set({ navAttitudeMode: mode }),
   setGridObjects: (objects) => set({ gridObjects: objects }),
-  setAsteroidBeltSettings: (partial) =>
+  setDebugAsteroidSpawnOffset: (position) =>
+    set({
+      debugAsteroidSpawnOffset: [
+        Number.isFinite(position[0]) ? position[0] : DEFAULT_DEBUG_ASTEROID_OFFSET[0],
+        Number.isFinite(position[1]) ? position[1] : DEFAULT_DEBUG_ASTEROID_OFFSET[1],
+        Number.isFinite(position[2]) ? position[2] : DEFAULT_DEBUG_ASTEROID_OFFSET[2],
+      ],
+    }),
+  setDebugAsteroidDefaultScale: (scale) =>
+    set({
+      debugAsteroidDefaultScale: Number.isFinite(scale)
+        ? Math.max(4, Math.min(500, scale))
+        : 80,
+    }),
+  setDebugAsteroidRandomizeScale: (value) => set({ debugAsteroidRandomizeScale: Boolean(value) }),
+  spawnDebugAsteroid: (options) =>
     set((s) => {
-      let nextMinSize =
-        partial.sizeMin === undefined
-          ? s.asteroidBeltMinSize
-          : Math.max(4, Math.min(400, partial.sizeMin))
-      let nextMaxSize =
-        partial.sizeMax === undefined
-          ? s.asteroidBeltMaxSize
-          : Math.max(6, Math.min(500, partial.sizeMax))
-
-      if (nextMinSize > nextMaxSize) {
-        if (partial.sizeMin !== undefined && partial.sizeMax === undefined) {
-          nextMaxSize = nextMinSize
-        } else if (partial.sizeMax !== undefined && partial.sizeMin === undefined) {
-          nextMinSize = nextMaxSize
-        } else {
-          const swap = nextMinSize
-          nextMinSize = nextMaxSize
-          nextMaxSize = swap
-        }
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      const localShip = s.shipsById[localId] ?? s.ship
+      const id = `debug-ast-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+      const modelIndex =
+        options?.modelIndex !== undefined
+          ? Math.max(0, Math.min(ASTEROID_MODEL_COUNT - 1, Math.floor(options.modelIndex)))
+          : Math.floor(Math.random() * ASTEROID_MODEL_COUNT)
+      const sizeSpan = Math.max(0, s.asteroidBeltMaxSize - s.asteroidBeltMinSize)
+      let scale: number
+      if (options?.scale !== undefined && Number.isFinite(options.scale)) {
+        scale = Math.max(4, Math.min(500, options.scale))
+      } else if (s.debugAsteroidRandomizeScale) {
+        scale = Math.max(
+          4,
+          Math.min(500, s.asteroidBeltMinSize + Math.random() * sizeSpan)
+        )
+      } else {
+        scale = Math.max(4, Math.min(500, s.debugAsteroidDefaultScale))
       }
 
+      const explicitOff = options?.offset
+      let ox: number
+      let oy: number
+      let oz: number
+      if (explicitOff !== undefined) {
+        ox = Number.isFinite(explicitOff[0]) ? explicitOff[0] : 0
+        oy = Number.isFinite(explicitOff[1]) ? explicitOff[1] : 0
+        oz = Number.isFinite(explicitOff[2]) ? explicitOff[2] : 0
+      } else {
+        const modelRadius = getAsteroidMergedGeometryRadius(modelIndex)
+        const maxExtent = scale * modelRadius
+        ox = 2 * maxExtent
+        const u = s.debugAsteroidSpawnOffset
+        oy = Number.isFinite(u[1]) ? u[1] : 0
+        oz = Number.isFinite(u[2]) ? u[2] : 0
+      }
+
+      const pos: [number, number, number] = [
+        localShip.position[0] + ox,
+        localShip.position[1] + oy,
+        localShip.position[2] + oz,
+      ]
+      const rotation: [number, number, number] = [
+        Math.random() * Math.PI * 2,
+        Math.random() * Math.PI * 2,
+        Math.random() * Math.PI * 2,
+      ]
       return {
-        asteroidBeltThickness:
-          partial.thickness === undefined ? s.asteroidBeltThickness : Math.max(50, Math.min(2500, partial.thickness)),
-        asteroidBeltJitter:
-          partial.jitter === undefined ? s.asteroidBeltJitter : Math.max(0, Math.min(3000, partial.jitter)),
-        asteroidBeltDensity:
-          partial.density === undefined ? s.asteroidBeltDensity : Math.max(0.1, Math.min(12, partial.density)),
-        asteroidBeltArcLength:
-          partial.arcLength === undefined ? s.asteroidBeltArcLength : Math.max(20, Math.min(360, partial.arcLength)),
-        asteroidBeltRadius:
-          partial.radius === undefined ? s.asteroidBeltRadius : Math.max(2000, Math.min(80000, partial.radius)),
-        asteroidBeltMinSize: nextMinSize,
-        asteroidBeltMaxSize: nextMaxSize,
+        debugAsteroids: [
+          ...s.debugAsteroids,
+          { id, position: pos, rotation, scale, modelIndex },
+        ],
+        debugAsteroidSpawnNonce: s.debugAsteroidSpawnNonce + 1,
       }
     }),
-  spawnAsteroidBelt: () =>
-    set((s) => ({
-      asteroidBeltSpawnNonce: s.asteroidBeltSpawnNonce + 1,
-    })),
-  clearSpawnedAsteroidBelt: () =>
-    set((s) => ({
-      asteroidBeltClearNonce: s.asteroidBeltClearNonce + 1,
-    })),
+  removeDebugAsteroid: (id) =>
+    set((s) => {
+      const next = s.debugAsteroids.filter((a) => a.id !== id)
+      if (next.length === s.debugAsteroids.length) return {}
+      return {
+        debugAsteroids: next,
+        debugAsteroidSpawnNonce: s.debugAsteroidSpawnNonce + 1,
+      }
+    }),
+  clearDebugAsteroids: () =>
+    set((s) => {
+      if (s.debugAsteroids.length === 0) return {}
+      return {
+        debugAsteroids: [],
+        debugAsteroidSpawnNonce: s.debugAsteroidSpawnNonce + 1,
+      }
+    }),
   setPlayerShipBoundingLength: (length) =>
     set({
       playerShipBoundingLength:
@@ -549,12 +737,23 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
     set((s) => ({
       dewCharging: s.dewPowered ? charging : false,
     })),
-  launchLockedCylinder: (shipBoundingLength) =>
+  launchLockedCylinder: (shipBoundingLength, options) =>
     set((s) => {
-      if (!hasRadarLock(s.ewLockState)) {
-        return {}
+      const explicitTarget =
+        typeof options?.targetLockId === 'string' && options.targetLockId.length > 0
+          ? options.targetLockId
+          : null
+      let targetLockId: string | null = null
+      if (explicitTarget) {
+        if (!resolveLockTargetPosition(s, explicitTarget)) return {}
+        targetLockId = explicitTarget
+      } else {
+        if (!hasRadarLock(s.ewLockState)) {
+          return {}
+        }
+        targetLockId = getPreferredRadarLockId(s.ewLockState)
       }
-      const preferredLockId = getPreferredRadarLockId(s.ewLockState)
+      if (!targetLockId) return {}
       const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
       const localShip = s.shipsById[localId] ?? s.ship
       const baseLength =
@@ -589,8 +788,9 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
             radius,
             length,
             direction: forward,
-            targetLockId: preferredLockId,
+            targetLockId,
             flightTimeSeconds: 0,
+            ...(explicitTarget ? { guidance: 'ir_seeker' as const } : {}),
           },
         ],
       }
@@ -604,14 +804,71 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       const survivingCylinders: typeof s.launchedCylinders = []
       const shipDamage: Record<string, number> = {}
       const createdExplosions: GameStore['torpedoExplosions'] = []
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      const localShip = s.shipsById[localId] ?? s.ship
 
       for (const cylinder of s.launchedCylinders) {
         let nextDirection: [number, number, number] = [...cylinder.direction]
         let nextVelocity: [number, number, number] = [...cylinder.velocity]
         const thrustAccelerationActive =
           cylinder.flightTimeSeconds < TORPEDO_ACCEL_DURATION_SECONDS
-        const targetPosition = resolveLockTargetPosition(s, cylinder.targetLockId)
-        const targetVelocity = resolveLockTargetVelocity(s, cylinder.targetLockId)
+
+        let pnTargetPosition: [number, number, number] | null = null
+        let pnTargetVelocity: [number, number, number] | null = null
+        let hitTestWorldPosition: [number, number, number] | null = null
+        let hitTestLockId: string | null = null
+
+        if (cylinder.guidance === 'ir_seeker') {
+          const irstState = useIRSTStore.getState()
+          const lockHeld =
+            irstState.pointTrackEnabled
+            && irstState.pointTrackTargetId != null
+            && irstState.pointTrackTargetId === cylinder.targetLockId
+          const lockedPosition = lockHeld ? resolveLockTargetPosition(s, cylinder.targetLockId) : null
+          if (lockHeld && lockedPosition) {
+            const shipVel = resolveLockTargetVelocity(s, cylinder.targetLockId)
+            pnTargetPosition = lockedPosition
+            pnTargetVelocity = shipVel
+            hitTestWorldPosition = lockedPosition
+            hitTestLockId = cylinder.targetLockId
+
+            const distMissileToTarget = Math.hypot(
+              cylinder.position[0] - lockedPosition[0],
+              cylinder.position[1] - lockedPosition[1],
+              cylinder.position[2] - lockedPosition[2],
+            )
+            if (
+              distMissileToTarget <= IR_FLARE_CONFUSION_MISSILE_TO_TARGET_MAX_M
+              && cylinder.targetLockId
+            ) {
+              const decoyFlares = collectFlaresForIrSeekerConfusion(
+                s,
+                cylinder.targetLockId,
+                cylinder.currentCelestialId,
+                lockedPosition,
+              )
+              if (decoyFlares.length > 0) {
+                pnTargetPosition = blendIrSeekerPnAimWithFlares(lockedPosition, decoyFlares)
+                pnTargetVelocity = shipVel
+              }
+            }
+          } else {
+            const [lx, ly, lz] = getIrstLosUnitFromShip(localShip, irstState.stabilized)
+            pnTargetPosition = [
+              localShip.position[0] + lx * IR_SEEKER_LOS_RANGE_M,
+              localShip.position[1] + ly * IR_SEEKER_LOS_RANGE_M,
+              localShip.position[2] + lz * IR_SEEKER_LOS_RANGE_M,
+            ]
+            pnTargetVelocity = [0, 0, 0]
+            hitTestWorldPosition = null
+            hitTestLockId = null
+          }
+        } else {
+          pnTargetPosition = resolveLockTargetPosition(s, cylinder.targetLockId)
+          pnTargetVelocity = resolveLockTargetVelocity(s, cylinder.targetLockId)
+          hitTestWorldPosition = pnTargetPosition
+          hitTestLockId = cylinder.targetLockId
+        }
 
         const nextFlightTime = cylinder.flightTimeSeconds + deltaSeconds
         if (thrustAccelerationActive) {
@@ -633,15 +890,15 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
         }
 
         const postThrustSpeed = Math.hypot(nextVelocity[0], nextVelocity[1], nextVelocity[2])
-        if (thrustAccelerationActive && targetPosition && postThrustSpeed > TORPEDO_MIN_PN_SPEED) {
-          const relX = targetPosition[0] - cylinder.position[0]
-          const relY = targetPosition[1] - cylinder.position[1]
-          const relZ = targetPosition[2] - cylinder.position[2]
+        if (thrustAccelerationActive && pnTargetPosition && postThrustSpeed > TORPEDO_MIN_PN_SPEED) {
+          const relX = pnTargetPosition[0] - cylinder.position[0]
+          const relY = pnTargetPosition[1] - cylinder.position[1]
+          const relZ = pnTargetPosition[2] - cylinder.position[2]
           const relMag = Math.hypot(relX, relY, relZ)
           if (relMag > TORPEDO_MIN_TARGET_RANGE) {
-            const targetVelX = targetVelocity?.[0] ?? 0
-            const targetVelY = targetVelocity?.[1] ?? 0
-            const targetVelZ = targetVelocity?.[2] ?? 0
+            const targetVelX = pnTargetVelocity?.[0] ?? 0
+            const targetVelY = pnTargetVelocity?.[1] ?? 0
+            const targetVelZ = pnTargetVelocity?.[2] ?? 0
             const relVelX = targetVelX - nextVelocity[0]
             const relVelY = targetVelY - nextVelocity[1]
             const relVelZ = targetVelZ - nextVelocity[2]
@@ -695,20 +952,20 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
           cylinder.position[2] + nextVelocity[2] * deltaSeconds,
         ]
 
-        if (targetPosition && cylinder.targetLockId) {
+        if (hitTestWorldPosition && hitTestLockId) {
           const hitDist = Math.hypot(
-            nextPosition[0] - targetPosition[0],
-            nextPosition[1] - targetPosition[1],
-            nextPosition[2] - targetPosition[2]
+            nextPosition[0] - hitTestWorldPosition[0],
+            nextPosition[1] - hitTestWorldPosition[1],
+            nextPosition[2] - hitTestWorldPosition[2]
           )
           if (hitDist <= TORPEDO_HIT_RADIUS) {
-            shipDamage[cylinder.targetLockId] = (shipDamage[cylinder.targetLockId] ?? 0) + TORPEDO_DAMAGE
+            shipDamage[hitTestLockId] = (shipDamage[hitTestLockId] ?? 0) + TORPEDO_DAMAGE
             createdExplosions.push({
               id: `torpedo-explosion-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
               currentCelestialId: cylinder.currentCelestialId,
               position: [nextPosition[0], nextPosition[1], nextPosition[2]],
               flightTimeSeconds: 0,
-              targetShipId: cylinder.targetLockId,
+              targetShipId: hitTestLockId,
             })
             continue
           }
@@ -825,6 +1082,7 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
                 shipVelocity[2] + flareDirection[2] * FLARE_EJECTION_SPEED,
               ] as [number, number, number],
               flightTimeSeconds: 0,
+              deployedByShipId: localId,
             }
           }),
         ],
@@ -858,6 +1116,99 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
             }
           })
           .filter((flare) => flare.flightTimeSeconds <= FLARE_LIFETIME_SECONDS),
+      }
+    }),
+  launchChaff: (shipBoundingLength) =>
+    set((s) => {
+      if (!s.countermeasuresPowered) {
+        return {}
+      }
+      const available = Math.max(0, Math.floor(s.chaffInventory))
+      if (available <= 0) {
+        return {}
+      }
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      const localShip = s.shipsById[localId] ?? s.ship
+      const baseLength =
+        Number.isFinite(shipBoundingLength) && shipBoundingLength > 1
+          ? shipBoundingLength
+          : s.playerShipBoundingLength
+      const normalizedLength = Math.max(1, baseLength)
+      const forward = getShipForwardVector(localShip.actualHeading, localShip.actualInclination)
+      const backward: [number, number, number] = [-forward[0], -forward[1], -forward[2]]
+      const right = normalizeVector(crossProduct(forward, [0, 1, 0]), [1, 0, 0])
+      const up = normalizeVector(crossProduct(right, forward), [0, 1, 0])
+      const spawnOffset = normalizedLength * 0.58
+      const shipVelocity: [number, number, number] = [
+        localShip.actualVelocity[0],
+        localShip.actualVelocity[1],
+        localShip.actualVelocity[2],
+      ]
+      const now = Date.now()
+      const newPieces = Array.from({ length: CHAFF_PIECES_PER_SALVO }, (_, index) => {
+        const bearingJitterDeg = (Math.random() * 2 - 1) * CHAFF_BEARING_JITTER_DEG
+        const inclinationJitterDeg = (Math.random() * 2 - 1) * CHAFF_INCLINATION_JITTER_DEG
+        const directionWithBearingJitter = rotateVectorAroundAxis(backward, up, bearingJitterDeg)
+        const pieceDirection = normalizeVector(
+          rotateVectorAroundAxis(directionWithBearingJitter, right, inclinationJitterDeg),
+          directionWithBearingJitter
+        )
+        const ejectionSpeed = CHAFF_EJECTION_SPEED_MIN + Math.random() * CHAFF_EJECTION_SPEED_RANGE
+        const jx = (Math.random() * 2 - 1) * normalizedLength * 0.04
+        const jy = (Math.random() * 2 - 1) * normalizedLength * 0.04
+        const jz = (Math.random() * 2 - 1) * normalizedLength * 0.04
+        return {
+          id: `chaff-${now}-${index}-${Math.floor(Math.random() * 100000)}`,
+          currentCelestialId: localShip.currentCelestialId,
+          position: [
+            localShip.position[0] + backward[0] * spawnOffset + jx,
+            localShip.position[1] + backward[1] * spawnOffset + jy,
+            localShip.position[2] + backward[2] * spawnOffset + jz,
+          ] as [number, number, number],
+          velocity: [
+            shipVelocity[0] + pieceDirection[0] * ejectionSpeed,
+            shipVelocity[1] + pieceDirection[1] * ejectionSpeed,
+            shipVelocity[2] + pieceDirection[2] * ejectionSpeed,
+          ] as [number, number, number],
+          flightTimeSeconds: 0,
+        }
+      })
+      let combined = [...s.launchedChaff, ...newPieces]
+      if (combined.length > CHAFF_MAX_SIMULTANEOUS_PIECES) {
+        combined = combined.slice(combined.length - CHAFF_MAX_SIMULTANEOUS_PIECES)
+      }
+      return {
+        launchedChaff: combined,
+        chaffInventory: available - 1,
+      }
+    }),
+  advanceLaunchedChaff: (deltaSeconds) =>
+    set((s) => {
+      if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0 || s.launchedChaff.length === 0) {
+        return {}
+      }
+      const velocityDecayMultiplier = Math.exp(-CHAFF_VELOCITY_DECAY_RATE * deltaSeconds)
+      return {
+        launchedChaff: s.launchedChaff
+          .map((piece) => {
+            const nextFlightTime = piece.flightTimeSeconds + deltaSeconds
+            const nextVelocity: [number, number, number] = [
+              piece.velocity[0] * velocityDecayMultiplier,
+              piece.velocity[1] * velocityDecayMultiplier,
+              piece.velocity[2] * velocityDecayMultiplier,
+            ]
+            return {
+              ...piece,
+              position: [
+                piece.position[0] + nextVelocity[0] * deltaSeconds,
+                piece.position[1] + nextVelocity[1] * deltaSeconds,
+                piece.position[2] + nextVelocity[2] * deltaSeconds,
+              ] as [number, number, number],
+              velocity: nextVelocity,
+              flightTimeSeconds: nextFlightTime,
+            }
+          })
+          .filter((piece) => piece.flightTimeSeconds <= CHAFF_LIFETIME_SECONDS),
       }
     }),
   advanceTorpedoExplosions: (deltaSeconds) =>
@@ -924,6 +1275,8 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
             currentCelestialId: celestialId,
             originPosition,
             targetPosition,
+            originShipId: s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID,
+            ...(targetShipId ? { targetShipId } : {}),
             firedAtMs: performance.now(),
           },
         ],
@@ -955,21 +1308,22 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
     set((s) => {
       if (s.dewBeams.length === 0) return {}
       const now = performance.now()
-      const DEW_BEAM_LIFETIME_MS = 1800
       return {
-        dewBeams: s.dewBeams.filter((beam) => now - beam.firedAtMs <= DEW_BEAM_LIFETIME_MS),
+        dewBeams: s.dewBeams.filter((beam) => now - beam.firedAtMs <= DEW_BEAM_STORE_LIFETIME_MS),
       }
     }),
   setRemoteOrdnanceSnapshot: (snapshot) =>
     set({
       remoteLaunchedCylinders: sanitizeNetworkCylinders(snapshot),
       remoteLaunchedFlares: sanitizeNetworkFlares(snapshot),
+      remoteLaunchedChaff: sanitizeNetworkChaff(snapshot),
       remoteTorpedoExplosions: sanitizeNetworkExplosions(snapshot),
     }),
   clearRemoteOrdnance: () =>
     set({
       remoteLaunchedCylinders: [],
       remoteLaunchedFlares: [],
+      remoteLaunchedChaff: [],
       remoteTorpedoExplosions: [],
     }),
   randomizePlanetTextures: () =>

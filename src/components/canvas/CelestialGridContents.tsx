@@ -1,9 +1,23 @@
-import { useEffect, useMemo, useRef } from 'react'
-import { useLoader } from '@react-three/fiber'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useFrame, useLoader } from '@react-three/fiber'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import * as THREE from 'three'
 import type { Celestial } from '@/types/game'
 import { useGameStore } from '@/state/gameStore'
+import {
+  ASTEROID_IRST_OVERLAY_LAYER,
+  ASTEROID_IRST_OVERLAY_SCALE,
+  ASTEROID_IRST_OVERLAY_SIZE_TOP_FRACTION,
+  createAsteroidIrstOverlayMaterial,
+} from './asteroidIrstOverlayMaterial'
+import {
+  clearAsteroidColliders,
+  setAsteroidColliders,
+  type AsteroidColliderInstance,
+} from '@/systems/collision/collisionRegistry'
+import { takeTopFractionBySize } from '@/systems/collision/asteroidColliderFilter'
+import { ASTEROID_COLLIDER_SIZE_TOP_FRACTION } from '@/systems/collision/constants'
+import { ensureRapierLoaded } from '@/systems/collision/ensureRapier'
 
 interface CelestialGridContentsProps {
   celestial: Celestial
@@ -73,6 +87,14 @@ const BELT_SITE_TUNING = {
   radialBiasPower: 0.8,
 } as const
 
+const asteroidColliderDebugMaterial = new THREE.MeshBasicMaterial({
+  color: 0xff7722,
+  wireframe: true,
+  depthTest: false,
+  depthWrite: false,
+  toneMapped: false,
+})
+
 function firstMeshGeometry(root: THREE.Object3D): THREE.BufferGeometry | null {
   let found: THREE.BufferGeometry | null = null
   root.traverse((child) => {
@@ -99,12 +121,17 @@ function createSeededRandom(seedText: string) {
 
 function AsteroidFieldContents({ celestial }: CelestialGridContentsProps) {
   const starSystem = useGameStore((s) => s.starSystem)
+  const showColliderDebug = useGameStore((s) => s.showColliderDebug)
   const loadedObjects = useLoader(FBXLoader, [...ASTEROID_MODEL_URLS]) as THREE.Group[]
   const [baseColorMap, aoMap, normalMap, roughnessMap] = useLoader(
     THREE.TextureLoader,
     [...ASTEROID_TEXTURE_URLS]
   ) as [THREE.Texture, THREE.Texture, THREE.Texture, THREE.Texture]
   const meshRefs = useRef<Array<THREE.InstancedMesh | null>>([])
+  const irstMeshRefs = useRef<Array<THREE.InstancedMesh | null>>([])
+  const [hullDebugGeometries, setHullDebugGeometries] = useState<
+    (THREE.BufferGeometry | null)[]
+  >([])
 
   const geometries = useMemo(
     () =>
@@ -123,6 +150,8 @@ function AsteroidFieldContents({ celestial }: CelestialGridContentsProps) {
       }),
     [geometries]
   )
+
+  const irstOverlayMaterial = useMemo(() => createAsteroidIrstOverlayMaterial(), [])
 
   const material = useMemo(() => {
     baseColorMap.colorSpace = THREE.SRGBColorSpace
@@ -147,6 +176,10 @@ function AsteroidFieldContents({ celestial }: CelestialGridContentsProps) {
   useEffect(() => {
     return () => material.dispose()
   }, [material])
+
+  useEffect(() => {
+    return () => irstOverlayMaterial.dispose()
+  }, [irstOverlayMaterial])
 
   const asteroids = useMemo(() => {
     const random = createSeededRandom(
@@ -303,10 +336,31 @@ function AsteroidFieldContents({ celestial }: CelestialGridContentsProps) {
     return grouped
   }, [asteroids, geometries.length])
 
+  const irstOverlayEligible = useMemo(() => {
+    type Entry = { geometryIndex: number; instanceIndex: number; inst: AsteroidInstance }
+    const flat: Entry[] = []
+    instancesByGeometry.forEach((instances, geometryIndex) => {
+      instances.forEach((inst, instanceIndex) => {
+        flat.push({ geometryIndex, instanceIndex, inst })
+      })
+    })
+    const top = takeTopFractionBySize(
+      flat,
+      (e) => e.inst.scale * (geometryBaseRadii[e.inst.modelIndex] ?? 1),
+      ASTEROID_IRST_OVERLAY_SIZE_TOP_FRACTION
+    )
+    const keys = new Set<string>()
+    for (const e of top) {
+      keys.add(`${e.geometryIndex}:${e.instanceIndex}`)
+    }
+    return keys
+  }, [instancesByGeometry, geometryBaseRadii])
+
   useEffect(() => {
     const dummy = new THREE.Object3D()
     instancesByGeometry.forEach((instances, geometryIndex) => {
       const instancedMesh = meshRefs.current[geometryIndex]
+      const irstMesh = irstMeshRefs.current[geometryIndex]
       if (!instancedMesh) return
       instances.forEach((asteroid, asteroidIndex) => {
         dummy.position.set(...asteroid.position)
@@ -314,12 +368,73 @@ function AsteroidFieldContents({ celestial }: CelestialGridContentsProps) {
         dummy.scale.setScalar(asteroid.scale)
         dummy.updateMatrix()
         instancedMesh.setMatrixAt(asteroidIndex, dummy.matrix)
+        if (irstMesh) {
+          const key = `${geometryIndex}:${asteroidIndex}`
+          if (irstOverlayEligible.has(key)) {
+            dummy.scale.setScalar(asteroid.scale * ASTEROID_IRST_OVERLAY_SCALE)
+          } else {
+            dummy.scale.setScalar(0)
+          }
+          dummy.updateMatrix()
+          irstMesh.setMatrixAt(asteroidIndex, dummy.matrix)
+        }
       })
       instancedMesh.instanceMatrix.needsUpdate = true
       instancedMesh.computeBoundingSphere()
       instancedMesh.computeBoundingBox()
+      if (irstMesh) {
+        irstMesh.instanceMatrix.needsUpdate = true
+        irstMesh.computeBoundingSphere()
+        irstMesh.computeBoundingBox()
+      }
     })
-  }, [instancesByGeometry])
+  }, [instancesByGeometry, irstOverlayEligible])
+
+  const partGeometriesByModel = useMemo(
+    () => geometries.map((g) => [g]),
+    [geometries]
+  )
+
+  const collisionInstances = useMemo((): AsteroidColliderInstance[] => {
+    const all: AsteroidColliderInstance[] = asteroids.map((a) => ({
+      position: a.position,
+      rotation: a.rotation,
+      scale: a.scale,
+      modelIndex: a.modelIndex,
+    }))
+    return takeTopFractionBySize(
+      all,
+      (inst) => inst.scale * (geometryBaseRadii[inst.modelIndex] ?? 1),
+      ASTEROID_COLLIDER_SIZE_TOP_FRACTION
+    )
+  }, [asteroids, geometryBaseRadii])
+
+  useEffect(() => {
+    if (geometries.length === 0 || collisionInstances.length === 0) {
+      clearAsteroidColliders()
+      setHullDebugGeometries([])
+      return
+    }
+    let cancelled = false
+    void ensureRapierLoaded().then(() =>
+      setAsteroidColliders(partGeometriesByModel, collisionInstances).then((hulls) => {
+        if (!cancelled) setHullDebugGeometries(hulls)
+      })
+    )
+    return () => {
+      cancelled = true
+      clearAsteroidColliders()
+      setHullDebugGeometries([])
+    }
+  }, [partGeometriesByModel, collisionInstances, geometries.length])
+
+  useFrame(() => {
+    const gs = useGameStore.getState()
+    const showIrstOverlay = gs.irstCameraOn && gs.ship.irstSpectrumMode === 'IR'
+    irstMeshRefs.current.forEach((m) => {
+      if (m) m.visible = showIrstOverlay
+    })
+  })
 
   return (
     <group>
@@ -327,18 +442,52 @@ function AsteroidFieldContents({ celestial }: CelestialGridContentsProps) {
         const instances = instancesByGeometry[geometryIndex] ?? []
         if (instances.length === 0) return null
         return (
-          <instancedMesh
-            key={`${celestial.id}-asteroid-instanced-${geometryIndex}`}
-            ref={(node) => {
-              meshRefs.current[geometryIndex] = node
-            }}
-            args={[geometry, material, instances.length]}
-            frustumCulled={false}
-            castShadow
-            receiveShadow
-          />
+          <group key={`${celestial.id}-asteroid-pair-${geometryIndex}`}>
+            <instancedMesh
+              ref={(node) => {
+                meshRefs.current[geometryIndex] = node
+              }}
+              args={[geometry, material, instances.length]}
+              frustumCulled={false}
+              castShadow
+              receiveShadow
+            />
+            <instancedMesh
+              ref={(node) => {
+                irstMeshRefs.current[geometryIndex] = node
+                if (node) node.layers.set(ASTEROID_IRST_OVERLAY_LAYER)
+              }}
+              args={[geometry, irstOverlayMaterial, instances.length]}
+              frustumCulled={false}
+              castShadow={false}
+              receiveShadow={false}
+            />
+          </group>
         )
       })}
+      {showColliderDebug &&
+        collisionInstances.map((inst, idx) => {
+          const geom = hullDebugGeometries[inst.modelIndex]
+          if (!geom) return null
+          return (
+            <mesh
+              key={`cel-collider-dbg-${celestial.id}-${idx}`}
+              geometry={geom}
+              material={asteroidColliderDebugMaterial}
+              position={inst.position}
+              rotation={inst.rotation}
+              scale={inst.scale}
+              frustumCulled={false}
+              renderOrder={1000}
+              ref={(m) => {
+                if (m) {
+                  m.layers.enable(0)
+                  m.layers.enable(2)
+                }
+              }}
+            />
+          )
+        })}
     </group>
   )
 }

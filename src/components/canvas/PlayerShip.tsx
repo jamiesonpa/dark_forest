@@ -31,6 +31,19 @@ const SHIELD_WIREFRAME_BASE_COLOR = new THREE.Color(0x66bbff)
 const SHIELD_VISIBILITY_EPSILON = 0.0005
 const SHIELD_SURFACE_BASE_EMISSIVE_INTENSITY = 0.7
 const SHIELD_WIREFRAME_BASE_EMISSIVE_INTENSITY = 1.5
+/** Layer 1: visible to IRST camera only (main camera uses 0 + 2). */
+const IRST_ONLY_LAYER = 1
+const IRST_THERMAL_WIREFRAME_OPACITY = 0.92
+const THERMAL_OUTLINE_TEMP_MIN = 220
+const THERMAL_OUTLINE_TEMP_MAX = 360
+const THERMAL_OUTLINE_EMISSIVE_MIN = 0.4
+const THERMAL_OUTLINE_EMISSIVE_MAX = 16
+/** Below this speed (m/s) counts as “still” for IRST hull glow. */
+const THERMAL_OUTLINE_STILL_SPEED_EPS = 0.35
+/** Still + no shields: emissive vs full-motion outline (lower = colder “dead ship” on IRST). */
+const THERMAL_OUTLINE_BARE_STILL_EMISSIVE_SCALE = 0.001
+/** Same state: wireframe opacity multiplier (stacks with emissive for a very faint trace). */
+const THERMAL_OUTLINE_BARE_STILL_OPACITY_SCALE = 0.14
 
 function shortestAngleDeltaDeg(fromDeg: number, toDeg: number) {
   return ((toDeg - fromDeg + 540) % 360) - 180
@@ -91,6 +104,7 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
   const warpDistortionMaterialRefs = useRef<Array<THREE.PointsMaterial | null>>([])
   const shieldWireframeMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null)
   const shieldSurfaceMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null)
+  const irstThermalOutlineMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null)
   const obj = useLoader(OBJLoader, RAVEN_OBJ)
   const hullTexture = useLoader(THREE.TextureLoader, RAVEN_TEX)
   const shipCenterOffset = useMemo<[number, number, number]>(() => {
@@ -277,6 +291,48 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
     overlay.name = 'player-ship-shield-wireframe'
     return overlay
   }, [centeredObj])
+
+  const irstThermalOutlineObj = useMemo(() => {
+    const overlay = centeredObj.clone(true)
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0xffffff,
+      emissiveIntensity: THERMAL_OUTLINE_EMISSIVE_MIN,
+      metalness: 0,
+      roughness: 1,
+      wireframe: true,
+      transparent: true,
+      opacity: IRST_THERMAL_WIREFRAME_OPACITY,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
+    overlay.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return
+      child.castShadow = false
+      child.receiveShadow = false
+      child.material = mat
+      child.renderOrder = 5
+      child.layers.set(IRST_ONLY_LAYER)
+    })
+    overlay.name = 'player-ship-irst-thermal-outline'
+    return overlay
+  }, [centeredObj])
+
+  useEffect(() => {
+    irstThermalOutlineObj.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+        irstThermalOutlineMaterialRef.current = child.material
+      }
+    })
+    return () => {
+      irstThermalOutlineMaterialRef.current?.dispose()
+      irstThermalOutlineMaterialRef.current = null
+    }
+  }, [irstThermalOutlineObj])
 
   useEffect(() => {
     shieldSurfaceObj.traverse((child) => {
@@ -690,6 +746,33 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
         : 0
     })
 
+    const gs = useGameStore.getState()
+    const showIrstThermal = gs.irstCameraOn && gs.ship.irstSpectrumMode === 'IR'
+    irstThermalOutlineObj.visible = showIrstThermal
+    if (irstThermalOutlineMaterialRef.current && showIrstThermal) {
+      const sensorsShip = isLocal ? gs.ship : ship
+      const thermal = sensorsShip.thermalSignature
+      const t = THREE.MathUtils.clamp(
+        (thermal - THERMAL_OUTLINE_TEMP_MIN) / (THERMAL_OUTLINE_TEMP_MAX - THERMAL_OUTLINE_TEMP_MIN),
+        0,
+        1
+      )
+      const baseEmissive = THREE.MathUtils.lerp(
+        THERMAL_OUTLINE_EMISSIVE_MIN,
+        THERMAL_OUTLINE_EMISSIVE_MAX,
+        t
+      )
+      const bareStill =
+        !sensorsShip.shieldsUp && sensorsShip.actualSpeed <= THERMAL_OUTLINE_STILL_SPEED_EPS
+      const mat = irstThermalOutlineMaterialRef.current
+      if (bareStill) {
+        mat.emissiveIntensity = baseEmissive * THERMAL_OUTLINE_BARE_STILL_EMISSIVE_SCALE
+        mat.opacity = IRST_THERMAL_WIREFRAME_OPACITY * THERMAL_OUTLINE_BARE_STILL_OPACITY_SCALE
+      } else {
+        mat.emissiveIntensity = baseEmissive
+        mat.opacity = IRST_THERMAL_WIREFRAME_OPACITY
+      }
+    }
   })
 
   useEffect(() => {
@@ -750,6 +833,7 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
       {isLocal && <WarpBubbleEffect ship={ship} phase={warpBubblePhase} />}
       <group position={visualOriginCorrection}>
         <primitive object={centeredObj} name={getPlayerHullObjectName(playerId)} scale={1} />
+        <primitive object={irstThermalOutlineObj} scale={1.005} renderOrder={5} />
         {ship.shieldsUp && (
           <>
             <primitive object={shieldSurfaceObj} scale={1.006} renderOrder={3} />

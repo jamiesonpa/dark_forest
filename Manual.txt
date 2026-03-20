@@ -3,10 +3,10 @@ Version: Living document (updated with gameplay changes)
 Last Updated: 2026-03-19
 
 Introduction
-Dark Forest is a multi-station ship operations game. Crew members can switch stations at any time, but the best results come from coordinated roles:
+Dark Forest is a multicrew ship combat simulator game. Crew members can switch stations at any time, but the best results come from coordinated roles:
 - Pilot controls ship motion, attitude, warp entry, and defensive systems.
 - EWO (Electronic Warfare Officer) manages sensors, contact tracking, lock management, and target data for the team.
-- WSO (Weapons and Systems Officer) is present as a station slot, with core gameplay systems still in progress.
+- WSO (Weapons and Systems Officer) manages IRST-based targeting, torpedoes, directed-energy firing workflow, and flare deployment controls.
 
 This manual documents controls and workflows that are currently implemented in the game build.
 
@@ -22,6 +22,7 @@ Station Switching
 Ship-Wide Quick Toggles
 - Backspace -> Toggle nav attitude mode (AA <-> DAC)
   - Only triggers when you are not typing in an input field.
+
 - Enter -> Activate MWD
   - Only triggers when you are not typing in an input field.
   - If MWD cannot activate (cooldown/capacitor/other gating), the request is ignored.
@@ -33,7 +34,7 @@ Role: Pilot
 Pilot Responsibilities
 - Fly and orient the ship.
 - Manage speed, dampeners, shields, MWD timing, and warp execution.
-- Keep the ship aligned with EW targeting and mission objectives.
+- Keep the ship aligned with EW/WS targeting and mission objectives.
 
 Pilot Keyboard Flight Controls
 - A / D -> Yaw command (bearing left/right)
@@ -59,9 +60,6 @@ Pilot HUD / Mouse Controls
 - Warp panel:
   - Set warp arrival distance with slider.
   - Press WARP button when ready.
-- Launch controls:
-  - LAUNCH fires a locked cylinder (requires at least one EW soft/hard lock).
-  - FLARE deploys flares.
 
 Pilot Operating Notes
 - In AA mode, ship tracks commanded attitude.
@@ -123,15 +121,55 @@ EWO Operating Notes
 Role: WSO (Weapons and Systems Officer)
 ========================================
 
-Current Status
-- WSO station is selectable (F3) and online.
-- Dedicated WSO gameplay systems and controls are not yet implemented in this build.
+WSO Responsibilities
+- Manage IRST camera setup and target tracking.
+- Load and launch torpedo tubes.
+- Operate directed energy weapon charging and fire timing.
+- Deploy countermeasures (flares) and monitor stores.
 
-Current WSO Responsibility
-- Monitor role handoff needs and be ready to assume pilot/EW duties when required.
+WSO Console Areas
+- IRST Targeting panel (left).
+- Torpedo Tubes and Torpedo Reserves.
+- Directed Energy Weapon panel.
+- Countermeasures panel.
 
-Planned Documentation Expansion
-- Add WSO subsystem controls and hotkeys as soon as the station receives interactive systems.
+WSO IRST Controls
+- IRST power can be toggled directly on the IRST display.
+- FWD button (hold) -> Slews IRST view back toward forward reference.
+- BHOT/WHOT button -> Toggles thermal polarity (available in IR spectrum mode).
+- IR/VIS button -> Toggles IRST spectrum mode.
+- STAB button -> Toggles stabilized tracking frame.
+- PT TRK button -> Attempts point track lock on hostile target near IRST boresight.
+  - Requires target within off-boresight and range constraints.
+
+WSO Torpedo Controls
+- Four tubes are available.
+- For each tube:
+  - Select type while tube is EMPTY (IR SEEKER, ACTIVE, SEMI ACTIVE).
+  - LOAD starts loading cycle.
+  - LAUNCH fires when tube is READY and at least one EW soft/hard lock exists.
+- Tube loading consumes reserve inventory for selected type.
+- Torpedo Reserves panel shows remaining rounds by type.
+
+WSO Directed Energy Weapon (DEW)
+- PWR ON/OFF controls panel power.
+- ARM/ARMED controls firing safety state.
+- CHARGE begins charge cycle; FIRE becomes available once charged and target is valid.
+- NO TGT indicates charge complete but no valid point-track target.
+- RST cancels/reset charge state.
+- Lens diagram supports drag-adjust focus alignment.
+  - Alt + mouse wheel over a lens adjusts its width (curvature / effective focal length).
+  - Focus % combines axial alignment (FOC vs target range) with beam spot size: vertical separation of the two ray traces where they meet the target range line (tighter = better).
+  - Better focus increases applied DEW damage.
+
+WSO Countermeasures
+- PWR ON/OFF controls countermeasures subsystem.
+- ARM/ARMED controls launch safety state.
+- FLARES selector chooses launch count (1-8, limited by remaining inventory).
+- PTN mode -> pattern launch.
+- SGL mode -> queued single launches at short interval.
+- FLR button executes flare launch.
+- CHAFF status is currently displayed as readout; active chaff deployment control is not yet implemented.
 
 ========================================
 Crew Coordination Checklist
@@ -140,12 +178,14 @@ Crew Coordination Checklist
 Startup Flow
 1) Pilot confirms dampener/nav mode baseline and propulsion readiness.
 2) EWO powers/configures scanners and establishes initial contact picture.
-3) Pilot and EWO agree on maneuver profile (AA vs DAC, EMCON posture, warp timing).
+3) WSO powers IRST/weapon subsystems and verifies point-track + tube/flare readiness.
+4) Crew agrees on maneuver profile (AA vs DAC), EMCON posture, and initial engagement plan.
 
 Combat / Contact Flow
 1) EWO identifies and locks contacts.
-2) Pilot keeps geometry favorable for sensors and launch opportunities.
-3) Pilot executes LAUNCH/FLARE timing based on EW lock quality and threat updates.
+2) WSO acquires PT track and prepares torpedo/DEW/countermeasure states.
+3) Pilot keeps geometry favorable for sensors and weapon employment.
+4) WSO executes torpedo, DEW, and flare timing based on lock quality and threat updates.
 
 ========================================
 Change Log Policy
@@ -160,7 +200,7 @@ Quick Start (First 60 Seconds)
 ========================================
 
 1) Press F1 (Pilot) and verify dampeners/nav mode baseline.
-2) Press F2 (EWO), power scanners, and build first contact picture.
-3) Coordinate heading/speed and EMCON posture between Pilot and EWO.
-4) Use Enter (MWD) and G/WARP only when capacitor/alignment conditions are met.
-5) If threat spikes, Pilot prioritizes maneuver + shields while EWO maintains lock quality.
+2) Press F2 (EWO), power scanners, and establish initial lock picture.
+3) Press F3 (WSO), power IRST, arm relevant weapon systems, and confirm flare count/mode.
+4) Coordinate heading/speed and EMCON posture between Pilot, EWO, and WSO.
+5) Use Enter (MWD) and G/WARP only when capacitor/alignment conditions are met; engage weapons only once lock/track quality is confirmed.

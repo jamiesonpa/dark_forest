@@ -4,6 +4,7 @@ import type {
   OrdnanceSnapshotMessage,
   ShipDamageMessage,
   WarpMessage,
+  WireLaunchedChaff,
   WireLaunchedCylinder,
   WireLaunchedFlare,
   WireOrdnanceSnapshot,
@@ -30,6 +31,7 @@ function emptyOrdnanceSnapshot(): WireOrdnanceSnapshot {
   return {
     launchedCylinders: [],
     launchedFlares: [],
+    launchedChaff: [],
     torpedoExplosions: [],
   }
 }
@@ -49,12 +51,16 @@ function toOrdnanceSnapshotFromMove(message: MoveMessage): WireOrdnanceSnapshot 
   const launchedFlares = asMessageArray<WireLaunchedFlare>(message.launchedFlares)
     .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
     .map((flare) => ({ ...flare }))
+  const launchedChaff = asMessageArray<WireLaunchedChaff>(message.launchedChaff)
+    .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
+    .map((piece) => ({ ...piece }))
   const torpedoExplosions = asMessageArray<WireTorpedoExplosion>(message.torpedoExplosions)
     .slice(0, MAX_ORDNANCE_ITEMS_PER_CATEGORY)
     .map((explosion) => ({ ...explosion }))
   return {
     launchedCylinders,
     launchedFlares,
+    launchedChaff,
     torpedoExplosions,
   }
 }

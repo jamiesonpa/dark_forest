@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
+import { getCelestialById } from '@/utils/systemData'
 
 const HEADING_TICK_SPACING_PX = 34
 const HEADING_TICK_RANGE = 14
@@ -83,6 +84,9 @@ function halfLineWidthPx(pitchDeg: number) {
 export function DacFlightHud() {
   const navAttitudeMode = useGameStore((s) => s.navAttitudeMode)
   const warpState = useGameStore((s) => s.warpState)
+  const warpAligned = useGameStore((s) => s.warpAligned)
+  const selectedWarpDestinationId = useGameStore((s) => s.selectedWarpDestinationId)
+  const starSystem = useGameStore((s) => s.starSystem)
   const shieldsUp = useGameStore((s) => s.ship.shieldsUp)
   const dampenersActive = useGameStore((s) => s.ship.dampenersActive)
   const actualHeading = useGameStore((s) => s.ship.actualHeading)
@@ -131,6 +135,11 @@ export function DacFlightHud() {
       z: dz / dt,
     })
   }, [navAttitudeMode, dampenersActive, position, actualSpeed])
+
+  const alignedWarpGridName = useMemo(() => {
+    if (warpState !== 'idle' || !warpAligned || !selectedWarpDestinationId) return null
+    return getCelestialById(selectedWarpDestinationId, starSystem)?.name ?? null
+  }, [selectedWarpDestinationId, starSystem, warpAligned, warpState])
 
   if (navAttitudeMode !== 'DAC') return null
 
@@ -229,6 +238,14 @@ export function DacFlightHud() {
         <span className="dac-flight-hud-center-dot" />
         <span className="dac-flight-hud-center-wing right" />
       </div>
+      {alignedWarpGridName ? (
+        <div
+          className="dac-flight-hud-warp-grid"
+          aria-label={`Warp-aligned celestial grid ${alignedWarpGridName}`}
+        >
+          <span className="dac-flight-hud-warp-grid-name">{alignedWarpGridName}</span>
+        </div>
+      ) : null}
       <div
         className={`dac-flight-hud-flight-path-marker ${showFlightPathMarker ? '' : 'is-hidden'}`.trim()}
         style={{

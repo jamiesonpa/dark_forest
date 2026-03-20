@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { useGameStore } from "@/state/gameStore";
 import { getCelestialById } from "@/utils/systemData";
 import { EWSystemMap } from "@/components/stations/EWSystemMap";
@@ -199,7 +199,15 @@ const noise = (x, t) => {
 };
 
 // Panel frame component
-const Panel = ({ title, children, style, className = "", headerRight = null, dimmed = false }) => (
+const Panel = ({
+  title,
+  children,
+  style,
+  className = "",
+  headerRight = null,
+  headerCenter = null,
+  dimmed = false,
+}) => (
   <div style={{
     background: BG_PANEL,
     border: `1px solid ${AMBER_DIM}`,
@@ -212,18 +220,41 @@ const Panel = ({ title, children, style, className = "", headerRight = null, dim
     <div style={{
       background: "rgba(255,176,0,0.06)",
       borderBottom: `1px solid ${AMBER_DIM}`,
-      padding: "4px 10px",
+      boxSizing: "border-box",
+      height: 28,
+      minHeight: 28,
+      maxHeight: 28,
+      overflow: "hidden",
+      padding: "0 10px",
       fontSize: 10,
       fontFamily: "'Consolas', 'Monaco', monospace",
       color: AMBER,
       letterSpacing: 3,
       textTransform: "uppercase",
-      display: "flex",
-      justifyContent: "space-between",
+      display: "grid",
+      gridTemplateColumns: "auto minmax(0, 1fr) auto",
       alignItems: "center",
+      columnGap: 8,
     }}>
-      <span>{title}</span>
-      {headerRight ?? <span style={{ color: AMBER_DIM, fontSize: 8 }}>■ ACTIVE</span>}
+      <span style={{ flexShrink: 0 }}>{title}</span>
+      {/* Middle column reserves space so centered controls never sit under the right column (fixes range slider hit-testing). */}
+      <div style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        minWidth: 0,
+        minHeight: 0,
+        maxHeight: 28,
+        overflow: "hidden",
+        gap: 6,
+        letterSpacing: 0,
+        textTransform: "none",
+      }}>
+        {headerCenter}
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", flexShrink: 0 }}>
+        {headerRight ?? <span style={{ color: AMBER_DIM, fontSize: 8 }}>■ ACTIVE</span>}
+      </div>
     </div>
     <div style={{
       flex: 1,
@@ -238,6 +269,60 @@ const Panel = ({ title, children, style, className = "", headerRight = null, dim
     </div>
   </div>
 );
+
+/** Power / arm header controls — matches WS officer console weapons styling */
+const EwSysPowerArmHeader = ({
+  font,
+  isPowered,
+  isArmed,
+  onTogglePower,
+  onToggleArmed,
+}) => {
+  const pwrGreen = "#00ff64";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <button
+        type="button"
+        onClick={onTogglePower}
+        style={{
+          minWidth: 42,
+          height: 20,
+          border: `1px solid ${isPowered ? pwrGreen : AMBER_DIM}`,
+          background: isPowered ? "rgba(0,255,100,0.14)" : "rgba(80,60,20,0.2)",
+          color: isPowered ? "#9dffc4" : AMBER_DIM,
+          fontFamily: font,
+          fontSize: 9,
+          borderRadius: 2,
+          cursor: "pointer",
+          letterSpacing: 1,
+        }}
+      >
+        {isPowered ? "PWR ON" : "PWR OFF"}
+      </button>
+      <button
+        type="button"
+        onClick={onToggleArmed}
+        disabled={!isPowered}
+        style={{
+          minWidth: 44,
+          height: 20,
+          border: `1px solid ${isArmed ? AMBER : AMBER_GLOW}`,
+          background: isArmed ? "rgba(255,176,0,0.15)" : "rgba(255,176,0,0.18)",
+          color: isArmed ? AMBER_GLOW : "#f2d38a",
+          fontFamily: font,
+          fontSize: 9,
+          borderRadius: 2,
+          cursor: isPowered ? "pointer" : "not-allowed",
+          letterSpacing: 1,
+          boxShadow: isArmed ? "none" : "0 0 4px rgba(255,176,0,0.45)",
+          opacity: isPowered ? 1 : 0.45,
+        }}
+      >
+        {isArmed ? "ARMED" : "ARM"}
+      </button>
+    </div>
+  );
+};
 
 // Waterfall Display
 const WaterfallDisplay = ({ contacts, time, shipHeading }) => {
@@ -2878,6 +2963,377 @@ const EwRwr = () => {
   );
 };
 
+// ─── RWCA (Remote Warp Core Attenuator) ────────────────────────────
+const RWCA_HARMONICS = 2;
+const RWCA_COEFFS = RWCA_HARMONICS * 2;
+const RWCA_MIN_RANGE_KM = 10;
+const RWCA_MAX_RANGE_KM = 50;
+const RWCA_MATCH_THRESHOLD = 0.8;
+/** Peak-to-peak waveform extent ≤ this fraction of canvas height (centered). */
+const RWCA_WAVEFORM_Y_MAX = 0.75;
+/** Horizontal scroll speed (rad/s × EWConsole `time`, ~seconds). Pattern moves left → right. */
+const RWCA_WAVEFORM_SCROLL_RADS_PER_SEC = 4.4;
+const RWCA_LABELS = ["C1", "S1", "C2", "S2"];
+const RWCA_FONT = "'Consolas', 'Monaco', monospace";
+
+function rwcaHash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return h;
+}
+
+function rwcaSeeded(seed) {
+  const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function rwcaGenerateEnemyCoeffs(shipId) {
+  const h = rwcaHash(shipId);
+  const raw = [];
+  for (let i = 0; i < RWCA_COEFFS; i++) {
+    raw.push(rwcaSeeded(h * 0.00137 + i * 173.3) * 2 - 1);
+  }
+  const energy = raw.reduce((s, c) => s + c * c, 0);
+  const scale = energy > 0 ? 1.2 / Math.sqrt(energy) : 1;
+  return raw.map(c => +(c * scale).toFixed(3));
+}
+
+function rwcaEvalWaveform(coeffs, x) {
+  let y = 0;
+  for (let k = 0; k < RWCA_HARMONICS; k++) {
+    y += coeffs[k * 2] * Math.cos((k + 1) * x);
+    y += coeffs[k * 2 + 1] * Math.sin((k + 1) * x);
+  }
+  return y;
+}
+
+function rwcaComputeMatch(enemy, player) {
+  let err = 0, energy = 0;
+  for (let i = 0; i < RWCA_COEFFS; i++) {
+    const d = player[i] - enemy[i];
+    err += d * d;
+    energy += enemy[i] * enemy[i];
+  }
+  if (energy === 0) return 0;
+  return Math.max(0, Math.min(1, 1 - err / energy));
+}
+
+const RWCAPanel = ({ contacts, lockState, time, power, rangeKm, rwcaPowered }) => {
+  const [playerCoeffs, setPlayerCoeffs] = useState(() => new Array(RWCA_COEFFS).fill(0));
+  const canvasRef = useRef(null);
+  const waveformWrapRef = useRef(null);
+  const [canvasDims, setCanvasDims] = useState({ w: 320, h: 160 });
+  const prevTargetRef = useRef(null);
+
+  const lockedId = useMemo(() => {
+    const hard = Object.keys(lockState).find(id => lockState[id] === "hard");
+    if (hard) return hard;
+    return Object.keys(lockState).find(id => lockState[id] === "soft") || null;
+  }, [lockState]);
+
+  const targetContact = useMemo(() => {
+    if (!lockedId) return null;
+    return contacts.find(c => c.id === lockedId) || null;
+  }, [contacts, lockedId]);
+
+  const inRange = targetContact ? (targetContact.range / 1000) <= rangeKm : false;
+
+  const enemyCoeffs = useMemo(() => {
+    if (!lockedId) return null;
+    return rwcaGenerateEnemyCoeffs(lockedId);
+  }, [lockedId]);
+
+  useEffect(() => {
+    if (lockedId !== prevTargetRef.current) {
+      setPlayerCoeffs(new Array(RWCA_COEFFS).fill(0));
+      prevTargetRef.current = lockedId;
+    }
+  }, [lockedId]);
+
+  const match = useMemo(() => {
+    if (!enemyCoeffs) return 0;
+    return rwcaComputeMatch(enemyCoeffs, playerCoeffs);
+  }, [enemyCoeffs, playerCoeffs]);
+
+  const isLocked = match >= RWCA_MATCH_THRESHOLD && inRange;
+
+  useLayoutEffect(() => {
+    const el = waveformWrapRef.current;
+    if (!el) return;
+    let raf = 0;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      const w = Math.max(48, Math.floor(r.width));
+      const h = Math.max(48, Math.floor(r.height));
+      setCanvasDims((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    });
+    ro.observe(el);
+    measure();
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = typeof window !== "undefined" ? Math.min(2.5, window.devicePixelRatio || 1) : 1;
+    const W = canvasDims.w;
+    const H = canvasDims.h;
+    const bufW = Math.max(1, Math.round(W * dpr));
+    const bufH = Math.max(1, Math.round(H * dpr));
+    if (canvas.width !== bufW || canvas.height !== bufH) {
+      canvas.width = bufW;
+      canvas.height = bufH;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.globalAlpha = 1;
+    const midY = H / 2;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = BG_SCREEN;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = GRID_COLOR;
+    ctx.lineWidth = 1 / dpr;
+    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+    for (let i = 1; i < 4; i++) {
+      ctx.beginPath(); ctx.moveTo(i * W / 4, 0); ctx.lineTo(i * W / 4, H); ctx.stroke();
+    }
+    ctx.strokeStyle = GRID_COLOR_BRIGHT;
+    ctx.beginPath(); ctx.moveTo(0, H * 0.25); ctx.lineTo(W, H * 0.25); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, H * 0.75); ctx.lineTo(W, H * 0.75); ctx.stroke();
+
+    if (!rwcaPowered) {
+      ctx.fillStyle = AMBER_DIM;
+      ctx.font = `600 12px ${RWCA_FONT}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("POWER OFF", W / 2, midY);
+      return;
+    }
+
+    if (!enemyCoeffs) {
+      ctx.fillStyle = AMBER_DIM;
+      ctx.font = `600 12px ${RWCA_FONT}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("NO TARGET LOCKED", W / 2, midY);
+      return;
+    }
+
+    const steps = Math.max(2, Math.ceil(W));
+    const hasInput = playerCoeffs.some(c => c !== 0);
+    const scrollPhase = time * RWCA_WAVEFORM_SCROLL_RADS_PER_SEC;
+    const phaseAtPx = (px) => (px / W) * Math.PI * 2 - scrollPhase;
+
+    let vMin = Infinity;
+    let vMax = -Infinity;
+    for (let i = 0; i <= steps; i++) {
+      const px = (i / steps) * W;
+      const x = phaseAtPx(px);
+      const noiseVal = Math.sin(x * 7.1 + px * 0.08 + time * 4) * 0.015;
+      const ye = rwcaEvalWaveform(enemyCoeffs, x) + noiseVal;
+      vMin = Math.min(vMin, ye);
+      vMax = Math.max(vMax, ye);
+      if (hasInput) {
+        const yp = rwcaEvalWaveform(playerCoeffs, x);
+        vMin = Math.min(vMin, yp);
+        vMax = Math.max(vMax, yp);
+      }
+    }
+    const span = Math.max(vMax - vMin, 1e-6);
+    const vMean = (vMin + vMax) / 2;
+    const scale = (H * RWCA_WAVEFORM_Y_MAX) / span;
+
+    ctx.strokeStyle = AMBER;
+    ctx.lineWidth = 1.6;
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    for (let i = 0; i <= steps; i++) {
+      const px = (i / steps) * W;
+      const x = phaseAtPx(px);
+      const noiseVal = Math.sin(x * 7.1 + px * 0.08 + time * 4) * 0.015;
+      const y = rwcaEvalWaveform(enemyCoeffs, x) + noiseVal;
+      const cy = midY - (y - vMean) * scale;
+      if (i === 0) ctx.moveTo(px, cy); else ctx.lineTo(px, cy);
+    }
+    ctx.stroke();
+
+    if (hasInput) {
+      ctx.strokeStyle = "#00ff64";
+      ctx.lineWidth = 1.2;
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        const px = (i / steps) * W;
+        const x = phaseAtPx(px);
+        const y = rwcaEvalWaveform(playerCoeffs, x);
+        const cy = midY - (y - vMean) * scale;
+        if (i === 0) ctx.moveTo(px, cy); else ctx.lineTo(px, cy);
+      }
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.textBaseline = "alphabetic";
+    const matchPct = (match * 100).toFixed(0);
+    const matchColor = match >= RWCA_MATCH_THRESHOLD ? "#00ff64" : match >= 0.5 ? AMBER : AMBER_DIM;
+    ctx.fillStyle = matchColor;
+    ctx.font = `bold 11px ${RWCA_FONT}`;
+    ctx.textAlign = "right";
+    ctx.fillText(`${matchPct}%`, W - 4, 12);
+
+    if (isLocked) {
+      ctx.fillStyle = "#00ff64";
+      ctx.font = `bold 10px ${RWCA_FONT}`;
+      ctx.textAlign = "left";
+      ctx.fillText("\u29BF ATTENUATING", 4, 12);
+    } else if (targetContact && !inRange) {
+      ctx.fillStyle = RED_ALERT;
+      ctx.font = `9px ${RWCA_FONT}`;
+      ctx.textAlign = "left";
+      ctx.fillText("OUT OF RANGE", 4, 12);
+    }
+
+    if (targetContact) {
+      ctx.fillStyle = AMBER_DIM;
+      ctx.font = `8px ${RWCA_FONT}`;
+      ctx.textAlign = "left";
+      ctx.fillText(`TGT: ${lockedId}  ${(targetContact.range / 1000).toFixed(1)} km`, 4, H - 4);
+    }
+  }, [canvasDims, rwcaPowered, enemyCoeffs, playerCoeffs, match, isLocked, inRange, targetContact, time, lockedId]);
+
+  const updateCoeff = useCallback((idx, value) => {
+    setPlayerCoeffs(prev => { const n = [...prev]; n[idx] = value; return n; });
+  }, []);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "row", flex: 1, minHeight: 0, gap: 0 }}>
+      {/* Waveform display — left 2/3 */}
+      <div style={{ flex: 2, minWidth: 0, display: "flex", flexDirection: "column", padding: "4px 0 4px 4px" }}>
+        <div
+          ref={waveformWrapRef}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            position: "relative",
+            borderRadius: 1,
+            border: `1px solid ${AMBER_DIM}44`,
+            overflow: "hidden",
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            style={{
+              display: "block",
+              width: "100%",
+              height: "100%",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Vertical sliders — right 1/3 */}
+      <div style={{
+        flex: 1, minWidth: 0, display: "flex", flexDirection: "row",
+        alignItems: "stretch", justifyContent: "center",
+        gap: 2,
+        paddingTop: 12,
+        paddingBottom: 12,
+        paddingLeft: 2,
+        paddingRight: 4,
+        borderLeft: `1px solid ${AMBER_DIM}33`,
+        marginLeft: 4,
+        boxSizing: "border-box",
+      }}>
+        {RWCA_LABELS.map((label, idx) => {
+          const isSin = idx % 2 === 1;
+          const accent = isSin ? "#4488ff" : AMBER;
+          return (
+            <div key={label} style={{
+              display: "flex", flexDirection: "column", alignItems: "center",
+              flex: 1, minWidth: 0, gap: 4,
+            }}>
+              <span style={{
+                fontSize: 10,
+                fontWeight: 700,
+                fontFamily: RWCA_FONT,
+                letterSpacing: 0.04,
+                lineHeight: 1,
+                color: isSin ? "#66aaff" : AMBER_GLOW,
+                paddingTop: 2,
+                flexShrink: 0,
+              }}>
+                {label}
+              </span>
+              {/* minHeight keeps track from shrinking when outer vertical padding increases */}
+              <div style={{
+                flex: 1,
+                minHeight: 52,
+                minWidth: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+              }}>
+                {/* Track height = 1/1.5 of column; column flex centers this block on Y */}
+                <div style={{
+                  height: "calc(100% / 1.5)",
+                  minHeight: 32,
+                  maxHeight: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}>
+                  <input
+                    type="range" min={-1} max={1} step={0.02}
+                    value={playerCoeffs[idx]}
+                    onChange={e => updateCoeff(idx, +e.target.value)}
+                    style={{
+                      writingMode: "vertical-lr",
+                      direction: "rtl",
+                      appearance: "slider-vertical",
+                      width: 14,
+                      height: "100%",
+                      minHeight: 0,
+                      accentColor: accent,
+                      cursor: "pointer",
+                      margin: 0,
+                      padding: 0,
+                    }}
+                  />
+                </div>
+              </div>
+              <span style={{
+                fontSize: 10,
+                fontWeight: 700,
+                fontFamily: RWCA_FONT,
+                lineHeight: 1,
+                color: AMBER_GLOW,
+                whiteSpace: "nowrap",
+                paddingBottom: 2,
+                flexShrink: 0,
+              }}>
+                {playerCoeffs[idx] >= 0 ? "+" : ""}{playerCoeffs[idx].toFixed(1)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 // Main Component
 export default function EWConsole() {
   const [time, setTime] = useState(0);
@@ -2923,6 +3379,12 @@ export default function EWConsole() {
   const [lowerScannerResetToken, setLowerScannerResetToken] = useState(0);
   const [upperScannerType, setUpperScannerType] = useState("grav");
   const [lowerScannerType, setLowerScannerType] = useState("ir");
+  const [rwcaPowered, setRwcaPowered] = useState(false);
+  const [rwcaArmed, setRwcaArmed] = useState(false);
+  const [rwcaPower, setRwcaPower] = useState(0.2);
+  const rwcaRangeKm = RWCA_MIN_RANGE_KM + rwcaPower * (RWCA_MAX_RANGE_KM - RWCA_MIN_RANGE_KM);
+  const [rdnePowered, setRdnePowered] = useState(false);
+  const [rdneArmed, setRdneArmed] = useState(false);
   const [staleContacts, setStaleContacts] = useState({});
   const [classifierMenu, setClassifierMenu] = useState(null);
   const radarWasOnRef = useRef(false);
@@ -2949,6 +3411,14 @@ export default function EWConsole() {
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, []);
+
+  useEffect(() => {
+    if (!rwcaPowered) setRwcaArmed(false);
+  }, [rwcaPowered]);
+
+  useEffect(() => {
+    if (!rdnePowered) setRdneArmed(false);
+  }, [rdnePowered]);
 
   const hardLockedId = Object.keys(lockState).find(id => lockState[id] === "hard") || null;
   const effectiveRadarMode = hardLockedId ? "STT" : radarMode;
@@ -3057,6 +3527,9 @@ export default function EWConsole() {
     },
   ];
 
+  /** Matches grav / IR scanner `Panel` height so auxiliary strips align across the console. */
+  const scannerPanelHeightPx = 243;
+
   return (
     <div style={{
       width: "100%",
@@ -3100,7 +3573,7 @@ export default function EWConsole() {
 
       {/* Main layout */}
       <div style={{ display: "flex", gap: 6, flex: 1, minHeight: 0, alignItems: "stretch" }}>
-        <div style={{ flex: "0 0 36%", display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+        <div style={{ flex: "0 0 36%", display: "flex", flexDirection: "column", gap: 6, minWidth: 0, minHeight: 0 }}>
           {scannerSlots.map((slot) => {
             const scannerAccent = slot.type === "ir" ? IR_ORANGE : GRAV_CYAN;
             const scannerAccentDim = slot.type === "ir" ? IR_ORANGE_DIM : GRAV_CYAN_DIM;
@@ -3110,7 +3583,7 @@ export default function EWConsole() {
               <Panel
                 key={slot.id}
                 title={scannerLabel}
-                style={{ height: 243, minHeight: 243, flex: "0 0 auto" }}
+                style={{ height: scannerPanelHeightPx, minHeight: scannerPanelHeightPx, flex: "0 0 auto" }}
                 dimmed={!slot.isOn}
                 headerRight={(
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -3214,16 +3687,173 @@ export default function EWConsole() {
               </Panel>
             );
           })}
+          <Panel
+            title="Reserved"
+            style={{ flex: 1, minHeight: 48, minWidth: 0 }}
+            headerRight={<span style={{ color: AMBER_DIM, fontSize: 8 }}>—</span>}
+          >
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                margin: 6,
+                borderRadius: 2,
+                border: `1px dashed ${AMBER_DIM}44`,
+                background: "rgba(8,8,8,0.35)",
+              }}
+              aria-label="Reserved EW console slot"
+            />
+          </Panel>
         </div>
 
-        <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
+        <div style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+        }}>
           <Panel
             title="Multi-Function Display"
-            style={{ flex: 1, minHeight: 160 }}
+            style={{ flex: 1, minHeight: 0 }}
             headerRight={<span style={{ color: AMBER_DIM, fontSize: 8 }}>MAP ONLINE</span>}
           >
             <EWSystemMap time={time} />
           </Panel>
+          <div style={{
+            display: "flex",
+            flexDirection: "row",
+            gap: 6,
+            height: scannerPanelHeightPx,
+            minHeight: scannerPanelHeightPx,
+            flex: "0 0 auto",
+            width: "100%",
+            minWidth: 0,
+          }}>
+            <div
+              style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}
+              title="Remote Warp Core Attenuator"
+            >
+              <Panel
+                title="RWCA"
+                style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+                headerCenter={rwcaPowered ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      touchAction: "none",
+                      height: 28,
+                      maxHeight: 28,
+                      boxSizing: "border-box",
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <span style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      fontFamily: font,
+                      whiteSpace: "nowrap",
+                      color: AMBER_GLOW,
+                      letterSpacing: "0.02em",
+                      lineHeight: 1,
+                      textShadow: "0 0 6px rgba(255, 204, 68, 0.35)",
+                    }}>
+                      {rwcaRangeKm.toFixed(0)}
+                      <span style={{ fontSize: 8, fontWeight: 600, color: AMBER, marginLeft: 3, opacity: 0.92 }}>
+                        km
+                      </span>
+                    </span>
+                    <input
+                      type="range" min={0} max={1} step={0.01} value={rwcaPower}
+                      onChange={e => setRwcaPower(+e.target.value)}
+                      style={{
+                        width: 96,
+                        minWidth: 96,
+                        accentColor: AMBER,
+                        height: 14,
+                        margin: 0,
+                        cursor: "pointer",
+                        touchAction: "none",
+                      }}
+                    />
+                  </div>
+                ) : null}
+                headerRight={(
+                  <EwSysPowerArmHeader
+                    font={font}
+                    isPowered={rwcaPowered}
+                    isArmed={rwcaArmed}
+                    onTogglePower={() => setRwcaPowered((p) => !p)}
+                    onToggleArmed={() => setRwcaArmed((a) => !a)}
+                  />
+                )}
+              >
+                <div style={{
+                  flex: 1,
+                  minHeight: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  opacity: rwcaPowered && rwcaArmed ? 1 : 0.4,
+                  filter: rwcaPowered && rwcaArmed ? "none" : "grayscale(1)",
+                  pointerEvents: rwcaPowered && rwcaArmed ? "auto" : "none",
+                }}
+                >
+                  <RWCAPanel
+                    contacts={contacts}
+                    lockState={lockState}
+                    time={time}
+                    power={rwcaPower}
+                    rangeKm={rwcaRangeKm}
+                    rwcaPowered={rwcaPowered}
+                  />
+                </div>
+              </Panel>
+            </div>
+            <div
+              style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}
+              title="Relativistic Drag Net Emitter"
+            >
+              <Panel
+                title="RDNE"
+                style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+                headerRight={(
+                  <EwSysPowerArmHeader
+                    font={font}
+                    isPowered={rdnePowered}
+                    isArmed={rdneArmed}
+                    onTogglePower={() => setRdnePowered((p) => !p)}
+                    onToggleArmed={() => setRdneArmed((a) => !a)}
+                  />
+                )}
+              >
+                <div style={{
+                  flex: 1,
+                  minHeight: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  opacity: rdnePowered && rdneArmed ? 1 : 0.4,
+                  filter: rdnePowered && rdneArmed ? "none" : "grayscale(1)",
+                  pointerEvents: rdnePowered && rdneArmed ? "auto" : "none",
+                }}
+                >
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      margin: 6,
+                      borderRadius: 2,
+                      border: `1px dashed ${AMBER_DIM}44`,
+                      background: "rgba(8,8,8,0.35)",
+                    }}
+                    aria-label="RDNE — Relativistic Drag Net Emitter (placeholder)"
+                  />
+                </div>
+              </Panel>
+            </div>
+          </div>
         </div>
       </div>
 

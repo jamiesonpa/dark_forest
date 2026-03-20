@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
 import { WORLD_UNITS_PER_AU } from '@/systems/warp/navigationMath'
@@ -58,14 +58,14 @@ function bodyColor() {
 }
 
 export function PlanetMoonSystem() {
-  const { camera } = useThree()
   const starSystem = useGameStore((s) => s.starSystem)
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const planetTextureRandomizeNonce = useGameStore((s) => s.planetTextureRandomizeNonce)
 
   const bodyRefs = useRef<Record<string, THREE.Mesh | null>>({})
   const bodyScaleRef = useRef<Record<string, number>>({})
-  const camPos = useMemo(() => new THREE.Vector3(), [])
+  /** Anchor distant shells from ship world position so IRST (and other cameras) see a stable bearing; orbit cam position must not move the body. */
+  const anchorOrigin = useMemo(() => new THREE.Vector3(), [])
   const direction = useMemo(() => new THREE.Vector3(), [])
 
   const distantBodyGeometry = useMemo(() => new THREE.SphereGeometry(1, 48, 32), [])
@@ -174,7 +174,7 @@ export function PlanetMoonSystem() {
       }
     }
 
-    camera.getWorldPosition(camPos)
+    anchorOrigin.set(renderShipWorld[0], renderShipWorld[1], renderShipWorld[2])
     const scaleLerp = THREE.MathUtils.clamp(dt * SCALE_SMOOTH_SPEED, 0, 1)
     const visibleNow = new Set<string>()
 
@@ -229,7 +229,7 @@ export function PlanetMoonSystem() {
         isCurrentCelestial && body.type === 'planet'
           ? DISTANT_BODY_ANCHOR_DISTANCE + DISTANT_BODY_MAX_SCALE + CURRENT_PLANET_ANCHOR_CLEARANCE
           : DISTANT_BODY_ANCHOR_DISTANCE
-      mesh.position.copy(camPos).addScaledVector(direction, anchorDistance)
+      mesh.position.copy(anchorOrigin).addScaledVector(direction, anchorDistance)
 
       const projectedDiameterAtAnchor =
         (body.radius * 2 * anchorDistance) / Math.max(distanceForScale, 1)

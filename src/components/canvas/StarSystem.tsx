@@ -1,4 +1,5 @@
 import { Skybox } from './Skybox'
+import { CollisionHullBootstrap } from './CollisionHullBootstrap'
 import { Grid } from './Grid'
 import { OrbitCameraController } from './OrbitCameraController'
 import { IRSTCamera } from './IRSTCamera'
@@ -17,6 +18,7 @@ export function StarSystem() {
 
   return (
     <>
+      <CollisionHullBootstrap />
       <Skybox />
       <ambientLight intensity={0.08} />
       <SunSystem />

@@ -114,6 +114,7 @@ class ColyseusMultiplayerClient {
       revealedCelestialIds: update.revealedCelestialIds,
       launchedCylinders: update.launchedCylinders,
       launchedFlares: update.launchedFlares,
+      launchedChaff: update.launchedChaff,
       torpedoExplosions: update.torpedoExplosions,
       inWarpTransit: update.inWarpTransit,
       targetSpeed: update.targetSpeed,
