@@ -2,6 +2,9 @@ import type { GameStore } from '@/state/types'
 import type { RWRContact } from '@/types/game'
 import { clamp } from '@/systems/simulation/lib/math'
 import { B_SCOPE_AZ_LIMIT_DEG } from '@/systems/ew/bScopeConstants'
+import { isPlayerInNpcBScopeRadarCone } from '@/systems/ew/npcBScopeTargeting'
+
+const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 
 export function updateNpcElectronicWarfare(
   state: GameStore,
@@ -9,10 +12,10 @@ export function updateNpcElectronicWarfare(
   playerHeading: number,
   _dt: number
 ) {
-  const localId = state.localPlayerId
+  const localId = state.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
   const shipsById = state.shipsById
-  const npcShips = state.npcShips
   const [playerX, , playerZ] = playerPosition
+  const npcShips = state.npcShips
   const ewJammers = state.ewJammers
   const lockState = state.ewLockState
 
@@ -26,13 +29,32 @@ export function updateNpcElectronicWarfare(
 
     const npcConfig = npcShips[id]
     const radarMode = npcConfig?.radarMode ?? 'off'
+    const radarPowerPct = npcConfig?.radarPower ?? 0
+
+    let effectiveHardLock = npcConfig?.hardLockLocalPlayer ?? false
+    if (effectiveHardLock && npcConfig) {
+      const keepLock =
+        radarMode !== 'off'
+        && radarPowerPct > 0
+        && isPlayerInNpcBScopeRadarCone({
+          npcPosition: ship.position,
+          npcHeadingDeg: ship.actualHeading,
+          npcInclinationDeg: ship.actualInclination,
+          playerPosition,
+          radarPowerPct,
+        })
+      if (!keepLock) {
+        state.setNpcShipConfig(id, { hardLockLocalPlayer: false })
+        effectiveHardLock = false
+      }
+    }
 
     const dx = ship.position[0] - playerX
     const dz = ship.position[2] - playerZ
     const range = Math.sqrt(dx * dx + dz * dz)
     const bearing = ((Math.atan2(-dx, dz) * 180) / Math.PI + 360) % 360
 
-    if (radarMode === 'stt' || radarMode === 'scan') {
+    if ((radarMode === 'stt' || radarMode === 'scan') && radarPowerPct > 0) {
       const enemyFreq = radarMode === 'stt' ? 0.48 : 0.42
       const rangeKm = range / 1000
 
@@ -56,7 +78,8 @@ export function updateNpcElectronicWarfare(
         totalJamPower += effectiveness
       }
 
-      const jammed = totalJamPower > lockStrength && radarMode === 'stt'
+      const hasDebugHardLock = effectiveHardLock
+      const jammed = totalJamPower > lockStrength && (radarMode === 'stt' || hasDebugHardLock)
       const effectiveRadarMode = jammed ? 'scan' : radarMode
 
       if (jammed && npcConfig) {
@@ -68,15 +91,18 @@ export function updateNpcElectronicWarfare(
         range
       ) * 180 / Math.PI
 
+      const sttLocked = !jammed && (effectiveRadarMode === 'stt' || hasDebugHardLock)
+      const powerGain = 0.35 + (radarPowerPct / 100) * 0.65
+
       rwrContacts.push({
         id,
-        symbol: effectiveRadarMode === 'stt' ? 'S' : '2',
+        symbol: sttLocked ? 'S' : '2',
         bearing,
         relativeElevation: relElevation,
-        priority: effectiveRadarMode === 'stt' ? 'critical' : 'high',
+        priority: sttLocked ? 'critical' : 'high',
         newContact: false,
-        signalStrength: clamp(1 - rangeKm / 200, 0.1, 1),
-        sttLock: effectiveRadarMode === 'stt',
+        signalStrength: clamp((1 - rangeKm / 200) * powerGain, 0.1, 1),
+        sttLock: sttLocked,
       })
     }
 

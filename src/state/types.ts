@@ -66,6 +66,10 @@ export interface NpcShipConfig {
   mwdActive: boolean
   shieldsUp: boolean
   radarMode: NpcRadarMode
+  /** 0–100; scales B-scope detection range like the player EW radar power slider. */
+  radarPower: number
+  /** Debug / NPC aggressor: STT-style lock on the local player while geometry allows (see simulation). */
+  hardLockLocalPlayer: boolean
   orbitCenter: [number, number, number]
   orbitRadius: number
 }
@@ -102,6 +106,8 @@ export interface EwGravAnalysisResult {
   clarity: number
 }
 
+export type EwRadarTrackMode = 'TWS' | 'STT'
+
 export type NavAttitudeMode = 'AA' | 'DAC'
 
 export interface LaunchedCylinder {
@@ -114,6 +120,8 @@ export interface LaunchedCylinder {
   direction: [number, number, number]
   targetLockId: string | null
   flightTimeSeconds: number
+  /** Ship that launched this torpedo (local / NPC / remote id). */
+  launchedByShipId?: string | null
   /** IR seeker: home on IRST point-track `targetLockId`; if lock breaks, chase LOS from launcher IRST. */
   guidance?: 'radar' | 'ir_seeker'
 }
@@ -185,6 +193,8 @@ export interface GameStore {
   orientDebugEnabled: boolean
   showIRSTCone: boolean
   showBScopeRadarCone: boolean
+  bScopeViewMinDeg: number
+  bScopeViewMaxDeg: number
   showColliderDebug: boolean
   unlimitAaOrbitZoomOut: boolean
   showCelestialGridCenterMarker: boolean
@@ -216,10 +226,20 @@ export interface GameStore {
   ewRadarOn: boolean
   ewRadarMode: string
   ewRadarPower: number
+  /** Knob / selector 0…1 (X-band); not necessarily on-air until SET. */
   ewRadarFreq: number
+  /** Last frequency committed with SET; drives detection / transmit model. */
+  ewRadarFreqCommitted: number
   ewRadarPRF: string
+  ewRadarTrackMode: EwRadarTrackMode
   ewUpperScannerOn: boolean
   ewLowerScannerOn: boolean
+  /** EW / pilot shared RWR receiver power. */
+  ewRwrPowered: boolean
+  /** RWR alert audio gain 0…1 (EW + pilot). */
+  ewRwrVolume: number
+  /** When true, RWR alert audio is silent but volume slider value is preserved. */
+  ewRwrMuted: boolean
   irstCameraOn: boolean
   ewRdneFieldEffect: EwRdneFieldEffect | null
   /** Per-ship accumulated velocity from RDNE forces (m/s in world space). */
@@ -233,6 +253,9 @@ export interface GameStore {
   setEwJammers: (jammers: EwJammerState[]) => void
   setEwUpperScannerOn: (on: boolean) => void
   setEwLowerScannerOn: (on: boolean) => void
+  setEwRwrPowered: (on: boolean) => void
+  setEwRwrVolume: (volume: number) => void
+  setEwRwrMuted: (muted: boolean) => void
   setIrstCameraOn: (on: boolean) => void
   startEwGravAnalysis: (session: EwGravAnalysisSession) => void
   completeEwGravAnalysis: () => void
@@ -241,7 +264,8 @@ export interface GameStore {
   setEwRevealedCelestialIds: (celestialIds: string[]) => void
   setEwLockState: (updater: (prev: Record<string, 'soft' | 'hard'>) => Record<string, 'soft' | 'hard'>) => void
   setEwIffState: (updater: (prev: Record<string, string>) => Record<string, string>) => void
-  setEwRadar: (partial: Partial<{ radarOn: boolean; radarMode: string; radarPower: number; radarFreq: number; radarPRF: string }>) => void
+  setEwRadarTrackMode: (mode: EwRadarTrackMode) => void
+  setEwRadar: (partial: Partial<{ radarOn: boolean; radarMode: string; radarPower: number; radarFreq: number; radarFreqCommitted: number; radarPRF: string }>) => void
   setRwrContacts: (contacts: RWRContact[]) => void
   setStarSystemSnapshot: (snapshot: StarSystemSnapshot) => void
   setCurrentCelestial: (id: string) => void
@@ -249,6 +273,7 @@ export interface GameStore {
   setOrientDebugEnabled: (enabled: boolean) => void
   setShowIRSTCone: (enabled: boolean) => void
   setShowBScopeRadarCone: (enabled: boolean) => void
+  setBScopeView: (minDeg: number, maxDeg: number) => void
   setShowColliderDebug: (enabled: boolean) => void
   setUnlimitAaOrbitZoomOut: (enabled: boolean) => void
   setShowCelestialGridCenterMarker: (enabled: boolean) => void
@@ -320,6 +345,10 @@ export interface GameStore {
   removeNpcShip: (id: string) => void
   clearNpcShips: () => void
   setNpcShipConfig: (id: string, partial: Partial<NpcShipConfig>) => void
+  /** If the local player is in this NPC's B-scope cone (radar on, power > 0), sets `hardLockLocalPlayer`. */
+  attemptNpcHardLockLocalPlayer: (npcId: string) => boolean
+  /** Fire a radar-guided test torpedo from the NPC at the local player; requires `hardLockLocalPlayer`. */
+  launchNpcTorpedoAtLocalPlayer: (npcId: string) => boolean
   advanceNpcShips: (deltaSeconds: number) => void
   setPlayerShipBoundingLength: (length: number) => void
   setCountermeasuresPowered: (powered: boolean) => void

@@ -1,13 +1,14 @@
 import type { StateCreator } from 'zustand'
 import { defaultNpcShipConfig, defaultShipState } from '@/state/defaults'
 import type { GameStore, NpcShipConfig } from '@/state/types'
-import { MWD_SPEED } from '@/systems/simulation/constants'
+import { isPlayerInNpcBScopeRadarCone } from '@/systems/ew/npcBScopeTargeting'
+import { MWD_SPEED, RDNE_MAX_ACCEL_MS2 } from '@/systems/simulation/constants'
+
+const OFFLINE_LOCAL_PLAYER_ID = 'local-player'
 
 const DEFAULT_NPC_SPAWN_POSITION: [number, number, number] = [0, 0, -20000]
 const MAX_NPC_SUBWARP_SPEED = 215
 
-/** Peak RDNE-induced acceleration in m/s² at forceMagnitude=1. */
-const RDNE_MAX_ACCEL = 18
 /** Fraction of drift velocity retained per second when RDNE is no longer active (exponential decay). */
 const RDNE_DRIFT_DECAY_RATE = 2.5
 
@@ -70,6 +71,39 @@ export const createNpcSlice: StateCreator<GameStore, [], [], Partial<GameStore>>
         npcShips: { ...s.npcShips, [id]: npcConfig },
       }
     }),
+
+  attemptNpcHardLockLocalPlayer: (npcId) => {
+    let ok = false
+    set((s) => {
+      const npcCfg = s.npcShips[npcId]
+      const npcShip = s.shipsById[npcId]
+      if (!npcCfg || !npcShip) return {}
+      if (npcCfg.radarMode === 'off' || (npcCfg.radarPower ?? 0) <= 0) return {}
+
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      const playerShip = s.shipsById[localId] ?? s.ship
+      if (
+        !isPlayerInNpcBScopeRadarCone({
+          npcPosition: npcShip.position,
+          npcHeadingDeg: npcShip.actualHeading,
+          npcInclinationDeg: npcShip.actualInclination,
+          playerPosition: playerShip.position,
+          radarPowerPct: npcCfg.radarPower ?? 0,
+        })
+      ) {
+        return {}
+      }
+
+      ok = true
+      return {
+        npcShips: {
+          ...s.npcShips,
+          [npcId]: { ...npcCfg, hardLockLocalPlayer: true },
+        },
+      }
+    })
+    return ok
+  },
 
   removeNpcShip: (id) =>
     set((s) => {
@@ -147,7 +181,7 @@ export const createNpcSlice: StateCreator<GameStore, [], [], Partial<GameStore>>
           const offsetLen = Math.sqrt(ox * ox + oz * oz)
           if (offsetLen > 0.001) {
             const dirSign = rdne.kind === 'sink' ? 1 : -1
-            const accel = RDNE_MAX_ACCEL * rdne.forceMagnitude
+            const accel = RDNE_MAX_ACCEL_MS2 * rdne.forceMagnitude
             drift[0] += (ox / offsetLen) * dirSign * accel * deltaSeconds
             drift[2] += (oz / offsetLen) * dirSign * accel * deltaSeconds
           }

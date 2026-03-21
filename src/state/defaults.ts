@@ -48,6 +48,8 @@ export const defaultNpcShipConfig: NpcShipConfig = {
   mwdActive: false,
   shieldsUp: true,
   radarMode: 'off',
+  radarPower: 50,
+  hardLockLocalPlayer: false,
   orbitCenter: [0, 0, 0],
   orbitRadius: 5000,
 }

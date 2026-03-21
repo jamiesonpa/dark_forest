@@ -52,6 +52,8 @@ export interface WireLaunchedCylinder {
   targetLockId: string | null
   flightTimeSeconds: number
   guidance?: 'radar' | 'ir_seeker'
+  /** Ship that fired the torpedo (for RWR inbound cues). */
+  launchedByShipId?: string | null
 }
 
 export interface WireLaunchedFlare {

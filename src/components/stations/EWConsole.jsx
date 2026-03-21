@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, use
 import { useGameStore } from "@/state/gameStore";
 import { getCelestialById } from "@/utils/systemData";
 import { EWSystemMap } from "@/components/stations/EWSystemMap";
+import { RWRDisplay } from "@/components/hud/RWRDisplay";
 import { useEwTvStore, EW_ORBIT_FEED_W, EW_ORBIT_FEED_H } from "@/state/ewTvStore";
 import { multiplayerClient } from "@/network/colyseusClient";
 import {
@@ -2842,127 +2843,6 @@ const EmconBar = ({ label, value, warning }) => (
   </div>
 );
 
-// EW-styled RWR display (amber themed)
-const EwRwr = () => {
-  const rwrContacts = useGameStore((s) => s.rwrContacts);
-  const shipHeading = useGameStore((s) => s.ship.actualHeading);
-  const canvasRef = useRef(null);
-  const [time, setTime] = useState(0);
-
-  useEffect(() => {
-    let raf;
-    const tick = () => { setTime(t => t + 0.016); raf = requestAnimationFrame(tick); };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    const S = canvas.width;
-    const cx = S / 2;
-    const cy = S / 2;
-    const outerR = S * 0.42;
-    const innerR = S * 0.12;
-
-    ctx.fillStyle = BG_SCREEN;
-    ctx.fillRect(0, 0, S, S);
-
-    // Rings
-    [outerR, (outerR + innerR) / 2, innerR].forEach((r, i) => {
-      ctx.strokeStyle = i === 1 ? "rgba(255,176,0,0.08)" : "rgba(255,176,0,0.15)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash(i === 1 ? [3, 3] : []);
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.stroke();
-    });
-    ctx.setLineDash([]);
-
-    // Cross hairs
-    ctx.strokeStyle = "rgba(255,176,0,0.1)";
-    ctx.lineWidth = 0.5;
-    ctx.beginPath(); ctx.moveTo(cx, cy - outerR - 4); ctx.lineTo(cx, cy + outerR + 4); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx - outerR - 4, cy); ctx.lineTo(cx + outerR + 4, cy); ctx.stroke();
-
-    // Center dot
-    ctx.fillStyle = AMBER_DIM;
-    ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fill();
-
-    // Cardinal labels
-    ctx.font = "14px Consolas, Monaco, monospace";
-    ctx.fillStyle = AMBER_DIM;
-    ctx.textAlign = "center";
-    ctx.fillText("12", cx, cy - outerR - 8);
-    ctx.fillText("6", cx, cy + outerR + 16);
-    ctx.textAlign = "start";
-    ctx.fillText("3", cx + outerR + 8, cy + 5);
-    ctx.textAlign = "end";
-    ctx.fillText("9", cx - outerR - 8, cy + 5);
-    ctx.textAlign = "start";
-
-    // Contacts
-    rwrContacts.forEach(c => {
-      const relBearing = ((c.bearing - shipHeading + 360) % 360);
-      const rad = (relBearing - 90) * (Math.PI / 180);
-      const str = Math.max(1, Math.min(10, c.signalStrength));
-      const dist = outerR - ((str - 1) / 9) * (outerR - innerR);
-      const px = cx + Math.cos(rad) * dist;
-      const py = cy + Math.sin(rad) * dist;
-
-      const isCrit = c.priority === "critical";
-      const isHigh = c.priority === "high";
-      const symColor = isCrit ? RED_ALERT : isHigh ? "#ffaa00" : AMBER;
-
-      // Lock box
-      if (c.sttLock) {
-        ctx.strokeStyle = symColor;
-        ctx.lineWidth = 1.5;
-        if (c.symbol === "M") {
-          const r2 = 14;
-          ctx.beginPath();
-          ctx.moveTo(px, py - r2); ctx.lineTo(px + r2, py); ctx.lineTo(px, py + r2); ctx.lineTo(px - r2, py);
-          ctx.closePath(); ctx.stroke();
-        } else {
-          const flash = Math.sin(time * 6) > 0;
-          if (flash) ctx.strokeRect(px - 12, py - 12, 24, 24);
-        }
-      }
-
-      // Symbol
-      ctx.font = "bold 16px Consolas, Monaco, monospace";
-      ctx.fillStyle = symColor;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(c.symbol, px, py);
-      ctx.textAlign = "start";
-      ctx.textBaseline = "alphabetic";
-    });
-
-    // Heading label
-    ctx.font = "14px Consolas, Monaco, monospace";
-    ctx.fillStyle = AMBER;
-    ctx.fillText(`HDG ${String(Math.round(shipHeading)).padStart(3, "0")}`, 6, 16);
-
-    // Contact count
-    ctx.textAlign = "right";
-    ctx.fillStyle = rwrContacts.length > 0 ? AMBER : AMBER_DIM;
-    ctx.fillText(`${rwrContacts.length} THR`, S - 6, 16);
-    ctx.textAlign = "start";
-
-  }, [time, rwrContacts, shipHeading]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      width={240}
-      height={240}
-      style={{ width: "100%", height: "100%", background: BG_SCREEN }}
-    />
-  );
-};
-
 // ─── RWCA (Remote Warp Core Attenuator) ────────────────────────────
 const RWCA_HARMONICS = 2;
 const RWCA_COEFFS = RWCA_HARMONICS * 2;
@@ -3572,6 +3452,579 @@ const RWCAPanel = ({ contacts, lockState, time, power, rangeKm, rwcaPowered, rwc
 
 const EW_MFD_TABS = ["MAP", "RADAR", "TV"];
 
+/** Normalized 0–1 ↔ X-band carrier 8–12 GHz (`ewRadarFreq` selector; `ewRadarFreqCommitted` on-air after SET). */
+const RADAR_FREQ_BAND_MIN_MHZ = 8000;
+const RADAR_FREQ_BAND_MAX_MHZ = 12000;
+const RADAR_FREQ_BAND_SPAN_MHZ = RADAR_FREQ_BAND_MAX_MHZ - RADAR_FREQ_BAND_MIN_MHZ;
+
+/** Carrier SET: dip radar power to 1% then restore; down phase then up phase (ms). */
+const RADAR_FREQ_RETUNE_DOWN_MS = 250;
+const RADAR_FREQ_RETUNE_UP_MS = 1750;
+const RADAR_FREQ_RETUNE_TOTAL_MS = RADAR_FREQ_RETUNE_DOWN_MS + RADAR_FREQ_RETUNE_UP_MS;
+
+function ewRadarFreqNormToMhz(norm) {
+  return Math.round(RADAR_FREQ_BAND_MIN_MHZ + clamp(norm, 0, 1) * RADAR_FREQ_BAND_SPAN_MHZ);
+}
+
+/** ~8 → chase speed; higher = tighter follow (frame-rate independent). */
+const RADAR_KNOB_SMOOTH_LAMBDA = 8;
+
+const KNOB_TICK_DETENTS = 25;
+let _knobTickCtx = null;
+let _knobTickBuffers = [null, null];
+let _knobTickLoading = false;
+
+function ensureKnobTickAudio() {
+  if (_knobTickLoading || (_knobTickBuffers[0] && _knobTickBuffers[1])) return;
+  _knobTickLoading = true;
+  const ctx = _knobTickCtx || (_knobTickCtx = new AudioContext());
+  Promise.all([
+    fetch("/tick1.mp3").then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)),
+    fetch("/tick2.mp3").then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)),
+  ]).then(([b1, b2]) => { _knobTickBuffers = [b1, b2]; });
+}
+
+function playKnobTick(phase) {
+  const ctx = _knobTickCtx;
+  const buf = _knobTickBuffers[phase % 2];
+  if (!ctx || !buf) return;
+  void ctx.resume();
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  src.start();
+}
+
+function RadarFreqKnob({ valueNorm, onChange, font, committedNorm, onSet, commitDisabled }) {
+  const wrapRef = useRef(null);
+  const knurlRef = useRef(null);
+  const needleRef = useRef(null);
+  const freqTextRef = useRef(null);
+  const gradId = useId().replace(/:/g, "");
+  const targetNorm = clamp(valueNorm, 0, 1);
+  const targetRef = useRef(targetNorm);
+  const isDraggingRef = useRef(false);
+  const lastStoreWriteRef = useRef(0);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  if (!isDraggingRef.current) {
+    targetRef.current = targetNorm;
+  }
+
+  const smoothNormRef = useRef(targetNorm);
+
+  const lastDetentRef = useRef(Math.round(clamp(valueNorm, 0, 1) * KNOB_TICK_DETENTS));
+  const tickPhaseRef = useRef(0);
+
+  useEffect(() => { ensureKnobTickAudio(); }, []);
+
+  useEffect(() => {
+    let raf = 0;
+    let last = performance.now();
+    const loop = (now) => {
+      const dt = Math.min((now - last) / 1000, 0.064);
+      last = now;
+      const tgt = clamp(targetRef.current, 0, 1);
+      const prev = smoothNormRef.current;
+      let s = prev;
+      const alpha = 1 - Math.exp(-RADAR_KNOB_SMOOTH_LAMBDA * dt);
+      s += (tgt - s) * alpha;
+      if (Math.abs(tgt - s) < 1e-5) s = tgt;
+      smoothNormRef.current = s;
+      if (Math.abs(s - prev) > 1e-6 || Math.abs(tgt - s) > 1e-5) {
+        const rot = `rotate(${-135 + clamp(s, 0, 1) * 270}deg)`;
+        if (knurlRef.current) knurlRef.current.style.transform = rot;
+        if (needleRef.current) needleRef.current.style.transform = rot;
+        if (freqTextRef.current) {
+          freqTextRef.current.textContent = String(ewRadarFreqNormToMhz(s));
+        }
+        const detent = Math.round(clamp(tgt, 0, 1) * KNOB_TICK_DETENTS);
+        if (detent !== lastDetentRef.current) {
+          playKnobTick(tickPhaseRef.current);
+          tickPhaseRef.current += 1;
+          lastDetentRef.current = detent;
+        }
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); };
+  }, []);
+
+  const initRotDeg = -135 + clamp(smoothNormRef.current, 0, 1) * 270;
+  const mhzAria = ewRadarFreqNormToMhz(targetNorm);
+  const lastSetMhz = ewRadarFreqNormToMhz(clamp(committedNorm ?? targetNorm, 0, 1));
+
+  const STORE_THROTTLE_MS = 100;
+
+  const commitFromClient = useCallback(
+    (clientX, clientY) => {
+      const el = wrapRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = clientX - cx;
+      const dy = clientY - cy;
+      let deg = (Math.atan2(dx, -dy) * 180) / Math.PI;
+      deg = clamp(deg, -135, 135);
+      targetRef.current = (deg + 135) / 270;
+    },
+    [],
+  );
+
+  const onPointerDown = (e) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    commitFromClient(e.clientX, e.clientY);
+    const now = performance.now();
+    if (now - lastStoreWriteRef.current >= STORE_THROTTLE_MS) {
+      lastStoreWriteRef.current = now;
+      onChangeRef.current(targetRef.current);
+    }
+  };
+
+  const release = (e) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+      isDraggingRef.current = false;
+      onChangeRef.current(targetRef.current);
+    }
+  };
+
+  const nudgeMhz = (deltaMhz) => {
+    const cur =
+      RADAR_FREQ_BAND_MIN_MHZ + clamp(targetRef.current, 0, 1) * RADAR_FREQ_BAND_SPAN_MHZ;
+    const nextMhz = clamp(
+      cur + deltaMhz,
+      RADAR_FREQ_BAND_MIN_MHZ,
+      RADAR_FREQ_BAND_MAX_MHZ,
+    );
+    const nextNorm = (nextMhz - RADAR_FREQ_BAND_MIN_MHZ) / RADAR_FREQ_BAND_SPAN_MHZ;
+    targetRef.current = nextNorm;
+    onChangeRef.current(nextNorm);
+  };
+
+  /** Fixed world-space ticks outside the rotating disc (center 40,40 in 80×80 viewBox). */
+  const tickLines = useMemo(() => {
+    const cx = 40;
+    const cy = 40;
+    const els = [];
+    const n = 17;
+    for (let i = 0; i < n; i++) {
+      const frac = i / (n - 1);
+      const ang = ((-135 + frac * 270) * Math.PI) / 180;
+      const major = i % 4 === 0;
+      const r0 = major ? 34.5 : 35.25;
+      const r1 = 39.5;
+      els.push(
+        <line
+          key={i}
+          x1={cx + Math.sin(ang) * r0}
+          y1={cy - Math.cos(ang) * r0}
+          x2={cx + Math.sin(ang) * r1}
+          y2={cy - Math.cos(ang) * r1}
+          stroke={major ? AMBER_GLOW : `${AMBER_DIM}aa`}
+          strokeWidth={major ? 2 : 1}
+          strokeLinecap="round"
+        />,
+      );
+    }
+    return els;
+  }, []);
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        alignItems: "stretch",
+        minWidth: 0,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          gap: 8,
+        }}
+      >
+        <span style={{ color: AMBER_DIM, fontFamily: font, fontSize: 9, letterSpacing: 1 }}>
+          RF CARRIER
+        </span>
+        <span
+          style={{
+            color: AMBER_DIM,
+            fontFamily: font,
+            fontSize: 7,
+            letterSpacing: 0.5,
+            opacity: 0.88,
+            whiteSpace: "nowrap",
+          }}
+        >
+          X-BAND 8–12 GHz
+        </span>
+      </div>
+      <div
+        style={{
+          marginTop: 12,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "stretch",
+          gap: 6,
+          width: "100%",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 22,
+            width: "100%",
+            boxSizing: "border-box",
+          }}
+        >
+        <div
+          ref={wrapRef}
+          role="slider"
+          tabIndex={0}
+          aria-valuemin={RADAR_FREQ_BAND_MIN_MHZ}
+          aria-valuemax={RADAR_FREQ_BAND_MAX_MHZ}
+          aria-valuenow={mhzAria}
+          aria-label="Radar carrier frequency"
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+              e.preventDefault();
+              nudgeMhz(-50);
+            } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+              e.preventDefault();
+              nudgeMhz(50);
+            } else if (e.key === "Home") {
+              e.preventDefault();
+              onChange(0);
+            } else if (e.key === "End") {
+              e.preventDefault();
+              onChange(1);
+            }
+          }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={release}
+          onPointerCancel={release}
+          style={{
+            width: 80,
+            height: 80,
+            position: "relative",
+            flexShrink: 0,
+            cursor: "grab",
+            touchAction: "none",
+            boxSizing: "border-box",
+            outline: "none",
+            borderRadius: "50%",
+            boxShadow: `
+              0 0 0 1px rgba(0,0,0,0.95),
+              0 0 0 2px rgba(255,176,0,0.32),
+              0 0 24px rgba(255,176,0,0.1)
+            `,
+          }}
+        >
+          <svg
+            width="80"
+            height="80"
+            viewBox="0 0 80 80"
+            style={{
+              position: "absolute",
+              inset: 0,
+              pointerEvents: "none",
+            }}
+            aria-hidden
+          >
+            <defs>
+              <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor={AMBER_DIM} stopOpacity="0.15" />
+                <stop offset="50%" stopColor={AMBER_GLOW} stopOpacity="0.35" />
+                <stop offset="100%" stopColor={AMBER_DIM} stopOpacity="0.15" />
+              </linearGradient>
+            </defs>
+            <circle
+              cx="40"
+              cy="40"
+              r="39.25"
+              fill="none"
+              stroke={`url(#${gradId})`}
+              strokeWidth="1.5"
+            />
+            {tickLines}
+          </svg>
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              width: 68,
+              height: 68,
+              marginLeft: -34,
+              marginTop: -34,
+              pointerEvents: "none",
+            }}
+          >
+            {/* Fixed dome lighting + depth (does not rotate) */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                borderRadius: "50%",
+                boxShadow: `
+                  inset 0 1px 0 rgba(255,255,255,0.07),
+                  inset 0 -10px 22px rgba(0,0,0,0.72),
+                  0 2px 10px rgba(0,0,0,0.55)
+                `,
+                background:
+                  "radial-gradient(circle at 32% 28%, rgba(86,82,76,0.98) 0%, rgba(32,30,28,1) 38%, rgba(12,11,10,1) 100%)",
+              }}
+            />
+            {/* Only knurl texture rotates; blends with fixed base + fixed specular above */}
+            <div
+              ref={knurlRef}
+              style={{
+                position: "absolute",
+                inset: 0,
+                borderRadius: "50%",
+                overflow: "hidden",
+                transform: `rotate(${initRotDeg}deg)`,
+                transformOrigin: "center center",
+                pointerEvents: "none",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: "50%",
+                  opacity: 0.72,
+                  mixBlendMode: "overlay",
+                  background:
+                    "repeating-conic-gradient(from 0deg at 50% 50%, rgba(0,0,0,0.42) 0deg 12deg, rgba(255,255,255,0.14) 12deg 16deg, rgba(0,0,0,0.28) 16deg 28deg, rgba(255,248,230,0.1) 28deg 32deg)",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: "50%",
+                  opacity: 0.35,
+                  mixBlendMode: "soft-light",
+                  background:
+                    "repeating-conic-gradient(from 16deg at 50% 50%, transparent 0deg 28deg, rgba(255,255,255,0.15) 28deg 31deg, transparent 31deg 56deg)",
+                }}
+              />
+            </div>
+            {/* Fixed screen-space specular + fill; ridges sweep underneath */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                borderRadius: "50%",
+                zIndex: 1,
+                mixBlendMode: "soft-light",
+                pointerEvents: "none",
+                background:
+                  "radial-gradient(ellipse 95% 85% at 28% 22%, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.08) 28%, transparent 52%), radial-gradient(ellipse 75% 75% at 78% 82%, rgba(0,0,0,0.65) 0%, transparent 48%), linear-gradient(145deg, rgba(255,220,160,0.22) 0%, transparent 38%, transparent 62%, rgba(20,15,10,0.4) 100%)",
+              }}
+            />
+            {/* Needle + hub rotate with frequency */}
+            <div
+              ref={needleRef}
+              style={{
+                position: "absolute",
+                inset: 0,
+                zIndex: 2,
+                transform: `rotate(${initRotDeg}deg)`,
+                transformOrigin: "center center",
+                pointerEvents: "none",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  left: "50%",
+                  top: "50%",
+                  width: 4,
+                  height: 22,
+                  marginLeft: -2,
+                  marginTop: -22,
+                  transformOrigin: "50% 100%",
+                  background: `linear-gradient(180deg, ${AMBER_GLOW} 0%, ${AMBER} 42%, rgba(120,75,18,1) 100%)`,
+                  borderRadius: 2,
+                  boxShadow:
+                    "0 0 12px rgba(255,200,90,0.55), 0 0 2px rgba(255,176,0,0.95), inset 0 0 2px rgba(255,255,255,0.35)",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  left: "50%",
+                  top: "50%",
+                  width: 16,
+                  height: 16,
+                  marginLeft: -8,
+                  marginTop: -8,
+                  borderRadius: "50%",
+                  zIndex: 1,
+                  background:
+                    "radial-gradient(circle at 50% 50%, #6a6662 0%, #2e2c2a 48%, #0c0b0a 100%)",
+                  boxShadow:
+                    "inset 0 1px 2px rgba(255,255,255,0.14), inset 0 -3px 6px rgba(0,0,0,0.85), 0 2px 8px rgba(0,0,0,0.75)",
+                }}
+              />
+            </div>
+          </div>
+        </div>
+        {typeof onSet === "function" ? (
+          <button
+            type="button"
+            disabled={!!commitDisabled}
+            onClick={onSet}
+            style={{
+              flexShrink: 0,
+              padding: "10px 12px",
+              fontSize: 9,
+              letterSpacing: 1,
+              borderRadius: 1,
+              border: `1px solid ${commitDisabled ? "rgba(130,130,130,0.45)" : AMBER}`,
+              background: commitDisabled ? "rgba(90,90,90,0.12)" : "rgba(255,176,0,0.16)",
+              color: commitDisabled ? "rgba(180,180,180,0.75)" : AMBER_GLOW,
+              fontFamily: font,
+              cursor: commitDisabled ? "not-allowed" : "pointer",
+              alignSelf: "center",
+              opacity: commitDisabled ? 0.65 : 1,
+            }}
+            aria-label="Commit radar carrier frequency"
+            title={
+              commitDisabled
+                ? "Carrier retune in progress"
+                : "Apply current selector frequency to transmit chain"
+            }
+          >
+            SET
+          </button>
+        ) : null}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            marginTop: 2,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              gap: 8,
+              fontFamily: font,
+            }}
+          >
+            <span
+              style={{
+                color: AMBER_GLOW,
+                fontSize: 10,
+                letterSpacing: 0.85,
+                flexShrink: 0,
+                textShadow: "0 0 8px rgba(255,200,100,0.35)",
+              }}
+            >
+              SEL
+            </span>
+            <div
+              style={{
+                fontVariantNumeric: "tabular-nums",
+                fontSize: 13,
+                letterSpacing: "0.12em",
+                color: AMBER_DIM,
+                textAlign: "right",
+                minWidth: 0,
+                opacity: 0.95,
+              }}
+            >
+              <span ref={freqTextRef}>{ewRadarFreqNormToMhz(smoothNormRef.current)}</span>
+              <span
+                style={{
+                  marginLeft: 5,
+                  fontSize: 8,
+                  letterSpacing: 0.35,
+                  color: AMBER_DIM,
+                  opacity: 0.88,
+                }}
+              >
+                MHz
+              </span>
+            </div>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              gap: 8,
+              fontFamily: font,
+            }}
+          >
+            <span
+              style={{
+                color: AMBER_GLOW,
+                fontSize: 10,
+                letterSpacing: 0.85,
+                flexShrink: 0,
+                textShadow: "0 0 8px rgba(255,200,100,0.35)",
+              }}
+            >
+              SET
+            </span>
+            <div
+              style={{
+                fontVariantNumeric: "tabular-nums",
+                fontSize: 13,
+                letterSpacing: "0.12em",
+                color: AMBER_GLOW,
+                textShadow: "0 0 12px rgba(255,200,100,0.35)",
+                textAlign: "right",
+                minWidth: 0,
+              }}
+            >
+              <span>{lastSetMhz}</span>
+              <span
+                style={{
+                  marginLeft: 5,
+                  fontSize: 8,
+                  letterSpacing: 0.35,
+                  color: AMBER,
+                  opacity: 0.92,
+                }}
+              >
+                MHz
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Main Component
 export default function EWConsole() {
   const rdneResultantFilterId = useId().replace(/:/g, "");
@@ -3589,13 +4042,25 @@ export default function EWConsole() {
   const radarMode = useGameStore((s) => s.ewRadarMode);
   const radarPower = useGameStore((s) => s.ewRadarPower);
   const radarFreq = useGameStore((s) => s.ewRadarFreq);
+  const radarFreqCommitted = useGameStore((s) => s.ewRadarFreqCommitted);
   const radarPRF = useGameStore((s) => s.ewRadarPRF);
   const setEwRadar = useGameStore((s) => s.setEwRadar);
   const setRadarOn = (v) => setEwRadar({ radarOn: typeof v === "function" ? v(radarOn) : v });
   const setRadarMode = (v) => setEwRadar({ radarMode: v });
-  const setRadarPower = (v) => setEwRadar({ radarPower: typeof v === "function" ? v(radarPower) : v });
-  const setRadarFreq = (v) => setEwRadar({ radarFreq: typeof v === "function" ? v(radarFreq) : v });
+  const setRadarPower = (v) => {
+    const raw = typeof v === "function" ? v(radarPower) : v;
+    const next = Math.max(0, Math.min(100, Number(raw) || 0));
+    setEwRadar({ radarPower: next, radarOn: next > 0 });
+  };
+  const radarPowerClamped = Math.max(0, Math.min(100, Math.round(Number(radarPower) || 0)));
+  const setRadarFreq = (v) => {
+    const raw = typeof v === "function" ? v(radarFreq) : v;
+    const next = clamp(Number(raw) || 0, 0, 1);
+    setEwRadar({ radarFreq: next });
+  };
   const setRadarPRF = (v) => setEwRadar({ radarPRF: v });
+  const radarTrackMode = useGameStore((s) => s.ewRadarTrackMode);
+  const setRadarTrackMode = useGameStore((s) => s.setEwRadarTrackMode);
   const [emconLevel, setEmconLevel] = useState(0.3);
   const lockState = useGameStore((s) => s.ewLockState);
   const iffState = useGameStore((s) => s.ewIffState);
@@ -3609,6 +4074,72 @@ export default function EWConsole() {
     if (typeof updater === "function") setIffStateStore(updater);
     else setIffStateStore(() => updater);
   };
+
+  const radarPowerRetuningRef = useRef(false);
+  const radarRetuneRafRef = useRef(null);
+  const radarRetuneStartPowerRef = useRef(0);
+  const [radarPowerRetuning, setRadarPowerRetuning] = useState(false);
+
+  const handleRadarFreqSet = useCallback(() => {
+    if (radarPowerRetuningRef.current) return;
+    radarPowerRetuningRef.current = true;
+    const startPower = Math.max(
+      0,
+      Math.min(100, Math.round(Number(useGameStore.getState().ewRadarPower) || 0)),
+    );
+    radarRetuneStartPowerRef.current = startPower;
+    setRadarPowerRetuning(true);
+
+    const sel = clamp(useGameStore.getState().ewRadarFreq, 0, 1);
+    setEwRadar({ radarFreqCommitted: sel });
+    setLockStateStore(() => ({}));
+
+    const t0 = performance.now();
+
+    const applyPower = (pct) => {
+      const rounded = Math.max(0, Math.min(100, Math.round(pct)));
+      setEwRadar({ radarPower: rounded, radarOn: rounded > 0 });
+    };
+
+    const tick = (now) => {
+      const elapsed = now - t0;
+      if (elapsed >= RADAR_FREQ_RETUNE_TOTAL_MS) {
+        applyPower(startPower);
+        radarPowerRetuningRef.current = false;
+        setRadarPowerRetuning(false);
+        radarRetuneRafRef.current = null;
+        return;
+      }
+      let p;
+      if (elapsed < RADAR_FREQ_RETUNE_DOWN_MS) {
+        p = startPower + (1 - startPower) * (elapsed / RADAR_FREQ_RETUNE_DOWN_MS);
+      } else {
+        p =
+          1 +
+          (startPower - 1) *
+            ((elapsed - RADAR_FREQ_RETUNE_DOWN_MS) / RADAR_FREQ_RETUNE_UP_MS);
+      }
+      applyPower(p);
+      radarRetuneRafRef.current = requestAnimationFrame(tick);
+    };
+    radarRetuneRafRef.current = requestAnimationFrame(tick);
+  }, [setEwRadar, setLockStateStore]);
+
+  useEffect(
+    () => () => {
+      if (radarRetuneRafRef.current != null) {
+        cancelAnimationFrame(radarRetuneRafRef.current);
+        radarRetuneRafRef.current = null;
+      }
+      if (radarPowerRetuningRef.current) {
+        const p = radarRetuneStartPowerRef.current;
+        useGameStore.getState().setEwRadar({ radarPower: p, radarOn: p > 0 });
+        radarPowerRetuningRef.current = false;
+      }
+    },
+    [],
+  );
+
   const [spectrumLockQuality, setSpectrumLockQuality] = useState("none");
   const JAMMER_COLORS = ["#ff4466", "#44aaff", "#44ff66", "#ffaa22"];
   const jammers = useGameStore((s) => s.ewJammers);
@@ -3618,6 +4149,12 @@ export default function EWConsole() {
   const [lowerScannerResetToken, setLowerScannerResetToken] = useState(0);
   const [upperScannerType, setUpperScannerType] = useState("grav");
   const [lowerScannerType, setLowerScannerType] = useState("ir");
+  const [jammerPowered, setJammerPowered] = useState(false);
+  const [jammerArmed, setJammerArmed] = useState(false);
+  const [jammerBankMode, setJammerBankMode] = useState(/** @type {"noise" | "deception"} */ ("noise"));
+  const [jammerDeceptionTechnique, setJammerDeceptionTechnique] = useState(
+    /** @type {"RGPO" | "VGPO"} */ ("RGPO"),
+  );
   const [rwcaPowered, setRwcaPowered] = useState(false);
   const [rwcaArmed, setRwcaArmed] = useState(false);
   const [rwcaPower, setRwcaPower] = useState(0.2);
@@ -3627,6 +4164,12 @@ export default function EWConsole() {
   const [rdnePower, setRdnePower] = useState(0.2);
   const rdneRangeKm = RDNE_MIN_RANGE_KM + rdnePower * (RDNE_MAX_RANGE_KM - RDNE_MIN_RANGE_KM);
   const shipHeadingForRdne = useGameStore((s) => s.ship.actualHeading);
+  const ewRwrPowered = useGameStore((s) => s.ewRwrPowered);
+  const setEwRwrPowered = useGameStore((s) => s.setEwRwrPowered);
+  const ewRwrVolume = useGameStore((s) => s.ewRwrVolume);
+  const setEwRwrVolume = useGameStore((s) => s.setEwRwrVolume);
+  const ewRwrMuted = useGameStore((s) => s.ewRwrMuted);
+  const setEwRwrMuted = useGameStore((s) => s.setEwRwrMuted);
   const rdneLockedTargetMarker = useMemo(() => {
     if (!rdnePowered || !rdneArmed) return null;
     const hardId = Object.keys(lockState).find((id) => lockState[id] === "hard");
@@ -3650,6 +4193,10 @@ export default function EWConsole() {
   const [rdneUserMarker, setRdneUserMarker] = useState(null);
   /** 0…1: smaller → tighter field + weaker arrow lengths; larger → prior default outer radius + strength. */
   const [rdneFieldIntensity, setRdneFieldIntensity] = useState(1);
+
+  useEffect(() => {
+    if (!rdneLockedTargetMarker) setRdneUserMarker(null);
+  }, [rdneLockedTargetMarker]);
 
   useLayoutEffect(() => {
     const el = rdneSurfaceRef.current;
@@ -3738,6 +4285,10 @@ export default function EWConsole() {
   useEffect(() => {
     if (!rwcaPowered) setRwcaArmed(false);
   }, [rwcaPowered]);
+
+  useEffect(() => {
+    if (!jammerPowered) setJammerArmed(false);
+  }, [jammerPowered]);
 
   useEffect(() => {
     if (!rdnePowered) setRdneArmed(false);
@@ -3896,13 +4447,13 @@ export default function EWConsole() {
   }, [ewMfdTab, ewTvFeedCanvas]);
 
   const hardLockedId = Object.keys(lockState).find(id => lockState[id] === "hard") || null;
-  const effectiveRadarMode = hardLockedId ? "STT" : radarMode;
+  const effectiveRadarMode = radarTrackMode === "STT" && hardLockedId ? "STT" : radarMode;
 
   const notchSeedRef = useRef(0);
   const contactsWithDetection = useMemo(() => contacts.map(c => {
     const passiveRange = 20000 + c.emStrength * 180000;
     const passiveDetect = c.active && c.emStrength > 0.2 && c.range < passiveRange;
-    const activeRange = computeActiveDetectRangeM(c, radarPower, radarFreq, radarPRF, effectiveRadarMode);
+    const activeRange = computeActiveDetectRangeM(c, radarPower, radarFreqCommitted, radarPRF, effectiveRadarMode);
     let activeDetect = radarOn && c.range <= activeRange;
 
     // Notching: target beaming perpendicular (aspect ~90° or ~270° ±10°) drops from radar
@@ -3927,7 +4478,7 @@ export default function EWConsole() {
     }
 
     return { ...c, passiveDetect, activeDetect, activeRange };
-  }), [contacts, radarPower, radarFreq, radarPRF, effectiveRadarMode, radarOn, time]);
+  }), [contacts, radarPower, radarFreqCommitted, radarPRF, effectiveRadarMode, radarOn, time]);
 
   useEffect(() => {
     if (radarWasOnRef.current && !radarOn) {
@@ -3971,7 +4522,7 @@ export default function EWConsole() {
   const estimatedRangeKm = (computeActiveDetectRangeM(
     { id: "RNG", type: "battleship", rcs: 22 },
     radarPower,
-    radarFreq,
+    radarFreqCommitted,
     radarPRF,
     effectiveRadarMode
   ) / 1000).toFixed(1);
@@ -4162,23 +4713,167 @@ export default function EWConsole() {
               </Panel>
             );
           })}
-          <Panel
-            title="Reserved"
-            style={{ flex: 1, minHeight: 48, minWidth: 0 }}
-            headerRight={<span style={{ color: AMBER_DIM, fontSize: 8 }}>—</span>}
+          <div
+            style={{ flex: 1, minHeight: 48, minWidth: 0, display: "flex", flexDirection: "column" }}
+            title="Electronic attack jammer bank"
           >
-            <div
-              style={{
+            <Panel
+              title="JAMMER"
+              style={{ flex: 1, minHeight: 0, minWidth: 0 }}
+              headerCenter={(
+                <div style={{ display: "flex", gap: 4, alignItems: "center", flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    aria-pressed={jammerBankMode === "noise"}
+                    title="Noise jamming — energy on-band"
+                    onClick={() => setJammerBankMode("noise")}
+                    style={{
+                      boxSizing: "border-box",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: 20,
+                      minHeight: 20,
+                      padding: "0 8px",
+                      fontSize: 9,
+                      letterSpacing: 0.8,
+                      borderRadius: 2,
+                      border: `1px solid ${jammerBankMode === "noise" ? GRAV_CYAN : "rgba(130,130,130,0.5)"}`,
+                      background: jammerBankMode === "noise" ? "rgba(0,204,170,0.14)" : "rgba(90,90,90,0.12)",
+                      color: jammerBankMode === "noise" ? GRAV_CYAN_GLOW : "rgba(180,180,180,0.75)",
+                      fontFamily: font,
+                      cursor: "pointer",
+                      lineHeight: 1,
+                    }}
+                  >
+                    NOISE
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={jammerBankMode === "deception"}
+                    title="Deception — false targets / range pull"
+                    onClick={() => setJammerBankMode("deception")}
+                    style={{
+                      boxSizing: "border-box",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: 20,
+                      minHeight: 20,
+                      padding: "0 8px",
+                      fontSize: 9,
+                      letterSpacing: 0.8,
+                      borderRadius: 2,
+                      border: `1px solid ${jammerBankMode === "deception" ? IR_ORANGE : "rgba(130,130,130,0.5)"}`,
+                      background: jammerBankMode === "deception" ? "rgba(255,154,60,0.14)" : "rgba(90,90,90,0.12)",
+                      color: jammerBankMode === "deception" ? IR_ORANGE_GLOW : "rgba(180,180,180,0.75)",
+                      fontFamily: font,
+                      cursor: "pointer",
+                      lineHeight: 1,
+                    }}
+                  >
+                    DECEPTION
+                  </button>
+                </div>
+              )}
+              headerRight={(
+                <EwSysPowerArmHeader
+                  font={font}
+                  isPowered={jammerPowered}
+                  isArmed={jammerArmed}
+                  onTogglePower={() => setJammerPowered((p) => !p)}
+                  onToggleArmed={() => setJammerArmed((a) => !a)}
+                />
+              )}
+            >
+              <div style={{
                 flex: 1,
                 minHeight: 0,
-                margin: 6,
-                borderRadius: 2,
-                border: `1px dashed ${AMBER_DIM}44`,
-                background: "rgba(8,8,8,0.35)",
+                display: "flex",
+                flexDirection: "column",
+                opacity: jammerPowered && jammerArmed ? 1 : 0.4,
+                filter: jammerPowered && jammerArmed ? "none" : "grayscale(1)",
+                pointerEvents: jammerPowered && jammerArmed ? "auto" : "none",
               }}
-              aria-label="Reserved EW console slot"
-            />
-          </Panel>
+              >
+                {jammerBankMode === "deception" ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 4,
+                      alignItems: "center",
+                      flexShrink: 0,
+                      padding: "6px 6px 0",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={jammerDeceptionTechnique === "RGPO"}
+                      title="Range gate pull-off (RGPO)"
+                      onClick={() => setJammerDeceptionTechnique("RGPO")}
+                      style={{
+                        boxSizing: "border-box",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        height: 20,
+                        minHeight: 20,
+                        padding: "0 8px",
+                        fontSize: 9,
+                        letterSpacing: 0.8,
+                        borderRadius: 2,
+                        border: `1px solid ${jammerDeceptionTechnique === "RGPO" ? GRAV_CYAN : "rgba(130,130,130,0.5)"}`,
+                        background: jammerDeceptionTechnique === "RGPO" ? "rgba(0,204,170,0.14)" : "rgba(90,90,90,0.12)",
+                        color: jammerDeceptionTechnique === "RGPO" ? GRAV_CYAN_GLOW : "rgba(180,180,180,0.75)",
+                        fontFamily: font,
+                        cursor: "pointer",
+                        lineHeight: 1,
+                      }}
+                    >
+                      RGPO
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={jammerDeceptionTechnique === "VGPO"}
+                      title="Velocity gate pull-off (VGPO)"
+                      onClick={() => setJammerDeceptionTechnique("VGPO")}
+                      style={{
+                        boxSizing: "border-box",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        height: 20,
+                        minHeight: 20,
+                        padding: "0 8px",
+                        fontSize: 9,
+                        letterSpacing: 0.8,
+                        borderRadius: 2,
+                        border: `1px solid ${jammerDeceptionTechnique === "VGPO" ? IR_ORANGE : "rgba(130,130,130,0.5)"}`,
+                        background: jammerDeceptionTechnique === "VGPO" ? "rgba(255,154,60,0.14)" : "rgba(90,90,90,0.12)",
+                        color: jammerDeceptionTechnique === "VGPO" ? IR_ORANGE_GLOW : "rgba(180,180,180,0.75)",
+                        fontFamily: font,
+                        cursor: "pointer",
+                        lineHeight: 1,
+                      }}
+                    >
+                      VGPO
+                    </button>
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    margin: jammerBankMode === "deception" ? "4px 6px 6px" : 6,
+                    borderRadius: 2,
+                    border: `1px dashed ${AMBER_DIM}44`,
+                    background: "rgba(8,8,8,0.35)",
+                  }}
+                  aria-label="Jammer EW console surface"
+                />
+              </div>
+            </Panel>
+          </div>
         </div>
 
         <div style={{
@@ -4189,9 +4884,19 @@ export default function EWConsole() {
           flexDirection: "column",
           gap: 6,
         }}>
+          {/* MFD + right aux strip: flex 4:1 → aux width ≈ ¼ of MFD width (same row height) */}
+          <div style={{
+            display: "flex",
+            flexDirection: "row",
+            gap: 6,
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            alignItems: "stretch",
+          }}>
           <Panel
             title="Multi-Function Display"
-            style={{ flex: 1, minHeight: 0 }}
+            style={{ flex: "4 1 0%", minWidth: 0, minHeight: 0 }}
             headerRight={
               ewMfdTab === "MAP" ? (
                 <span style={{ color: AMBER_DIM, fontSize: 8 }}>MAP ONLINE</span>
@@ -4320,6 +5025,313 @@ export default function EWConsole() {
               </div>
             </div>
           </Panel>
+          <div
+            style={{
+              flex: "1 1 0%",
+              minWidth: 0,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+            }}
+          >
+            <Panel
+              title="RWR"
+              style={{ flex: "0 0 auto", minWidth: 0, alignSelf: "stretch" }}
+              dimmed={!ewRwrPowered}
+              headerRight={(
+                <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexShrink: 1 }}>
+                  <button
+                    type="button"
+                    onClick={() => setEwRwrMuted(!ewRwrMuted)}
+                    style={{
+                      padding: "1px 5px",
+                      fontSize: 8,
+                      letterSpacing: 0.5,
+                      borderRadius: 1,
+                      border: `1px solid ${ewRwrMuted ? "rgba(130,130,130,0.5)" : AMBER}`,
+                      background: ewRwrMuted
+                        ? "rgba(90,90,90,0.16)"
+                        : "rgba(255,176,0,0.16)",
+                      color: ewRwrMuted ? "rgba(180,180,180,0.85)" : AMBER_GLOW,
+                      fontFamily: font,
+                      cursor: "pointer",
+                    }}
+                    aria-label={ewRwrMuted ? "Unmute RWR audio" : "Mute RWR audio"}
+                    title={ewRwrMuted ? "Restore RWR audio at current volume" : "Silence RWR audio (volume unchanged)"}
+                  >
+                    {ewRwrMuted ? "MUTED" : "MUTE"}
+                  </button>
+                  <span style={{ color: AMBER_DIM, fontSize: 7, letterSpacing: 0.5 }}>VOL</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.02}
+                    value={ewRwrVolume}
+                    onChange={(e) => setEwRwrVolume(Number(e.target.value))}
+                    aria-label="RWR audio volume"
+                    title={`RWR audio ${Math.round(ewRwrVolume * 100)}%`}
+                    style={{
+                      width: 52,
+                      height: 4,
+                      padding: 0,
+                      margin: 0,
+                      verticalAlign: "middle",
+                      accentColor: AMBER,
+                      cursor: "pointer",
+                      opacity: ewRwrPowered && !ewRwrMuted ? 0.95 : 0.4,
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setEwRwrPowered(!ewRwrPowered)}
+                    style={{
+                      padding: "1px 6px",
+                      fontSize: 8,
+                      letterSpacing: 1,
+                      borderRadius: 1,
+                      border: `1px solid ${ewRwrPowered ? AMBER : "rgba(130,130,130,0.5)"}`,
+                      background: ewRwrPowered
+                        ? "rgba(255,176,0,0.16)"
+                        : "rgba(90,90,90,0.16)",
+                      color: ewRwrPowered ? AMBER_GLOW : "rgba(180,180,180,0.85)",
+                      fontFamily: font,
+                      cursor: "pointer",
+                    }}
+                    aria-label="Toggle RWR power"
+                  >
+                    {ewRwrPowered ? "ON" : "OFF"}
+                  </button>
+                </div>
+              )}
+            >
+              <div
+                style={{
+                  boxSizing: "border-box",
+                  width: "calc(100% - 12px)",
+                  maxWidth: "100%",
+                  aspectRatio: "1 / 1",
+                  margin: 6,
+                  alignSelf: "center",
+                  flexShrink: 0,
+                  borderRadius: 2,
+                  border: "1px solid rgba(0, 255, 100, 0.35)",
+                  overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 0,
+                }}
+              >
+                <RWRDisplay layout="fill" />
+              </div>
+            </Panel>
+            <Panel
+              title="RDR MGMT"
+              style={{ flex: "1 1 0%", minWidth: 0, minHeight: 0 }}
+              headerRight={(
+                <span style={{ color: radarOn ? AMBER_GLOW : AMBER_DIM, fontSize: 8, letterSpacing: 0.5 }}>
+                  {radarOn ? `${radarPowerClamped}%` : "OFF"}
+                </span>
+              )}
+            >
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  margin: 6,
+                  borderRadius: 2,
+                  border: `1px solid ${AMBER_DIM}55`,
+                  background: "rgba(8,8,8,0.35)",
+                  boxSizing: "border-box",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                  padding: 8,
+                }}
+                aria-label="Radar management"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (radarOn) {
+                      setEwRadar({ radarOn: false, radarPower: 0 });
+                      return;
+                    }
+                    setEwRadar({ radarOn: true, radarPower: Math.max(1, radarPowerClamped) });
+                  }}
+                  style={{
+                    width: "100%",
+                    padding: "6px 8px",
+                    borderRadius: 1,
+                    border: `1px solid ${radarOn ? AMBER : "rgba(130,130,130,0.5)"}`,
+                    background: radarOn ? "rgba(255,176,0,0.16)" : "rgba(90,90,90,0.16)",
+                    color: radarOn ? AMBER_GLOW : "rgba(180,180,180,0.85)",
+                    fontFamily: font,
+                    fontSize: 10,
+                    letterSpacing: 1,
+                    cursor: "pointer",
+                  }}
+                  aria-label={radarOn ? "Turn radar off" : "Turn radar on"}
+                  title={radarOn ? "Power down radar (0%)" : "Restore radar at last power or minimum 1%"}
+                >
+                  {`RADAR ${radarOn ? "ON" : "OFF"}`}
+                </button>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: 0 }}>
+                  <span style={{ color: AMBER_DIM, fontFamily: font, fontSize: 9, letterSpacing: 1 }}>POWER</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={radarPowerClamped}
+                      disabled={radarPowerRetuning}
+                      onChange={(e) => {
+                        if (radarPowerRetuning) return;
+                        const next = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                        setRadarPower(next);
+                      }}
+                      aria-label="Radar power"
+                      aria-disabled={radarPowerRetuning}
+                      title={
+                        radarPowerRetuning
+                          ? "Carrier retune: power locked (1% dip, then restore)"
+                          : `Radar power ${radarPowerClamped}%`
+                      }
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        height: 4,
+                        padding: 0,
+                        margin: 0,
+                        accentColor: AMBER,
+                        cursor: radarPowerRetuning ? "not-allowed" : "pointer",
+                        opacity: radarPowerRetuning ? 0.45 : 0.95,
+                      }}
+                    />
+                    <span
+                      style={{
+                        color: AMBER_GLOW,
+                        fontFamily: font,
+                        fontSize: 10,
+                        letterSpacing: 0.5,
+                        width: 36,
+                        textAlign: "right",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {`${radarPowerClamped}%`}
+                    </span>
+                  </div>
+                </div>
+                <div
+                  role="radiogroup"
+                  aria-label="Pulse repetition frequency"
+                  style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                >
+                  <span style={{ color: AMBER_DIM, fontFamily: font, fontSize: 9, letterSpacing: 1 }}>PRF</span>
+                  <div
+                    style={{
+                      display: "flex",
+                      border: `1px solid ${AMBER_DIM}77`,
+                      background: "rgba(0,0,0,0.35)",
+                      borderRadius: 1,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {(["LOW", "MED", "HIGH"]).map((prf, i) => {
+                      const active = radarPRF === prf;
+                      return (
+                        <button
+                          key={prf}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => setRadarPRF(prf)}
+                          style={{
+                            flex: 1,
+                            padding: "5px 4px",
+                            border: "none",
+                            borderRight: i < 2 ? `1px solid ${AMBER_DIM}55` : "none",
+                            background: active ? "rgba(255,176,0,0.18)" : "transparent",
+                            color: active ? AMBER_GLOW : AMBER_DIM,
+                            fontFamily: font,
+                            fontSize: 9,
+                            letterSpacing: 0.8,
+                            cursor: "pointer",
+                          }}
+                          title={`PRF ${prf}`}
+                        >
+                          {prf}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div
+                  role="radiogroup"
+                  aria-label="Radar track mode"
+                  style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                >
+                  <span style={{ color: AMBER_DIM, fontFamily: font, fontSize: 9, letterSpacing: 1 }}>TRK</span>
+                  <div
+                    style={{
+                      display: "flex",
+                      border: `1px solid ${AMBER_DIM}77`,
+                      background: "rgba(0,0,0,0.35)",
+                      borderRadius: 1,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {(["TWS", "STT"]).map((mode, i) => {
+                      const active = radarTrackMode === mode;
+                      const hasHardLock = Object.values(lockState).some((v) => v === "hard");
+                      const disabled = mode === "STT" && !hasHardLock;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          disabled={disabled}
+                          onClick={() => {
+                            if (disabled) return;
+                            setRadarTrackMode(mode);
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: "5px 4px",
+                            border: "none",
+                            borderRight: i < 1 ? `1px solid ${AMBER_DIM}55` : "none",
+                            background: active ? "rgba(255,176,0,0.18)" : "transparent",
+                            color: disabled ? `${AMBER_DIM}66` : active ? AMBER_GLOW : AMBER_DIM,
+                            fontFamily: font,
+                            fontSize: 9,
+                            letterSpacing: 0.8,
+                            cursor: disabled ? "not-allowed" : "pointer",
+                            opacity: disabled ? 0.5 : 1,
+                          }}
+                          title={mode === "TWS" ? "Track While Scan" : "Single Target Track"}
+                        >
+                          {mode}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <RadarFreqKnob
+                  valueNorm={radarFreq}
+                  onChange={setRadarFreq}
+                  committedNorm={radarFreqCommitted}
+                  onSet={handleRadarFreqSet}
+                  commitDisabled={radarPowerRetuning}
+                  font={font}
+                />
+              </div>
+            </Panel>
+          </div>
+          </div>
           <div style={{
             display: "flex",
             flexDirection: "row",
@@ -4528,11 +5540,12 @@ export default function EWConsole() {
                       position: "relative",
                       overflow: "hidden",
                       touchAction: "none",
+                      pointerEvents: rdneLockedTargetMarker ? "auto" : "none",
                     }}
                     aria-label="RDNE — Relativistic Drag Net Emitter range cue"
                     onContextMenu={(e) => e.preventDefault()}
                     onPointerDown={(e) => {
-                      if (!rdnePowered || !rdneArmed) return;
+                      if (!rdnePowered || !rdneArmed || !rdneLockedTargetMarker) return;
                       const surface = rdneSurfaceRef.current;
                       if (!surface) return;
                       if (e.button === 0 || e.button === 2) e.preventDefault();
@@ -4566,21 +5579,50 @@ export default function EWConsole() {
                       }
                     }}
                   >
-                    {rdneLockedTargetMarker ? (
+                    {rdnePowered && rdneArmed && !rdneLockedTargetMarker ? (
                       <div
                         style={{
                           position: "absolute",
                           inset: 0,
-                          zIndex: 0,
+                          zIndex: 2,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
                           pointerEvents: "none",
-                          backgroundImage:
-                            "radial-gradient(circle, rgba(255, 204, 68, 0.26) 1px, transparent 1.45px)",
-                          backgroundSize: `${RDNE_LOCK_GRID_STEP_PX}px ${RDNE_LOCK_GRID_STEP_PX}px`,
-                          backgroundPosition: `${RDNE_LOCK_GRID_STEP_PX / 2}px ${RDNE_LOCK_GRID_STEP_PX / 2}px`,
                         }}
                         aria-hidden
-                      />
+                      >
+                        <span
+                          style={{
+                            fontFamily: font,
+                            fontSize: 12,
+                            fontWeight: 800,
+                            letterSpacing: "0.14em",
+                            color: AMBER_DIM,
+                            textShadow:
+                              "0 0 6px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.75), 0 0 8px rgba(255, 204, 68, 0.35)",
+                            userSelect: "none",
+                            textAlign: "center",
+                            padding: "0 6px",
+                          }}
+                        >
+                          NO TARGET LOCKED
+                        </span>
+                      </div>
                     ) : null}
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        zIndex: 0,
+                        pointerEvents: "none",
+                        backgroundImage:
+                          "radial-gradient(circle, rgba(255, 204, 68, 0.26) 1px, transparent 1.45px)",
+                        backgroundSize: `${RDNE_LOCK_GRID_STEP_PX}px ${RDNE_LOCK_GRID_STEP_PX}px`,
+                        backgroundPosition: `${RDNE_LOCK_GRID_STEP_PX / 2}px ${RDNE_LOCK_GRID_STEP_PX / 2}px`,
+                      }}
+                      aria-hidden
+                    />
                     {rdneLockedTargetMarker ? (
                       <div
                         style={{
@@ -4894,7 +5936,8 @@ export default function EWConsole() {
       }}>
         <span>CONTACTS TRACKED: {visibleContacts.length}</span>
         <span>RADAR: {radarOn ? effectiveRadarMode : "OFF"}</span>
-        <span>FREQ: {(radarFreq * 18 + 2).toFixed(1)} GHz</span>
+        <span>TRK: {radarTrackMode}</span>
+        <span>FREQ: {ewRadarFreqNormToMhz(radarFreqCommitted)} MHz</span>
         <span>PRF: {radarPRF}</span>
         <span style={{ color: radarOn ? RED_ALERT : AMBER_DIM }}>
           {radarOn ? "⚠ ACTIVELY EMITTING" : "LOW OBSERVABLE"}

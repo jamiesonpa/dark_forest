@@ -2898,6 +2898,20 @@ body {
   display: block;
 }
 
+/* EW station / embedded: largest centered square inside panel body */
+.rwr-scope-fill-outer {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rwr-scope-fill-square canvas {
+  display: block;
+}
+
 .rwr-ring {
   fill: none;
   stroke: rgba(0, 255, 100, 0.2);

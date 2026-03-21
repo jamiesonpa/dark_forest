@@ -18,6 +18,7 @@ import {
   MAX_ROLL_DEG,
   MAX_TURN_RATE,
   MWD_SPEED,
+  RDNE_MAX_ACCEL_MS2,
   PITCH_ACCEL,
   PITCH_RATE_GAIN,
   REACTION_DELAY,
@@ -789,7 +790,7 @@ export function SimulationLoop() {
         const offsetLen = Math.sqrt(ox * ox + oz * oz)
         if (offsetLen > 0.001) {
           const dirSign = rdneEffect.kind === 'sink' ? 1 : -1
-          const accel = 18 * rdneEffect.forceMagnitude
+          const accel = RDNE_MAX_ACCEL_MS2 * rdneEffect.forceMagnitude
           rdneDriftRef.current = [
             rdneDriftRef.current[0] + (ox / offsetLen) * dirSign * accel * dt,
             rdneDriftRef.current[1],

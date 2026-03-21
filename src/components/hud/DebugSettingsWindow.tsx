@@ -38,6 +38,8 @@ export function DebugSettingsWindow() {
   const removeDebugAsteroid = useGameStore((s) => s.removeDebugAsteroid)
   const removeNpcShip = useGameStore((s) => s.removeNpcShip)
   const setNpcShipConfig = useGameStore((s) => s.setNpcShipConfig)
+  const attemptNpcHardLockLocalPlayer = useGameStore((s) => s.attemptNpcHardLockLocalPlayer)
+  const launchNpcTorpedoAtLocalPlayer = useGameStore((s) => s.launchNpcTorpedoAtLocalPlayer)
   const npcShips = useGameStore((s) => s.npcShips)
   const randomizePlanetTextures = useGameStore((s) => s.randomizePlanetTextures)
   const revealEwCelestial = useGameStore((s) => s.revealEwCelestial)
@@ -541,6 +543,55 @@ export function DebugSettingsWindow() {
                   <option value="stt">STT</option>
                 </select>
               </label>
+            </div>
+            <div className="hud-debug-target-pos">
+              <label className="hud-debug-target-axis" style={{ flex: 1, minWidth: 0 }}>
+                RAD PWR
+                <input
+                  className="hud-debug-target-input"
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={Math.round(cfg.radarPower ?? 0)}
+                  onChange={(e) =>
+                    setNpcShipConfig(npcId, { radarPower: Number(e.target.value) || 0 })
+                  }
+                />
+                <span className="hud-debug-value" style={{ marginLeft: 6, flexShrink: 0 }}>
+                  {Math.round(cfg.radarPower ?? 0)}%
+                </span>
+              </label>
+            </div>
+            {cfg.hardLockLocalPlayer && (
+              <div className="hud-debug-row">
+                <span className="hud-debug-axis">LOCK</span>
+                <span className="hud-debug-value" style={{ color: '#ff6b6b' }}>
+                  HARD (you)
+                </span>
+              </div>
+            )}
+            <div className="hud-debug-target-pos" style={{ flexWrap: 'wrap', gap: 4 }}>
+              <button
+                type="button"
+                className="hud-debug-spawn-roids"
+                style={{ fontSize: '0.65rem', padding: '4px 6px', flex: '1 1 auto' }}
+                onClick={() => {
+                  attemptNpcHardLockLocalPlayer(npcId)
+                }}
+              >
+                LOCK YOU IF IN CONE
+              </button>
+              <button
+                type="button"
+                className="hud-debug-spawn-roids"
+                style={{ fontSize: '0.65rem', padding: '4px 6px', flex: '1 1 auto' }}
+                disabled={!cfg.hardLockLocalPlayer}
+                onClick={() => {
+                  launchNpcTorpedoAtLocalPlayer(npcId)
+                }}
+              >
+                FIRE TORPEDO
+              </button>
             </div>
           </div>
         )

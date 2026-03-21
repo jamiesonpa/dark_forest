@@ -8,6 +8,7 @@ import { appRootStyle } from '@/app/styles'
 import { useAppHotkeys } from '@/app/useAppHotkeys'
 import { useMultiplayerLifecycle } from '@/app/useMultiplayerLifecycle'
 import { multiplayerClient, type MultiplayerStatus } from '@/network/colyseusClient'
+import { RwrAudioListener } from '@/components/audio/RwrAudioListener'
 import { SimulationLoop } from '@/systems/simulation/SimulationLoop'
 import { useGameStore } from '@/state/gameStore'
 import {
@@ -16,6 +17,7 @@ import {
   selectStarSystemSeed,
 } from '@/state/selectors'
 import { StationSelector, type StationId } from '@/ui/stations/StationSelector'
+import { initButtonAudio, teardownButtonAudio } from '@/utils/buttonAudio'
 
 function toWsUrl(input: string) {
   const trimmed = input.trim()
@@ -72,6 +74,11 @@ export default function App() {
     setStarSystemFormState(toFormState(starSystemSeed, starSystemConfig))
   }, [starSystemConfig, starSystemSeed])
 
+  useEffect(() => {
+    initButtonAudio()
+    return teardownButtonAudio
+  }, [])
+
   const connectMultiplayer = useCallback(async () => {
     setJoinBusy(true)
     setStatusDetail('')
@@ -100,6 +107,7 @@ export default function App() {
   return (
     <div style={appRootStyle}>
       <SimulationLoop />
+      <RwrAudioListener />
       <StationLayers station={station} />
       <StationSelector current={station} onSwitch={setStation} />
       <AppSidebar

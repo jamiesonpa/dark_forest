@@ -50,7 +50,7 @@ export interface GridObject {
   distance?: number
 }
 
-export type ThreatType = 'S' | 'A' | 'M' | 'U' | '2' | '4' | '8' | '10' | '15' | '20'
+export type ThreatType = 'S' | 'A' | 'M' | 'U' | 'T' | '2' | '4' | '8' | '10' | '15' | '20'
 
 export interface RWRContact {
   id: string

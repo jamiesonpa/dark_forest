@@ -266,7 +266,8 @@ function resolveLockTargetPosition(
   lockId: string | null
 ): [number, number, number] | null {
   if (!lockId) return null
-  const ship = state.shipsById[lockId]
+  const localId = state.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+  const ship = state.shipsById[lockId] ?? (lockId === localId ? state.ship : undefined)
   if (!ship) return null
   return [ship.position[0], ship.position[1], ship.position[2]]
 }
@@ -276,7 +277,8 @@ function resolveLockTargetVelocity(
   lockId: string | null
 ): [number, number, number] | null {
   if (!lockId) return null
-  const ship = state.shipsById[lockId]
+  const localId = state.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+  const ship = state.shipsById[lockId] ?? (lockId === localId ? state.ship : undefined)
   if (!ship) return null
   const vx = ship.actualVelocity[0]
   const vy = ship.actualVelocity[1]
@@ -352,6 +354,10 @@ function sanitizeNetworkCylinders(
       ) {
         continue
       }
+      const launchedBy =
+        typeof cylinder.launchedByShipId === 'string' && cylinder.launchedByShipId.length > 0
+          ? cylinder.launchedByShipId
+          : ownerId
       next.push({
         id: `${ownerId}::${cylinder.id}`,
         currentCelestialId: cylinder.currentCelestialId,
@@ -362,6 +368,7 @@ function sanitizeNetworkCylinders(
         direction,
         targetLockId: cylinder.targetLockId ?? null,
         flightTimeSeconds: Math.max(0, cylinder.flightTimeSeconds),
+        launchedByShipId: launchedBy,
         ...(cylinder.guidance === 'ir_seeker' ? { guidance: 'ir_seeker' as const } : {}),
       })
       if (next.length >= NETWORK_ORDNANCE_MAX_PER_CATEGORY) return next
@@ -796,11 +803,66 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
             direction: forward,
             targetLockId,
             flightTimeSeconds: 0,
+            launchedByShipId: localId,
             ...(explicitTarget ? { guidance: 'ir_seeker' as const } : {}),
           },
         ],
       }
     }),
+  launchNpcTorpedoAtLocalPlayer: (npcId) => {
+    let ok = false
+    set((s) => {
+      const npcCfg = s.npcShips[npcId]
+      const launcher = s.shipsById[npcId]
+      if (!npcCfg?.hardLockLocalPlayer || !launcher) return {}
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      if (launcher.currentCelestialId !== (s.shipsById[localId] ?? s.ship).currentCelestialId) {
+        return {}
+      }
+      if (!resolveLockTargetPosition(s, localId)) return {}
+
+      const baseLength =
+        Number.isFinite(s.playerShipBoundingLength) && s.playerShipBoundingLength > 1
+          ? s.playerShipBoundingLength
+          : FALLBACK_PLAYER_SHIP_BOUNDING_LENGTH
+      const normalizedLength = Math.max(1, baseLength)
+      const diameter = (normalizedLength / 20) * LAUNCHED_CYLINDER_SCALE
+      const radius = diameter / 2
+      const length = diameter * 5
+      const forward = getShipForwardVector(launcher.actualHeading, launcher.actualInclination)
+      const spawnOffset = normalizedLength * 0.6 + length * 0.5
+      const velocityMagnitude = Math.max(0, launcher.actualSpeed)
+      const velocity: [number, number, number] = [
+        forward[0] * velocityMagnitude,
+        forward[1] * velocityMagnitude,
+        forward[2] * velocityMagnitude,
+      ]
+      const id = `npc-launch-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+      ok = true
+      return {
+        launchedCylinders: [
+          ...s.launchedCylinders,
+          {
+            id,
+            currentCelestialId: launcher.currentCelestialId,
+            position: [
+              launcher.position[0] + forward[0] * spawnOffset,
+              launcher.position[1] + forward[1] * spawnOffset,
+              launcher.position[2] + forward[2] * spawnOffset,
+            ],
+            velocity,
+            radius,
+            length,
+            direction: forward,
+            targetLockId: localId,
+            flightTimeSeconds: 0,
+            launchedByShipId: npcId,
+          },
+        ],
+      }
+    })
+    return ok
+  },
   advanceLaunchedCylinders: (deltaSeconds) =>
     set((s) => {
       if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0 || s.launchedCylinders.length === 0) {

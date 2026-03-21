@@ -1,6 +1,9 @@
 let audioCtx: AudioContext | null = null
 let isMuted = false
+/** RWR slider 0…1 — scales new-contact and lock tones. */
 let masterVolume = 0.5
+/** RWR hardware power (EW / pilot); when false, no RWR tones. */
+let rwrReceiverPowered = true
 
 function getCtx(): AudioContext {
   if (!audioCtx) audioCtx = new AudioContext()
@@ -15,43 +18,60 @@ export function setVolume(v: number) {
   masterVolume = Math.max(0, Math.min(1, v))
 }
 
-let lockInterval: ReturnType<typeof setInterval> | null = null
-
-function playChirp() {
-  if (isMuted) return
-  const ctx = getCtx()
-  const now = ctx.currentTime
-
-  const osc1 = ctx.createOscillator()
-  const osc2 = ctx.createOscillator()
-  const gain = ctx.createGain()
-
-  osc1.type = 'square'
-  osc1.frequency.setValueAtTime(2800, now)
-  osc1.frequency.setValueAtTime(3400, now + 0.04)
-
-  osc2.type = 'square'
-  osc2.frequency.setValueAtTime(1400, now)
-  osc2.frequency.setValueAtTime(1700, now + 0.04)
-
-  gain.gain.setValueAtTime(0.06 * masterVolume, now)
-  gain.gain.linearRampToValueAtTime(0.075 * masterVolume, now + 0.02)
-  gain.gain.linearRampToValueAtTime(0, now + 0.08)
-
-  osc1.connect(gain)
-  osc2.connect(gain)
-  gain.connect(ctx.destination)
-
-  osc1.start(now)
-  osc2.start(now)
-  osc1.stop(now + 0.08)
-  osc2.stop(now + 0.08)
+export function setRwrReceiverPowered(powered: boolean) {
+  rwrReceiverPowered = powered
 }
 
+const RWR_NEW_HZ = 465
+const RWR_LOCK_HZ_A = 575
+const RWR_LOCK_HZ_B = 375
+const RWR_NEW_BEEP_S = 0.35
+const RWR_LOCK_BEEP_S = 0.25
+/** Peak gain at volume=1 (sine); scaled by `masterVolume`. */
+const RWR_SINE_PEAK = 0.08
+
+function playRwrSineBeep(freqHz: number, durationSec: number) {
+  if (!rwrReceiverPowered || masterVolume <= 0) return
+  const ctx = getCtx()
+  void ctx.resume()
+  const now = ctx.currentTime
+  const peak = RWR_SINE_PEAK * masterVolume
+  const attack = Math.min(0.004, durationSec * 0.1)
+  const release = Math.min(0.02, durationSec * 0.15)
+
+  const osc = ctx.createOscillator()
+  const gain = ctx.createGain()
+  osc.type = 'sine'
+  osc.frequency.setValueAtTime(freqHz, now)
+
+  gain.gain.setValueAtTime(0, now)
+  gain.gain.linearRampToValueAtTime(peak, now + attack)
+  const holdEnd = Math.max(now + attack, now + durationSec - release)
+  gain.gain.setValueAtTime(peak, holdEnd)
+  gain.gain.linearRampToValueAtTime(0, now + durationSec)
+
+  osc.connect(gain)
+  gain.connect(ctx.destination)
+  osc.start(now)
+  osc.stop(now + durationSec + 0.02)
+}
+
+let lockInterval: ReturnType<typeof setInterval> | null = null
+let lockPhase = 0
+
+function playAlternatingLockBeep() {
+  const freq = lockPhase % 2 === 0 ? RWR_LOCK_HZ_A : RWR_LOCK_HZ_B
+  lockPhase += 1
+  playRwrSineBeep(freq, RWR_LOCK_BEEP_S)
+}
+
+/** Alternating 575 Hz / 375 Hz beeps, 0.25 s each, while lock is active. */
 export function startLockTone() {
+  stopTorpedoWarnTone()
   if (lockInterval) return
-  playChirp()
-  lockInterval = setInterval(playChirp, 250)
+  lockPhase = 0
+  playAlternatingLockBeep()
+  lockInterval = setInterval(playAlternatingLockBeep, RWR_LOCK_BEEP_S * 1000)
 }
 
 export function stopLockTone() {
@@ -59,46 +79,40 @@ export function stopLockTone() {
     clearInterval(lockInterval)
     lockInterval = null
   }
+  lockPhase = 0
 }
 
+const RWR_TORP_WARN_BEEP_S = 0.1
+
+let torpWarnInterval: ReturnType<typeof setInterval> | null = null
+let torpWarnPhase = 0
+
+function playAlternatingTorpWarnBeep() {
+  const freq = torpWarnPhase % 2 === 0 ? RWR_LOCK_HZ_A : RWR_LOCK_HZ_B
+  torpWarnPhase += 1
+  playRwrSineBeep(freq, RWR_TORP_WARN_BEEP_S)
+}
+
+/** Alternating 575 Hz / 375 Hz, 0.1 s each, while an enemy torpedo is homing on you. */
+export function startTorpedoWarnTone() {
+  stopLockTone()
+  if (torpWarnInterval) return
+  torpWarnPhase = 0
+  playAlternatingTorpWarnBeep()
+  torpWarnInterval = setInterval(playAlternatingTorpWarnBeep, RWR_TORP_WARN_BEEP_S * 1000)
+}
+
+export function stopTorpedoWarnTone() {
+  if (torpWarnInterval) {
+    clearInterval(torpWarnInterval)
+    torpWarnInterval = null
+  }
+  torpWarnPhase = 0
+}
+
+/** Single 465 Hz beep, 0.35 s, when a new RWR contact appears. */
 export function playNewContactTone() {
-  if (isMuted) return
-  const ctx = getCtx()
-  const now = ctx.currentTime
-
-  const osc = ctx.createOscillator()
-  const gain = ctx.createGain()
-
-  osc.type = 'sine'
-  osc.frequency.setValueAtTime(1800, now)
-  osc.frequency.linearRampToValueAtTime(1200, now + 0.15)
-
-  gain.gain.setValueAtTime(0.04 * masterVolume, now)
-  gain.gain.linearRampToValueAtTime(0.05 * masterVolume, now + 0.03)
-  gain.gain.linearRampToValueAtTime(0, now + 0.15)
-
-  osc.connect(gain)
-  gain.connect(ctx.destination)
-
-  osc.start(now)
-  osc.stop(now + 0.15)
-
-  const osc2 = ctx.createOscillator()
-  const gain2 = ctx.createGain()
-
-  osc2.type = 'sine'
-  osc2.frequency.setValueAtTime(1600, now + 0.2)
-  osc2.frequency.linearRampToValueAtTime(1000, now + 0.35)
-
-  gain2.gain.setValueAtTime(0, now)
-  gain2.gain.setValueAtTime(0.035 * masterVolume, now + 0.2)
-  gain2.gain.linearRampToValueAtTime(0, now + 0.35)
-
-  osc2.connect(gain2)
-  gain2.connect(ctx.destination)
-
-  osc2.start(now + 0.2)
-  osc2.stop(now + 0.35)
+  playRwrSineBeep(RWR_NEW_HZ, RWR_NEW_BEEP_S)
 }
 
 let missileInterval: ReturnType<typeof setInterval> | null = null

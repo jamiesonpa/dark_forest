@@ -1,5 +1,6 @@
 import type { StateCreator } from 'zustand'
 import type { GameStore } from '@/state/types'
+import { B_SCOPE_AZ_LIMIT_DEG } from '@/systems/ew/bScopeConstants'
 
 function dedupeCelestialIds(ids: string[]) {
   const seen = new Set<string>()
@@ -22,9 +23,14 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
   ewRadarMode: 'RWS',
   ewRadarPower: 50,
   ewRadarFreq: 0.5,
+  ewRadarFreqCommitted: 0.5,
   ewRadarPRF: 'MED',
+  ewRadarTrackMode: 'TWS',
   ewUpperScannerOn: true,
   ewLowerScannerOn: true,
+  ewRwrPowered: true,
+  ewRwrVolume: 1,
+  ewRwrMuted: false,
   irstCameraOn: true,
   ewActiveGravAnalysis: null,
   ewLastGravAnalysisResult: null,
@@ -42,6 +48,12 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
   setEwJammers: (jammers) => set({ ewJammers: jammers }),
   setEwUpperScannerOn: (on) => set({ ewUpperScannerOn: on }),
   setEwLowerScannerOn: (on) => set({ ewLowerScannerOn: on }),
+  setEwRwrPowered: (on) => set({ ewRwrPowered: on }),
+  setEwRwrVolume: (volume) =>
+    set({
+      ewRwrVolume: Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 0)),
+    }),
+  setEwRwrMuted: (muted) => set({ ewRwrMuted: !!muted }),
   setIrstCameraOn: (on) => set({ irstCameraOn: on }),
   startEwGravAnalysis: (session) =>
     set({
@@ -79,6 +91,7 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
     set({
       ewRevealedCelestialIds: dedupeCelestialIds(celestialIds),
     }),
+  setEwRadarTrackMode: (mode) => set({ ewRadarTrackMode: mode }),
   setEwLockState: (updater) =>
     set((s) => ({ ewLockState: updater(s.ewLockState) })),
   setEwIffState: (updater) =>
@@ -89,7 +102,18 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
       ...(partial.radarMode !== undefined ? { ewRadarMode: partial.radarMode } : {}),
       ...(partial.radarPower !== undefined ? { ewRadarPower: partial.radarPower } : {}),
       ...(partial.radarFreq !== undefined ? { ewRadarFreq: partial.radarFreq } : {}),
+      ...(partial.radarFreqCommitted !== undefined
+        ? {
+            ewRadarFreqCommitted: Math.max(
+              0,
+              Math.min(1, Number.isFinite(partial.radarFreqCommitted) ? partial.radarFreqCommitted : 0),
+            ),
+          }
+        : {}),
       ...(partial.radarPRF !== undefined ? { ewRadarPRF: partial.radarPRF } : {}),
     })),
   setRwrContacts: (contacts) => set({ rwrContacts: contacts }),
+  bScopeViewMinDeg: -B_SCOPE_AZ_LIMIT_DEG,
+  bScopeViewMaxDeg: B_SCOPE_AZ_LIMIT_DEG,
+  setBScopeView: (minDeg, maxDeg) => set({ bScopeViewMinDeg: minDeg, bScopeViewMaxDeg: maxDeg }),
 })

@@ -19,3 +19,6 @@ export const KEY_INCL_BASE_RATE = 12
 export const KEY_INCL_ACCEL_RATE = 24
 export const KEY_INCL_MAX_RATE = 120
 export const KEY_SPEED_RATE = 80
+
+/** Peak RDNE-induced acceleration in m/s² on targeted ships at EW forceMagnitude = 1. */
+export const RDNE_MAX_ACCEL_MS2 = 54

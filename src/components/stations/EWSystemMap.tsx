@@ -10,7 +10,11 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGameStore } from '@/state/gameStore'
 import { getCelestialById } from '@/utils/systemData'
-import { B_SCOPE_AZ_LIMIT_DEG, B_SCOPE_RANGE_OPTIONS_KM } from '@/systems/ew/bScopeConstants'
+import {
+  B_SCOPE_AZ_LIMIT_DEG,
+  B_SCOPE_RANGE_OPTIONS_KM,
+  bScopeRadarDetectionRangeM,
+} from '@/systems/ew/bScopeConstants'
 import {
   bearingInclinationFromVector,
   formatDistanceAu,
@@ -29,10 +33,49 @@ const LINE_GREY = '#7d848e'
 const SELECT_BLUE = '#6cb8ff'
 
 const B_SCOPE_MIN_VIEW_SPAN_DEG = 12
+/** Widest azimuth window on the B-scope (matches wheel zoom-out clamp). Used to scale PRF when zoomed in. */
+const B_SCOPE_AZ_MAX_VIEW_SPAN_DEG = B_SCOPE_AZ_LIMIT_DEG * 2
 const B_SCOPE_AZ_GRID_STEP_DEG = 5
 const B_SCOPE_GREEN = '#44ff66'
+
+/** Pan the B-scope azimuth window; clamps so it stays inside ±{@link B_SCOPE_AZ_LIMIT_DEG} (full radar extent). */
+function shiftBScopeAzWindow(
+  minDeg: number,
+  maxDeg: number,
+  deltaDeg: number
+): { minDeg: number; maxDeg: number } {
+  const span = maxDeg - minDeg
+  let nextMin = minDeg + deltaDeg
+  let nextMax = nextMin + span
+  if (nextMin < -B_SCOPE_AZ_LIMIT_DEG) {
+    const s = -B_SCOPE_AZ_LIMIT_DEG - nextMin
+    nextMin += s
+    nextMax += s
+  }
+  if (nextMax > B_SCOPE_AZ_LIMIT_DEG) {
+    const s = nextMax - B_SCOPE_AZ_LIMIT_DEG
+    nextMin -= s
+    nextMax -= s
+  }
+  return { minDeg: nextMin, maxDeg: nextMax }
+}
 const B_SCOPE_GREEN_DIM = '#1f8a39'
 const B_SCOPE_GREEN_GLOW = '#88ffaa'
+
+/** Target track snapshot rate (Hz) by PRF: LOW 1, MED 2, HIGH 3. */
+function bScopePrfTrackRefreshHz(prf: string): number {
+  if (prf === 'HIGH') return 3
+  if (prf === 'LOW') return 1
+  return 2
+}
+
+/**
+ * Azimuth sweep bar left–right rate — half of {@link bScopePrfTrackRefreshHz} before zoom scaling.
+ * Pass effective track Hz after zoom: `bScopePrfSweepBarHzFromTrackHz(trackHz)`.
+ */
+function bScopePrfSweepBarHzFromTrackHz(trackHz: number): number {
+  return trackHz * 0.5
+}
 
 /** MAP / RADAR views only; TV is handled on `EWConsole` MFD. */
 export type EwSystemMapMfdTab = 'MAP' | 'RADAR'
@@ -706,11 +749,23 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
     lastY: number
   } | null>(null)
   const dragMovedRef = useRef(false)
+  const bScopePrfSnapRef = useRef<{
+    key: string
+    tracks: BScopeTrack[]
+    nearest: BScopeTrack | null
+  }>({ key: '', tracks: [], nearest: null })
+  /** Integrated sweep phase so PRF/zoom rate changes do not jump the bar (avoids sin(time·ω) discontinuity). */
+  const bScopeSweepPhaseRef = useRef(0)
+  const bScopeSweepLastTimeRef = useRef<number | null>(null)
+  /** Mirrors [bScopeViewMinDeg, bScopeViewMaxDeg] for coherent drag updates. */
+  const bScopeAzWindowRef = useRef({ min: -B_SCOPE_AZ_LIMIT_DEG, max: B_SCOPE_AZ_LIMIT_DEG })
+  const bScopeAzPanPointerRef = useRef<{ pointerId: number; lastClientX: number } | null>(null)
   const [bScopeRangeIdx, setBScopeRangeIdx] = useState(B_SCOPE_RANGE_OPTIONS_KM.length - 1)
   const [bScopeBearingMode, setBScopeBearingMode] = useState<'REL' | 'ABS'>('REL')
   const [bScopeViewMinDeg, setBScopeViewMinDeg] = useState(-B_SCOPE_AZ_LIMIT_DEG)
   const [bScopeViewMaxDeg, setBScopeViewMaxDeg] = useState(B_SCOPE_AZ_LIMIT_DEG)
   const [bScopeCursor, setBScopeCursor] = useState<{ xPct: number; yPct: number } | null>(null)
+  const [bScopeAzPanDragging, setBScopeAzPanDragging] = useState(false)
   const [orbit, setOrbit] = useState<OrbitState>({ yaw: -0.7, pitch: 0.62 })
   const [zoomDistance, setZoomDistance] = useState(10.5)
   const [isDragging, setIsDragging] = useState(false)
@@ -727,7 +782,11 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
   const setEwLockState = useGameStore((s) => s.setEwLockState)
   const ewRadarOn = useGameStore((s) => s.ewRadarOn)
   const ewRadarPower = useGameStore((s) => s.ewRadarPower)
+  const ewRadarPRF = useGameStore((s) => s.ewRadarPRF)
+  const ewRadarTrackMode = useGameStore((s) => s.ewRadarTrackMode)
+  const setEwRadarTrackMode = useGameStore((s) => s.setEwRadarTrackMode)
   const setEwRadar = useGameStore((s) => s.setEwRadar)
+  const setBScopeView = useGameStore((s) => s.setBScopeView)
   const currentCelestialId = useGameStore((s) => s.currentCelestialId)
   const warpState = useGameStore((s) => s.warpState)
   const warpSourceCelestialId = useGameStore((s) => s.warpSourceCelestialId)
@@ -925,14 +984,31 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
     ) / WORLD_UNITS_PER_AU
   const bScopeRangeKm = B_SCOPE_RANGE_OPTIONS_KM[bScopeRangeIdx] ?? 160
   const bScopeMaxRangeM = bScopeRangeKm * 1000
-  const bScopeAbsoluteMaxRangeKm = B_SCOPE_RANGE_OPTIONS_KM[B_SCOPE_RANGE_OPTIONS_KM.length - 1] ?? bScopeRangeKm
-  const bScopeAbsoluteMaxRangeM = bScopeAbsoluteMaxRangeKm * 1000
   const radarPowerClamped = clamp(ewRadarPower, 0, 100)
-  const radarPowerNorm = radarPowerClamped / 100
-  const bScopeDetectionRangeAbsM = bScopeAbsoluteMaxRangeM * (0.15 + radarPowerNorm * 0.85)
+  const bScopeDetectionRangeAbsM = bScopeRadarDetectionRangeM(ewRadarPower, ewRadarPRF)
   const bScopeDetectionRangeDisplayM = Math.min(bScopeDetectionRangeAbsM, bScopeMaxRangeM)
   const bScopeDetectionRangePct = clamp((bScopeDetectionRangeDisplayM / Math.max(1, bScopeMaxRangeM)) * 100, 0, 100)
   const bScopeViewSpanDeg = Math.max(1, bScopeViewMaxDeg - bScopeViewMinDeg)
+  /** Narrower azimuth window → energy focused in a smaller slice → higher effective PRF. */
+  const bScopePrfZoomScale =
+    B_SCOPE_AZ_MAX_VIEW_SPAN_DEG / Math.max(bScopeViewSpanDeg, B_SCOPE_MIN_VIEW_SPAN_DEG)
+  const bScopePrfTrackHzEffective = bScopePrfTrackRefreshHz(ewRadarPRF) * bScopePrfZoomScale
+  const bScopePrfSweepBarHzEffective = bScopePrfSweepBarHzFromTrackHz(bScopePrfTrackHzEffective)
+  if (!radarOperational) {
+    bScopeSweepLastTimeRef.current = null
+  } else if (bScopePrfSweepBarHzEffective > 0) {
+    const prevT = bScopeSweepLastTimeRef.current
+    if (prevT === null) {
+      bScopeSweepLastTimeRef.current = time
+    } else {
+      const dt = time - prevT
+      if (dt > 0) {
+        bScopeSweepPhaseRef.current += dt * Math.PI * 2 * bScopePrfSweepBarHzEffective
+      }
+      bScopeSweepLastTimeRef.current = time
+    }
+  }
+  const bScopePrfSweepCenterPct = ((Math.sin(bScopeSweepPhaseRef.current) + 1) / 2) * 100
   const bScopeAzTicks = useMemo(() => {
     const start = Math.ceil(bScopeViewMinDeg / B_SCOPE_AZ_GRID_STEP_DEG) * B_SCOPE_AZ_GRID_STEP_DEG
     const ticks: number[] = []
@@ -999,17 +1075,35 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
     () => (radarOperational ? bScopeAllTracks.filter((track) => track.rangeM <= bScopeDetectionRangeAbsM) : []),
     [bScopeAllTracks, bScopeDetectionRangeAbsM, radarOperational]
   )
-  const bScopeNearestTarget = useMemo(() => {
-    if (bScopeTargetTracks.length === 0) return null
-    return [...bScopeTargetTracks].sort((a, b) => a.rangeM - b.rangeM)[0] ?? null
-  }, [bScopeTargetTracks])
-  const bScopeTrackRelBearingById = useMemo<Record<string, number>>(() => {
-    const byId: Record<string, number> = {}
-    bScopeAllTracks.forEach((track) => {
-      byId[track.id] = track.relBearingDeg
-    })
+
+  const prfTrackSnapKey = radarOperational
+    ? `${ewRadarPRF}|${Math.floor(time * bScopePrfTrackHzEffective)}|${Math.round(bScopeViewSpanDeg * 1000)}`
+    : ''
+  if (!radarOperational) {
+    bScopePrfSnapRef.current = { key: '', tracks: [], nearest: null }
+  } else if (bScopePrfSnapRef.current.key !== prfTrackSnapKey) {
+    const nearest =
+      bScopeTargetTracks.length === 0
+        ? null
+        : [...bScopeTargetTracks].sort((a, b) => a.rangeM - b.rangeM)[0] ?? null
+    bScopePrfSnapRef.current = {
+      key: prfTrackSnapKey,
+      tracks: bScopeTracks.map((t) => ({ ...t })),
+      nearest: nearest ? { ...nearest } : null,
+    }
+  }
+  const bScopeTracksDisplay = radarOperational ? bScopePrfSnapRef.current.tracks : []
+  const bScopeNearestTargetDisplay = radarOperational ? bScopePrfSnapRef.current.nearest : null
+
+  const bScopeTrackById = useMemo(() => {
+    const byId: Record<string, BScopeTrack> = {}
+    for (const track of bScopeAllTracks) {
+      byId[track.id] = track
+    }
     return byId
   }, [bScopeAllTracks])
+
+  const isSTT = ewRadarTrackMode === 'STT'
 
   useEffect(() => {
     if (!radarOperational) {
@@ -1025,24 +1119,120 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
       let changed = false
       const next = { ...prev }
       lockIds.forEach((lockId) => {
-        const relBearing = bScopeTrackRelBearingById[lockId]
-        if (relBearing === undefined || Math.abs(relBearing) > B_SCOPE_AZ_LIMIT_DEG) {
+        const track = bScopeTrackById[lockId]
+        if (!track) {
+          delete next[lockId]
+          changed = true
+          return
+        }
+        const { relBearingDeg, rangeM } = track
+        const outsideRadarCone = Math.abs(relBearingDeg) > B_SCOPE_AZ_LIMIT_DEG
+        const outsideAzWindow =
+          !isSTT && (relBearingDeg < bScopeViewMinDeg || relBearingDeg > bScopeViewMaxDeg)
+        const outsideRange =
+          rangeM > bScopeMaxRangeM || rangeM > bScopeDetectionRangeAbsM
+        if (outsideRadarCone || outsideAzWindow || outsideRange) {
           delete next[lockId]
           changed = true
         }
       })
       return changed ? next : prev
     })
-  }, [bScopeTrackRelBearingById, ewLockState, radarOperational, setEwLockState])
+  }, [
+    bScopeDetectionRangeAbsM,
+    bScopeMaxRangeM,
+    bScopeTrackById,
+    bScopeViewMaxDeg,
+    bScopeViewMinDeg,
+    ewLockState,
+    isSTT,
+    radarOperational,
+    setEwLockState,
+  ])
+
+  const sttHardLockedId = useMemo(() => {
+    if (!isSTT) return null
+    for (const [id, state] of Object.entries(ewLockState)) {
+      if (state === 'hard') return id
+    }
+    return null
+  }, [isSTT, ewLockState])
+
+  const sttLockedTrack = useMemo(() => {
+    if (!sttHardLockedId) return null
+    return bScopeAllTracks.find((t) => t.id === sttHardLockedId) ?? null
+  }, [sttHardLockedId, bScopeAllTracks])
+
+  useEffect(() => {
+    if (!isSTT || !sttHardLockedId) {
+      if (isSTT) setEwRadarTrackMode('TWS')
+      return
+    }
+  }, [isSTT, sttHardLockedId, setEwRadarTrackMode])
+
+  const STT_ZOOM_SPAN_DEG =
+    B_SCOPE_AZ_MAX_VIEW_SPAN_DEG - 0.75 * (B_SCOPE_AZ_MAX_VIEW_SPAN_DEG - B_SCOPE_MIN_VIEW_SPAN_DEG)
+  /** Lerp only azimuth *span* toward STT zoom; pan/centering is instant (no lerp). */
+  const STT_ZOOM_LERP_RATE = 0.38
+  const sttAnimTimeRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!isSTT || !sttLockedTrack || !radarOperational) {
+      sttAnimTimeRef.current = null
+      return
+    }
+    if (sttAnimTimeRef.current === time) return
+    sttAnimTimeRef.current = time
+
+    const targetRangeM = sttLockedTrack.rangeM
+    const prfOrder: string[] = ['HIGH', 'MED', 'LOW']
+    let bestPrf = 'LOW'
+    for (const prf of prfOrder) {
+      if (bScopeRadarDetectionRangeM(ewRadarPower, prf) >= targetRangeM) {
+        bestPrf = prf
+        break
+      }
+    }
+    if (bestPrf !== ewRadarPRF) {
+      setEwRadar({ radarPRF: bestPrf })
+    }
+
+    const targetBearingDeg = sttLockedTrack.relBearingDeg
+    const currentSpan = Math.max(B_SCOPE_MIN_VIEW_SPAN_DEG, bScopeViewMaxDeg - bScopeViewMinDeg)
+    const nextSpan = clamp(
+      currentSpan + (STT_ZOOM_SPAN_DEG - currentSpan) * STT_ZOOM_LERP_RATE,
+      B_SCOPE_MIN_VIEW_SPAN_DEG,
+      B_SCOPE_AZ_MAX_VIEW_SPAN_DEG
+    )
+    const halfSpan = nextSpan / 2
+    // Strict centering: window center = target bearing (then clamp to physical cone limits).
+    let goalMin = targetBearingDeg - halfSpan
+    let goalMax = targetBearingDeg + halfSpan
+    if (goalMin < -B_SCOPE_AZ_LIMIT_DEG) {
+      goalMin = -B_SCOPE_AZ_LIMIT_DEG
+      goalMax = goalMin + nextSpan
+    }
+    if (goalMax > B_SCOPE_AZ_LIMIT_DEG) {
+      goalMax = B_SCOPE_AZ_LIMIT_DEG
+      goalMin = goalMax - nextSpan
+    }
+
+    if (Math.abs(goalMin - bScopeViewMinDeg) > 1e-4 || Math.abs(goalMax - bScopeViewMaxDeg) > 1e-4) {
+      setBScopeViewMinDeg(goalMin)
+      setBScopeViewMaxDeg(goalMax)
+      setBScopeView(goalMin, goalMax)
+      bScopeAzWindowRef.current = { min: goalMin, max: goalMax }
+    }
+  })
 
   const handleBScopeWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!radarOperational) return
+    if (!radarOperational || isSTT) return
     event.preventDefault()
     const rect = event.currentTarget.getBoundingClientRect()
     const mouseXNorm = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
     const currentSpan = bScopeViewSpanDeg
     const zoomFactor = event.deltaY < 0 ? 0.86 : 1.18
-    const nextSpan = clamp(currentSpan * zoomFactor, B_SCOPE_MIN_VIEW_SPAN_DEG, B_SCOPE_AZ_LIMIT_DEG * 2)
+    const nextSpan = clamp(currentSpan * zoomFactor, B_SCOPE_MIN_VIEW_SPAN_DEG, B_SCOPE_AZ_MAX_VIEW_SPAN_DEG)
     const mouseAzDeg = bScopeViewMinDeg + mouseXNorm * currentSpan
 
     let nextMin = mouseAzDeg - mouseXNorm * nextSpan
@@ -1061,7 +1251,57 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
 
     setBScopeViewMinDeg(nextMin)
     setBScopeViewMaxDeg(nextMax)
+    setBScopeView(nextMin, nextMax)
+    bScopeAzWindowRef.current = { min: nextMin, max: nextMax }
   }
+
+  useEffect(() => {
+    bScopeAzWindowRef.current = { min: bScopeViewMinDeg, max: bScopeViewMaxDeg }
+  }, [bScopeViewMinDeg, bScopeViewMaxDeg])
+
+  const bScopeAzPanSlackDeg = B_SCOPE_AZ_MAX_VIEW_SPAN_DEG - bScopeViewSpanDeg
+  const bScopeAzPanEnabled = radarOperational && !isSTT && bScopeAzPanSlackDeg > 1e-3
+
+  const handleBScopePlotPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!bScopeAzPanEnabled) return
+    if (event.button !== 0) return
+    bScopeAzPanPointerRef.current = { pointerId: event.pointerId, lastClientX: event.clientX }
+    setBScopeAzPanDragging(true)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handleBScopePlotPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = bScopeAzPanPointerRef.current
+    if (!pan || pan.pointerId !== event.pointerId) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const widthPx = Math.max(1, rect.width)
+    const dx = event.clientX - pan.lastClientX
+    pan.lastClientX = event.clientX
+    const { min, max } = bScopeAzWindowRef.current
+    const span = max - min
+    const deltaDeg = (dx / widthPx) * span
+    const next = shiftBScopeAzWindow(min, max, deltaDeg)
+    bScopeAzWindowRef.current = { min: next.minDeg, max: next.maxDeg }
+    setBScopeViewMinDeg(next.minDeg)
+    setBScopeViewMaxDeg(next.maxDeg)
+    setBScopeView(next.minDeg, next.maxDeg)
+  }
+
+  const endBScopeAzPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = bScopeAzPanPointerRef.current
+    if (pan && pan.pointerId === event.pointerId) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+      bScopeAzPanPointerRef.current = null
+      setBScopeAzPanDragging(false)
+    }
+  }
+
+  const handleBScopePlotLostPointerCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (bScopeAzPanPointerRef.current?.pointerId !== event.pointerId) return
+    bScopeAzPanPointerRef.current = null
+    setBScopeAzPanDragging(false)
+  }
+
   const bScopeLeftAbsDeg = normalizeBearingDeg(shipHeadingDeg + bScopeViewMinDeg)
   const bScopeCenterAbsDeg = normalizeBearingDeg(shipHeadingDeg + (bScopeViewMinDeg + bScopeViewMaxDeg) * 0.5)
   const bScopeRightAbsDeg = normalizeBearingDeg(shipHeadingDeg + bScopeViewMaxDeg)
@@ -1401,7 +1641,7 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
                       <span>B-SCOPE</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ color: B_SCOPE_GREEN_DIM }}>
-                          {`PWR ${ewRadarOn ? 'ON' : 'OFF'} | AZ ${bScopeViewSpanDeg.toFixed(0)}° | RNG ${bScopeRangeKm}km`}
+                          {`PWR ${ewRadarOn ? 'ON' : 'OFF'} | ${ewRadarTrackMode} | AZ ${bScopeViewSpanDeg.toFixed(0)}° | RNG ${bScopeRangeKm}km`}
                         </span>
                         <button
                           type="button"
@@ -1441,8 +1681,8 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
                       }}
                     >
                       <span>
-                        {bScopeNearestTarget
-                          ? `nearest ${bScopeNearestTarget.label} brg:${Math.round(bScopeNearestTarget.relBearingDeg)} rng:${(bScopeNearestTarget.rangeM / 1000).toFixed(1)}km`
+                        {bScopeNearestTargetDisplay
+                          ? `nearest ${bScopeNearestTargetDisplay.label} brg:${Math.round(bScopeNearestTargetDisplay.relBearingDeg)} rng:${(bScopeNearestTargetDisplay.rangeM / 1000).toFixed(1)}km`
                           : 'nearest -'}
                       </span>
                     </div>
@@ -1454,8 +1694,20 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
                         border: `1px solid ${B_SCOPE_GREEN_DIM}55`,
                         background: BG_SCREEN,
                         overflow: 'hidden',
+                        cursor: bScopeAzPanEnabled
+                          ? bScopeAzPanDragging
+                            ? 'grabbing'
+                            : 'grab'
+                          : undefined,
+                        touchAction: bScopeAzPanEnabled ? 'none' : undefined,
+                        userSelect: bScopeAzPanDragging ? 'none' : undefined,
                       }}
                       onWheel={handleBScopeWheel}
+                      onPointerDown={handleBScopePlotPointerDown}
+                      onPointerMove={handleBScopePlotPointerMove}
+                      onPointerUp={endBScopeAzPan}
+                      onPointerCancel={endBScopeAzPan}
+                      onLostPointerCapture={handleBScopePlotLostPointerCapture}
                       onMouseMove={(event) => {
                         const bounds = event.currentTarget.getBoundingClientRect()
                         const xPct = clamp(((event.clientX - bounds.left) / Math.max(1, bounds.width)) * 100, 0, 100)
@@ -1469,13 +1721,8 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
                         if (!radarOperational) return
                         event.preventDefault()
                         setEwLockState((prev) => {
-                          const next = { ...prev }
-                          Object.keys(next).forEach((id) => {
-                            if (next[id] === 'hard') {
-                              delete next[id]
-                            }
-                          })
-                          return next
+                          if (Object.keys(prev).length === 0) return prev
+                          return {}
                         })
                       }}
                     >
@@ -1600,6 +1847,23 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
                           </div>
                         )
                       })}
+                      {radarOperational ? (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: `${bScopePrfSweepCenterPct}%`,
+                            top: 0,
+                            bottom: 0,
+                            width: 4,
+                            transform: 'translateX(-50%)',
+                            background: 'rgba(68,255,102,0.16)',
+                            boxShadow: '0 0 6px rgba(68,255,102,0.12)',
+                            pointerEvents: 'none',
+                            zIndex: 2,
+                          }}
+                          aria-hidden
+                        />
+                      ) : null}
                       {bScopeCursor ? (
                         <>
                           <div
@@ -1673,14 +1937,38 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
                         </>
                       ) : null}
 
-                      {bScopeTracks.map((track) => {
+                      {isSTT && sttLockedTrack && radarOperational ? (() => {
+                        const sttXPct =
+                          ((sttLockedTrack.relBearingDeg - bScopeViewMinDeg) / bScopeViewSpanDeg) * 100
+                        return (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: `${sttXPct}%`,
+                              top: 0,
+                              bottom: 0,
+                              width: 3,
+                              transform: 'translateX(-50%)',
+                              borderLeft: '3px dotted rgba(220,255,230,0.7)',
+                              boxShadow: '0 0 8px rgba(180,255,200,0.35)',
+                              pointerEvents: 'none',
+                              zIndex: 1,
+                            }}
+                            aria-hidden
+                          />
+                        )
+                      })() : null}
+
+                      {bScopeTracksDisplay.map((track) => {
                         const xPct =
                           ((track.relBearingDeg - bScopeViewMinDeg) / bScopeViewSpanDeg) * 100
                         const yPct = (track.rangeM / bScopeMaxRangeM) * 100
                         const incLabel = `${track.relInclinationDeg >= 0 ? '+' : ''}${Math.round(track.relInclinationDeg)}`
-                        const isHardLocked = ewLockState[track.id] === 'hard'
-                        const trackColor = isHardLocked ? '#f4f7ff' : B_SCOPE_GREEN
-                        const trackGlow = isHardLocked ? '#ffffff' : B_SCOPE_GREEN_DIM
+                        const lockKind = ewLockState[track.id]
+                        const isHardLocked = lockKind === 'hard'
+                        const isLockLit = lockKind === 'hard' || lockKind === 'soft'
+                        const trackColor = isLockLit ? '#f4f7ff' : B_SCOPE_GREEN
+                        const trackGlow = isLockLit ? '#ffffff' : B_SCOPE_GREEN_DIM
                         return (
                           <div key={track.id}>
                             <div
@@ -1692,7 +1980,7 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
                                 width: 16,
                                 height: 10,
                                 border: `1px solid ${trackColor}`,
-                                background: isHardLocked ? 'rgba(255,255,255,0.12)' : 'rgba(68,255,102,0.17)',
+                                background: isLockLit ? 'rgba(255,255,255,0.12)' : 'rgba(68,255,102,0.17)',
                                 boxShadow: `0 0 8px ${trackGlow}`,
                                 color: trackColor,
                                 fontSize: 9,
@@ -1702,6 +1990,28 @@ export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMa
                                 cursor: 'crosshair',
                               }}
                               title={`${track.label} | BRG ${track.relBearingDeg.toFixed(0)}° | RNG ${(track.rangeM / 1000).toFixed(1)}km | INC ${incLabel}`}
+                              onPointerDown={(event) => {
+                                if (event.button === 0) event.stopPropagation()
+                              }}
+                              onClick={(event) => {
+                                if (!radarOperational) return
+                                event.stopPropagation()
+                                setEwLockState((prev) => {
+                                  if (prev[track.id] === 'hard') return prev
+                                  const next = { ...prev }
+                                  Object.keys(next).forEach((id) => {
+                                    if (next[id] === 'soft' && id !== track.id) {
+                                      delete next[id]
+                                    }
+                                  })
+                                  if (next[track.id] === 'soft') {
+                                    delete next[track.id]
+                                  } else {
+                                    next[track.id] = 'soft'
+                                  }
+                                  return next
+                                })
+                              }}
                               onContextMenu={(event) => {
                                 if (!radarOperational) return
                                 event.preventDefault()
