@@ -6,6 +6,11 @@ import { MWD_SPEED } from '@/systems/simulation/constants'
 const DEFAULT_NPC_SPAWN_POSITION: [number, number, number] = [0, 0, -20000]
 const MAX_NPC_SUBWARP_SPEED = 215
 
+/** Peak RDNE-induced acceleration in m/s² at forceMagnitude=1. */
+const RDNE_MAX_ACCEL = 18
+/** Fraction of drift velocity retained per second when RDNE is no longer active (exponential decay). */
+const RDNE_DRIFT_DECAY_RATE = 2.5
+
 function getNpcMaxSpeed(config: NpcShipConfig): number {
   return config.mwdActive ? MWD_SPEED : MAX_NPC_SUBWARP_SPEED
 }
@@ -124,18 +129,62 @@ export const createNpcSlice: StateCreator<GameStore, [], [], Partial<GameStore>>
         return {}
       }
       const nextShips = { ...s.shipsById }
+      const rdne = s.ewRdneFieldEffect
+      const nextDrift = { ...s.ewRdneShipDrift }
+
       for (const id of npcIds) {
         const config = s.npcShips[id]
         const ship = nextShips[id]
         if (!config || !ship) continue
 
+        let drift: [number, number, number] = nextDrift[id]
+          ? [nextDrift[id][0], nextDrift[id][1], nextDrift[id][2]]
+          : [0, 0, 0]
+
+        const rdneActiveForShip = rdne && rdne.targetId === id && rdne.forceMagnitude > 0
+        if (rdneActiveForShip) {
+          const [ox, , oz] = rdne.worldOffset
+          const offsetLen = Math.sqrt(ox * ox + oz * oz)
+          if (offsetLen > 0.001) {
+            const dirSign = rdne.kind === 'sink' ? 1 : -1
+            const accel = RDNE_MAX_ACCEL * rdne.forceMagnitude
+            drift[0] += (ox / offsetLen) * dirSign * accel * deltaSeconds
+            drift[2] += (oz / offsetLen) * dirSign * accel * deltaSeconds
+          }
+        } else if (drift[0] !== 0 || drift[1] !== 0 || drift[2] !== 0) {
+          const decay = Math.exp(-RDNE_DRIFT_DECAY_RATE * deltaSeconds)
+          drift[0] *= decay
+          drift[1] *= decay
+          drift[2] *= decay
+          if (Math.abs(drift[0]) < 0.01 && Math.abs(drift[1]) < 0.01 && Math.abs(drift[2]) < 0.01) {
+            drift = [0, 0, 0]
+          }
+        }
+
+        const hasDrift = drift[0] !== 0 || drift[1] !== 0 || drift[2] !== 0
+        if (hasDrift) {
+          nextDrift[id] = drift
+        } else {
+          delete nextDrift[id]
+        }
+
         if (config.behaviorMode === 'stationary') {
+          const pos: [number, number, number] = hasDrift
+            ? [
+                ship.position[0] + drift[0] * deltaSeconds,
+                ship.position[1] + drift[1] * deltaSeconds,
+                ship.position[2] + drift[2] * deltaSeconds,
+              ]
+            : ship.position
+          const vel: [number, number, number] = hasDrift ? [drift[0], drift[1], drift[2]] : [0, 0, 0]
+          const driftSpeed = hasDrift ? Math.sqrt(drift[0] * drift[0] + drift[1] * drift[1] + drift[2] * drift[2]) : 0
           nextShips[id] = {
             ...ship,
             targetSpeed: 0,
-            actualSpeed: 0,
-            actualVelocity: [0, 0, 0],
+            actualSpeed: driftSpeed,
+            actualVelocity: vel,
             mwdActive: config.mwdActive,
+            position: pos,
           }
           continue
         }
@@ -146,10 +195,13 @@ export const createNpcSlice: StateCreator<GameStore, [], [], Partial<GameStore>>
           const speed = Math.max(0, Math.min(getNpcMaxSpeed(config), config.commandedSpeed))
           const forward = getShipForwardVector(heading, inclination)
           const velocity: [number, number, number] = [
-            forward[0] * speed,
-            forward[1] * speed,
-            forward[2] * speed,
+            forward[0] * speed + drift[0],
+            forward[1] * speed + drift[1],
+            forward[2] * speed + drift[2],
           ]
+          const combinedSpeed = Math.sqrt(
+            velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]
+          )
           nextShips[id] = {
             ...ship,
             bearing: heading,
@@ -157,7 +209,7 @@ export const createNpcSlice: StateCreator<GameStore, [], [], Partial<GameStore>>
             inclination,
             actualInclination: inclination,
             targetSpeed: speed,
-            actualSpeed: speed,
+            actualSpeed: combinedSpeed,
             mwdActive: config.mwdActive,
             actualVelocity: velocity,
             position: [
@@ -190,6 +242,14 @@ export const createNpcSlice: StateCreator<GameStore, [], [], Partial<GameStore>>
           const newZ = config.orbitCenter[2] + Math.cos(nextAngle) * config.orbitRadius
           const heading = ((nextAngle + Math.PI / 2) * 180 / Math.PI + 360) % 360
           const forward = getShipForwardVector(heading, 0)
+          const velocity: [number, number, number] = [
+            forward[0] * speed + drift[0],
+            0 + drift[1],
+            forward[2] * speed + drift[2],
+          ]
+          const combinedSpeed = Math.sqrt(
+            velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]
+          )
           nextShips[id] = {
             ...ship,
             bearing: heading,
@@ -197,14 +257,18 @@ export const createNpcSlice: StateCreator<GameStore, [], [], Partial<GameStore>>
             inclination: 0,
             actualInclination: 0,
             targetSpeed: speed,
-            actualSpeed: speed,
+            actualSpeed: combinedSpeed,
             mwdActive: config.mwdActive,
-            actualVelocity: [forward[0] * speed, 0, forward[2] * speed],
-            position: [newX, ship.position[1], newZ],
+            actualVelocity: velocity,
+            position: [
+              newX + drift[0] * deltaSeconds,
+              ship.position[1] + drift[1] * deltaSeconds,
+              newZ + drift[2] * deltaSeconds,
+            ],
           }
           continue
         }
       }
-      return { shipsById: nextShips }
+      return { shipsById: nextShips, ewRdneShipDrift: nextDrift }
     }),
 })

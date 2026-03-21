@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { IRSTView } from '@/components/hud/IRSTView'
 import { useGameStore } from '@/state/gameStore'
 import { useIRSTStore } from '@/state/irstStore'
+import { useEwTvStore, EW_ORBIT_FEED_W, EW_ORBIT_FEED_H } from '@/state/ewTvStore'
 import { multiplayerClient } from '@/network/colyseusClient'
 
 /* ── WS / EW mixed theme ────────────────────────────────────── */
@@ -13,7 +14,6 @@ const WS_GREEN_DIM  = '#007a32'
 const WS_BG_DARK    = '#080808'
 const WS_BG_PANEL   = '#111110'
 const WS_BG_SCREEN  = '#080808'
-const WS_GRID       = 'rgba(0,255,100,0.07)'
 const WS_RED        = '#ff3333'
 const FONT          = "'Consolas', 'Monaco', monospace"
 const FLARE_SINGLE_INTERVAL_MS = 500
@@ -1450,6 +1450,11 @@ const wsSlewButtonStyle: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
+const WS_MFD_TABS = ['IRST', 'TV'] as const
+type WsMfdTab = (typeof WS_MFD_TABS)[number]
+
+const WS_MFD_LINE_GREY = '#7a8a82'
+
 /* ═══════════════════════════════════════════════════════════════
    WSStation – main weapons systems officer console
    ═══════════════════════════════════════════════════════════════ */
@@ -1468,6 +1473,10 @@ export function WSStation() {
   const setPointTrackEnabled = useIRSTStore((state) => state.setPointTrackEnabled)
   const setPointTrackTargetId = useIRSTStore((state) => state.setPointTrackTargetId)
   const pointTrackTargetId = useIRSTStore((state) => state.pointTrackTargetId)
+  const [wsMfdTab, setWsMfdTab] = useState<WsMfdTab>('IRST')
+  const wsTvWrapperRef = useRef<HTMLDivElement>(null)
+  const wsTvDisplayRef = useRef<HTMLCanvasElement>(null)
+  const ewTvFeedCanvas = useEwTvStore((s) => s.canvas)
   const playerShipBoundingLength = useGameStore((state) => state.playerShipBoundingLength)
   const ewLockState = useGameStore((state) => state.ewLockState)
   const launchLockedCylinder = useGameStore((state) => state.launchLockedCylinder)
@@ -1673,6 +1682,52 @@ export function WSStation() {
     }
   }, [torpedoTubesPowered, isTorpedoTubesArmed])
 
+  useEffect(() => {
+    if (wsMfdTab !== 'TV') return
+    useEwTvStore.getState().acquireTv()
+    return () => {
+      useEwTvStore.getState().releaseTv()
+    }
+  }, [wsMfdTab])
+
+  useLayoutEffect(() => {
+    if (wsMfdTab !== 'TV') return
+    const source = ewTvFeedCanvas
+    if (!source) return
+    const disp = wsTvDisplayRef.current
+    const wrap = wsTvWrapperRef.current
+    if (!disp || !wrap) return
+    const ctx = disp.getContext('2d')
+    if (!ctx) return
+
+    const tick = () => {
+      const d = wsTvDisplayRef.current
+      const wEl = wsTvWrapperRef.current
+      const src = useEwTvStore.getState().canvas
+      if (!d || !wEl || !src) return
+      const w = Math.max(1, Math.floor(wEl.clientWidth))
+      const h = Math.max(1, Math.floor(wEl.clientHeight))
+      if (d.width !== w || d.height !== h) {
+        d.width = w
+        d.height = h
+      }
+      const c = d.getContext('2d')
+      if (!c) return
+      c.fillStyle = '#000'
+      c.fillRect(0, 0, w, h)
+      const scale = Math.min(w / EW_ORBIT_FEED_W, h / EW_ORBIT_FEED_H)
+      const dw = Math.floor(EW_ORBIT_FEED_W * scale)
+      const dh = Math.floor(EW_ORBIT_FEED_H * scale)
+      const ox = Math.floor((w - dw) / 2)
+      const oy = Math.floor((h - dh) / 2)
+      c.drawImage(src, 0, 0, EW_ORBIT_FEED_W, EW_ORBIT_FEED_H, ox, oy, dw, dh)
+    }
+
+    tick()
+    const id = window.setInterval(tick, 50)
+    return () => window.clearInterval(id)
+  }, [wsMfdTab, ewTvFeedCanvas])
+
   const stopSlew = () => {
     slewActiveRef.current = false
     slewLastTimeRef.current = null
@@ -1770,55 +1825,97 @@ export function WSStation() {
       {/* ── Main layout ────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 6, flex: 1, minHeight: 0, alignItems: 'stretch' }}>
 
-        {/* Left column – IRST display */}
+        {/* Left column – multifunction display (IRST / TV) */}
         <WsPanel
-          title="IRST Targeting"
+          title="Multifunction Display"
           style={{ flex: '1 1 54%', minWidth: 0 }}
           headerRight={
-            <StatusDot
-              color={irstCameraOn ? AMBER : AMBER_DIM}
-              label={irstCameraOn ? 'ACTIVE' : 'OFF'}
-            />
+            wsMfdTab === 'IRST' ? (
+              <StatusDot
+                color={irstCameraOn ? AMBER : AMBER_DIM}
+                label={irstCameraOn ? 'IRST' : 'OFF'}
+              />
+            ) : (
+              <span style={{ color: WS_GREEN_DIM, fontSize: 8, letterSpacing: 1 }}>PILOT VIEW</span>
+            )
           }
         >
           <div style={{
             flex: 1,
+            minHeight: 0,
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 10,
+            flexDirection: 'column',
           }}>
             <div style={{
               display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              width: '100%',
-              maxWidth: 690,
-              padding: 8,
-              border: `1px solid ${WS_GREEN_DIM}`,
-              borderRadius: 2,
-              background: `
-                linear-gradient(${WS_GRID} 1px, transparent 1px),
-                linear-gradient(90deg, ${WS_GRID} 1px, transparent 1px),
-                rgba(0,24,10,0.42)
-              `,
-              backgroundSize: '48px 48px, 48px 48px, auto',
-              boxShadow: 'inset 0 0 0 1px rgba(0,255,100,0.1)',
+              gap: 4,
+              padding: '6px 8px',
+              borderBottom: `1px solid ${WS_GREEN_DIM}55`,
+              background: 'rgba(0,0,0,0.28)',
+              flexShrink: 0,
             }}>
-              <IRSTView
-                displayScale={1.95}
-                showPowerToggle
-                onPowerChange={(on) => {
-                  if (!on) {
-                    stopSlew()
-                    setPointTrackEnabled(false)
-                    setPointTrackTargetId(null)
-                  }
-                }}
-              />
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+              {WS_MFD_TABS.map((tab) => {
+                const active = tab === wsMfdTab
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setWsMfdTab(tab)}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 1,
+                      border: `1px solid ${active ? WS_GREEN : WS_GREEN_DIM}`,
+                      background: active ? 'rgba(0,255,100,0.14)' : 'rgba(0,255,100,0.04)',
+                      color: active ? '#88ffaa' : WS_GREEN_DIM,
+                      fontFamily: FONT,
+                      fontSize: 10,
+                      letterSpacing: 1,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {tab}
+                  </button>
+                )
+              })}
+            </div>
+            <div style={{
+              flex: 1,
+              minHeight: 0,
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+            }}>
+              {wsMfdTab === 'IRST' ? (
+                <div style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 10,
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    width: '100%',
+                    maxWidth: 690,
+                    padding: 8,
+                    background: 'transparent',
+                  }}>
+                    <IRSTView
+                      displayScale={1.95}
+                      showPowerToggle
+                      onPowerChange={(on) => {
+                        if (!on) {
+                          stopSlew()
+                          setPointTrackEnabled(false)
+                          setPointTrackTargetId(null)
+                        }
+                      }}
+                    />
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button
                 type="button"
                 style={{
@@ -1976,7 +2073,74 @@ export function WSStation() {
               >
                 PT TRK
               </button>
-              </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      border: '1px solid rgba(125,132,142,0.28)',
+                      pointerEvents: 'none',
+                      zIndex: 2,
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 14,
+                      left: 16,
+                      color: WS_GREEN,
+                      fontFamily: FONT,
+                      fontSize: 12,
+                      letterSpacing: 1,
+                      pointerEvents: 'none',
+                      zIndex: 2,
+                    }}
+                  >
+                    EXT VIS — ORBIT CAM
+                  </div>
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: 14,
+                      left: 16,
+                      color: WS_MFD_LINE_GREY,
+                      fontFamily: FONT,
+                      fontSize: 11,
+                      pointerEvents: 'none',
+                      zIndex: 2,
+                    }}
+                  >
+                    {`${EW_ORBIT_FEED_W}×${EW_ORBIT_FEED_H} · PILOT VIEW`}
+                  </div>
+                  <div
+                    ref={wsTvWrapperRef}
+                    style={{
+                      position: 'absolute',
+                      inset: 10,
+                      background: '#000',
+                      border: `1px solid ${WS_GREEN_DIM}55`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <canvas
+                      ref={wsTvDisplayRef}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        display: 'block',
+                      }}
+                      aria-label="External visual: pilot orbit camera"
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </WsPanel>

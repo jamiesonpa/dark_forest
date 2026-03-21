@@ -1,7 +1,9 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useId } from "react";
 import { useGameStore } from "@/state/gameStore";
 import { getCelestialById } from "@/utils/systemData";
 import { EWSystemMap } from "@/components/stations/EWSystemMap";
+import { useEwTvStore, EW_ORBIT_FEED_W, EW_ORBIT_FEED_H } from "@/state/ewTvStore";
+import { multiplayerClient } from "@/network/colyseusClient";
 import {
   WORLD_UNITS_PER_AU,
   bearingInclinationFromVector,
@@ -1781,11 +1783,9 @@ const GravAnalyzer = ({
               {warpInterference
                 ? "WARP"
                 : activeGravAnalysis
-                ? `${Math.ceil(activeAnalysisRemaining / 1000)}s`
-                : targetAlreadyRevealed
-                  ? "KNOWN"
-                  : gravQuality.state !== "none" && gravQuality.celestialId
-                    ? `ANALYZE ${Math.ceil(gravQuality.durationMs / 1000)}s`
+                  ? "ANALYZING"
+                  : targetAlreadyRevealed
+                    ? "KNOWN"
                     : "ANALYZE"}
             </span>
           </button>
@@ -2968,6 +2968,209 @@ const RWCA_HARMONICS = 2;
 const RWCA_COEFFS = RWCA_HARMONICS * 2;
 const RWCA_MIN_RANGE_KM = 10;
 const RWCA_MAX_RANGE_KM = 50;
+const RDNE_MIN_RANGE_KM = 10;
+const RDNE_MAX_RANGE_KM = 50;
+/** Centroid of RDNE lock cue polygon (apex 14,5 — base 6,24 / 22,24); rotation pivots here. */
+const RDNE_LOCK_TRI_CX = 14;
+const RDNE_LOCK_TRI_CY = (5 + 24 + 24) / 3;
+/** Ownship-frame bow vector (0° = same heading as own) is drawn toward RDNE left; was top before −90°. */
+const RDNE_LOCK_ROTATION_DISPLAY_OFFSET_DEG = -90;
+/** Lock cue dot grid: center-to-center pitch equals inset from inner edges to nearest dots. */
+const RDNE_LOCK_GRID_STEP_PX = 15;
+const RDNE_USER_MARKER_DIAM_PX = 10;
+/** Invisible drag/select target around the visible dot (easier grab on touch / mouse). */
+const RDNE_USER_MARKER_HIT_PX = 34;
+const RDNE_USER_MARKER_INSET_PX = RDNE_USER_MARKER_DIAM_PX / 2 + 1;
+/** Vector strength peaks at this fraction of max field radius (weak near center and at outer edge). */
+const RDNE_VEC_STRENGTH_PEAK_FRAC = 0.25;
+/** Relative strength at rMin / rMax (inner and outer falloff floor). */
+const RDNE_VEC_STRENGTH_EDGE = 0.2;
+const RDNE_VEC_MAX_SHAFT_PX = RDNE_LOCK_GRID_STEP_PX * 0.92;
+const RDNE_VEC_HEAD_DEPTH_PX = RDNE_LOCK_GRID_STEP_PX * 0.32;
+const RDNE_VEC_HEAD_HALF_W_PX = RDNE_LOCK_GRID_STEP_PX * 0.22;
+/** Field slider 0: rMax ≈ rMin + 1.15·step; 1: rMax = 5.75·step (matches prior fixed outer ring). */
+const RDNE_FIELD_RMIN_STEPS = 0.65;
+const RDNE_FIELD_RMAX_EXTRA_MIN_STEPS = 1.15;
+const RDNE_FIELD_RMAX_EXTRA_MAX_STEPS = 5.75 - RDNE_FIELD_RMIN_STEPS;
+
+/**
+ * Normalized coords in the RDNE **padding box** (same box as the dot grid and vector SVG).
+ * Uses clientWidth/Height so a border on the surface does not skew alignment vs CSS backgrounds.
+ */
+function rdneNormFromClient(clientX, clientY, el) {
+  if (!el || typeof el.getBoundingClientRect !== "function") return { nx: 0.5, ny: 0.5 };
+  const rect = el.getBoundingClientRect();
+  const w = el.clientWidth;
+  const h = el.clientHeight;
+  if (w <= 0 || h <= 0) return { nx: 0.5, ny: 0.5 };
+  const style = typeof window !== "undefined" ? window.getComputedStyle(el) : null;
+  const bl = style ? parseFloat(style.borderLeftWidth) || 0 : 0;
+  const bt = style ? parseFloat(style.borderTopWidth) || 0 : 0;
+  const ix = RDNE_USER_MARKER_INSET_PX / w;
+  const iy = RDNE_USER_MARKER_INSET_PX / h;
+  const x = clientX - rect.left - bl;
+  const y = clientY - rect.top - bt;
+  return {
+    nx: clamp(x / w, ix, 1 - ix),
+    ny: clamp(y / h, iy, 1 - iy),
+  };
+}
+
+/**
+ * Centers of dots in the lock-cue grid. `background-position: step/2` places each 15×15 tile’s
+ * top-left at (step/2, step/2); the radial dot is centered in the tile → dot centers at (step, step), (2·step, step), …
+ */
+function rdneEachGridDotCenter(w, h, stepPx, fn) {
+  for (let x = stepPx; x < w; x += stepPx) {
+    for (let y = stepPx; y < h; y += stepPx) {
+      fn(x, y);
+    }
+  }
+}
+
+function rdneSmoothstep01(t) {
+  const x = clamp(t, 0, 1);
+  return x * x * (3 - 2 * x);
+}
+
+/**
+ * Strength vs distance from sink/source: weak at rMin and rMax, peaks near 0.25·rMax.
+ */
+function rdneVectorStrengthFromDist(dist, rMin, rMax) {
+  const dPeak = Math.max(rMin + 1e-4, RDNE_VEC_STRENGTH_PEAK_FRAC * rMax);
+  const e = RDNE_VEC_STRENGTH_EDGE;
+  if (dist <= dPeak) {
+    const denom = Math.max(1e-6, dPeak - rMin);
+    const t = (dist - rMin) / denom;
+    return e + (1 - e) * rdneSmoothstep01(t);
+  }
+  const denom = Math.max(1e-6, rMax - dPeak);
+  const t = (rMax - dist) / denom;
+  return e + (1 - e) * rdneSmoothstep01(t);
+}
+
+/**
+ * Short arrows from grid dots: amber (sink) → toward marker; blue (source) → away.
+ * Shaft length scales with field strength (distance falloff). Heads are two strokes only (unfilled).
+ */
+function rdneBuildGridVectorArrows(w, h, nx, ny, kind, stepPx, fieldIntensity = 1) {
+  if (w <= 8 || h <= 8) return [];
+  const t = clamp(fieldIntensity, 0, 1);
+  const mx = nx * w;
+  const my = ny * h;
+  const rMin = stepPx * RDNE_FIELD_RMIN_STEPS;
+  const extraSteps =
+    RDNE_FIELD_RMAX_EXTRA_MIN_STEPS +
+    (RDNE_FIELD_RMAX_EXTRA_MAX_STEPS - RDNE_FIELD_RMAX_EXTRA_MIN_STEPS) * t;
+  const rMax = rMin + stepPx * extraSteps;
+  const shaftGain = 0.22 + 0.78 * t;
+  const markerR = RDNE_USER_MARKER_DIAM_PX / 2 + 3;
+  const out = [];
+  rdneEachGridDotCenter(w, h, stepPx, (gx, gy) => {
+    const vx = kind === "amber" ? mx - gx : gx - mx;
+    const vy = kind === "amber" ? my - gy : gy - my;
+    const dist = Math.hypot(vx, vy);
+    if (dist < 1e-4 || dist < rMin || dist > rMax) return;
+    const strength = rdneVectorStrengthFromDist(dist, rMin, rMax);
+    const ux = vx / dist;
+    const uy = vy / dist;
+    const headScale = 0.28 + 0.72 * strength;
+    const headDepth = RDNE_VEC_HEAD_DEPTH_PX * headScale;
+    const headHalfW = RDNE_VEC_HEAD_HALF_W_PX * headScale;
+    const geomCap = dist - markerR - headDepth * 1.08;
+    const shaftLen = Math.min(geomCap, RDNE_VEC_MAX_SHAFT_PX * strength * shaftGain);
+    if (shaftLen < 2.5) return;
+    const tx = gx + ux * shaftLen;
+    const ty = gy + uy * shaftLen;
+    const bx = tx - ux * headDepth;
+    const by = ty - uy * headDepth;
+    const px = -uy * headHalfW;
+    const py = ux * headHalfW;
+    out.push({
+      gx,
+      gy,
+      bx,
+      by,
+      tx,
+      ty,
+      w1x: bx + px,
+      w1y: by + py,
+      w2x: bx - px,
+      w2y: by - py,
+    });
+  });
+  return out;
+}
+
+/** Horizontal placement of lock cue in the RDNE surface (matches CSS `left` %). */
+function rdneLockCueNormX(t) {
+  return 0.04 + clamp(t, 0, 1) * 0.92;
+}
+
+const RDNE_RESULTANT_MAX_SHAFT_PX = RDNE_LOCK_GRID_STEP_PX * 5.2;
+const RDNE_RESULTANT_HEAD_DEPTH_PX = RDNE_LOCK_GRID_STEP_PX * 0.36;
+const RDNE_RESULTANT_HEAD_HALF_W_PX = RDNE_LOCK_GRID_STEP_PX * 0.24;
+/** Below this normalized magnitude the resultant arrow is omitted (avoids noise at field edge). */
+const RDNE_RESULTANT_MIN_DISPLAY_MAG = 0.06;
+
+/**
+ * Red “force on target” arrow at the lock triangle centroid: same radial model as grid field lines
+ * (sink → pull toward marker, source → push away), scaled by distance falloff and flux.
+ * Returns line segments for the same arrow style as `rdneBuildGridVectorArrows`, or null if off-field / negligible.
+ */
+function rdneBuildResultantForceArrow(w, h, markerNx, markerNy, kind, stepPx, fieldIntensity, shipRangeT) {
+  if (w <= 8 || h <= 8) return null;
+  const tFlux = clamp(fieldIntensity, 0, 1);
+  const mx = markerNx * w;
+  const my = markerNy * h;
+  const sx = rdneLockCueNormX(shipRangeT) * w;
+  const sy = 0.5 * h;
+  const rMin = stepPx * RDNE_FIELD_RMIN_STEPS;
+  const extraSteps =
+    RDNE_FIELD_RMAX_EXTRA_MIN_STEPS +
+    (RDNE_FIELD_RMAX_EXTRA_MAX_STEPS - RDNE_FIELD_RMAX_EXTRA_MIN_STEPS) * tFlux;
+  const rMax = rMin + stepPx * extraSteps;
+  const shaftGain = 0.22 + 0.78 * tFlux;
+
+  const vx = kind === "amber" ? mx - sx : sx - mx;
+  const vy = kind === "amber" ? my - sy : sy - my;
+  const dist = Math.hypot(vx, vy);
+  if (dist < 1e-4 || dist < rMin || dist > rMax) return null;
+  const strength = rdneVectorStrengthFromDist(dist, rMin, rMax);
+  const mag = strength * shaftGain;
+  if (mag < RDNE_RESULTANT_MIN_DISPLAY_MAG) return null;
+
+  const ux = vx / dist;
+  const uy = vy / dist;
+  const headScale = 0.35 + 0.65 * strength;
+  const headDepth = RDNE_RESULTANT_HEAD_DEPTH_PX * headScale;
+  const headHalfW = RDNE_RESULTANT_HEAD_HALF_W_PX * headScale;
+  const shaftLen = Math.min(
+    RDNE_RESULTANT_MAX_SHAFT_PX * mag,
+    Math.max(0, Math.min(w, h) * 0.42 - headDepth * 1.1),
+  );
+  if (shaftLen < 3) return null;
+
+  const tx = sx + ux * shaftLen;
+  const ty = sy + uy * shaftLen;
+  const bx = tx - ux * headDepth;
+  const by = ty - uy * headDepth;
+  const px = -uy * headHalfW;
+  const py = ux * headHalfW;
+  return {
+    sx,
+    sy,
+    bx,
+    by,
+    tx,
+    ty,
+    w1x: bx + px,
+    w1y: by + py,
+    w2x: bx - px,
+    w2y: by - py,
+  };
+}
+
 const RWCA_MATCH_THRESHOLD = 0.8;
 /** Peak-to-peak waveform extent ≤ this fraction of canvas height (centered). */
 const RWCA_WAVEFORM_Y_MAX = 0.75;
@@ -3018,12 +3221,13 @@ function rwcaComputeMatch(enemy, player) {
   return Math.max(0, Math.min(1, 1 - err / energy));
 }
 
-const RWCAPanel = ({ contacts, lockState, time, power, rangeKm, rwcaPowered }) => {
+const RWCAPanel = ({ contacts, lockState, time, power, rangeKm, rwcaPowered, rwcaArmed }) => {
   const [playerCoeffs, setPlayerCoeffs] = useState(() => new Array(RWCA_COEFFS).fill(0));
   const canvasRef = useRef(null);
   const waveformWrapRef = useRef(null);
   const [canvasDims, setCanvasDims] = useState({ w: 320, h: 160 });
   const prevTargetRef = useRef(null);
+  const lastRwcaNetworkTargetRef = useRef(undefined);
 
   const lockedId = useMemo(() => {
     const hard = Object.keys(lockState).find(id => lockState[id] === "hard");
@@ -3056,6 +3260,38 @@ const RWCAPanel = ({ contacts, lockState, time, power, rangeKm, rwcaPowered }) =
   }, [enemyCoeffs, playerCoeffs]);
 
   const isLocked = match >= RWCA_MATCH_THRESHOLD && inRange;
+
+  useEffect(() => {
+    if (!multiplayerClient.isConnected()) {
+      lastRwcaNetworkTargetRef.current = undefined;
+      return;
+    }
+    const targetId =
+      rwcaPowered && rwcaArmed && isLocked && lockedId ? lockedId : null;
+    if (lastRwcaNetworkTargetRef.current === targetId) return;
+    lastRwcaNetworkTargetRef.current = targetId;
+    multiplayerClient.sendEwRwcaAttenuate({ targetShipId: targetId });
+  }, [rwcaPowered, rwcaArmed, isLocked, lockedId]);
+
+  useEffect(() => {
+    const targetId =
+      rwcaPowered && rwcaArmed && isLocked && lockedId ? lockedId : null;
+    const npcTarget =
+      typeof targetId === "string" && targetId.startsWith("npc-") ? targetId : null;
+    useGameStore.getState().applyLocalNpcRwcaAttenuation(npcTarget);
+    return () => {
+      useGameStore.getState().applyLocalNpcRwcaAttenuation(null);
+    };
+  }, [rwcaPowered, rwcaArmed, isLocked, lockedId]);
+
+  useEffect(() => {
+    return () => {
+      if (multiplayerClient.isConnected()) {
+        multiplayerClient.sendEwRwcaAttenuate({ targetShipId: null });
+      }
+      lastRwcaNetworkTargetRef.current = undefined;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const el = waveformWrapRef.current;
@@ -3334,8 +3570,11 @@ const RWCAPanel = ({ contacts, lockState, time, power, rangeKm, rwcaPowered }) =
   );
 };
 
+const EW_MFD_TABS = ["MAP", "RADAR", "TV"];
+
 // Main Component
 export default function EWConsole() {
+  const rdneResultantFilterId = useId().replace(/:/g, "");
   const [time, setTime] = useState(0);
   const starSystem = useGameStore((s) => s.starSystem);
   const currentCelestialId = useGameStore((s) => s.currentCelestialId);
@@ -3385,6 +3624,86 @@ export default function EWConsole() {
   const rwcaRangeKm = RWCA_MIN_RANGE_KM + rwcaPower * (RWCA_MAX_RANGE_KM - RWCA_MIN_RANGE_KM);
   const [rdnePowered, setRdnePowered] = useState(false);
   const [rdneArmed, setRdneArmed] = useState(false);
+  const [rdnePower, setRdnePower] = useState(0.2);
+  const rdneRangeKm = RDNE_MIN_RANGE_KM + rdnePower * (RDNE_MAX_RANGE_KM - RDNE_MIN_RANGE_KM);
+  const shipHeadingForRdne = useGameStore((s) => s.ship.actualHeading);
+  const rdneLockedTargetMarker = useMemo(() => {
+    if (!rdnePowered || !rdneArmed) return null;
+    const hardId = Object.keys(lockState).find((id) => lockState[id] === "hard");
+    const lockedId =
+      hardId || Object.keys(lockState).find((id) => lockState[id] === "soft") || null;
+    if (!lockedId) return null;
+    const target = contacts.find((c) => c.id === lockedId);
+    if (!target) return null;
+    const distanceKm = target.range / 1000;
+    if (distanceKm > rdneRangeKm || rdneRangeKm <= 0) return null;
+    const t = Math.min(1, Math.max(0, distanceKm / rdneRangeKm));
+    const targetHdg = target.heading ?? 0;
+    const headingInOwnFrameDeg = ((targetHdg - shipHeadingForRdne + 540) % 360) - 180;
+    const displayRotationDeg = headingInOwnFrameDeg + RDNE_LOCK_ROTATION_DISPLAY_OFFSET_DEG;
+    return { t, displayRotationDeg };
+  }, [rdnePowered, rdneArmed, lockState, contacts, rdneRangeKm, shipHeadingForRdne]);
+  const rdneSurfaceRef = useRef(null);
+  const lastRdneNetSendMsRef = useRef(0);
+  const lastRdneNetPayloadRef = useRef(null);
+  const [rdneSurfacePx, setRdneSurfacePx] = useState({ w: 0, h: 0 });
+  const [rdneUserMarker, setRdneUserMarker] = useState(null);
+  /** 0…1: smaller → tighter field + weaker arrow lengths; larger → prior default outer radius + strength. */
+  const [rdneFieldIntensity, setRdneFieldIntensity] = useState(1);
+
+  useLayoutEffect(() => {
+    const el = rdneSurfaceRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      setRdneSurfacePx((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const rdneVectorArrows = useMemo(() => {
+    if (!rdneUserMarker || rdneSurfacePx.w <= 0 || rdneSurfacePx.h <= 0) return [];
+    return rdneBuildGridVectorArrows(
+      rdneSurfacePx.w,
+      rdneSurfacePx.h,
+      rdneUserMarker.nx,
+      rdneUserMarker.ny,
+      rdneUserMarker.kind,
+      RDNE_LOCK_GRID_STEP_PX,
+      rdneFieldIntensity,
+    );
+  }, [rdneUserMarker, rdneSurfacePx.w, rdneSurfacePx.h, rdneFieldIntensity]);
+
+  const rdneResultantForceArrow = useMemo(() => {
+    if (
+      !rdneLockedTargetMarker ||
+      !rdneUserMarker ||
+      rdneSurfacePx.w <= 0 ||
+      rdneSurfacePx.h <= 0
+    ) {
+      return null;
+    }
+    return rdneBuildResultantForceArrow(
+      rdneSurfacePx.w,
+      rdneSurfacePx.h,
+      rdneUserMarker.nx,
+      rdneUserMarker.ny,
+      rdneUserMarker.kind,
+      RDNE_LOCK_GRID_STEP_PX,
+      rdneFieldIntensity,
+      rdneLockedTargetMarker.t,
+    );
+  }, [
+    rdneLockedTargetMarker,
+    rdneUserMarker,
+    rdneSurfacePx.w,
+    rdneSurfacePx.h,
+    rdneFieldIntensity,
+  ]);
   const [staleContacts, setStaleContacts] = useState({});
   const [classifierMenu, setClassifierMenu] = useState(null);
   const radarWasOnRef = useRef(false);
@@ -3393,6 +3712,10 @@ export default function EWConsole() {
   ]);
   const contactUpdateAtRef = useRef(0);
   const timeUpdateAtRef = useRef(0);
+  const [ewMfdTab, setEwMfdTab] = useState("MAP");
+  const ewTvWrapperRef = useRef(null);
+  const ewTvDisplayRef = useRef(null);
+  const ewTvFeedCanvas = useEwTvStore((s) => s.canvas);
 
   useEffect(() => {
     let frame;
@@ -3419,6 +3742,158 @@ export default function EWConsole() {
   useEffect(() => {
     if (!rdnePowered) setRdneArmed(false);
   }, [rdnePowered]);
+
+  useEffect(() => {
+    const setEffect = useGameStore.getState().setEwRdneFieldEffect;
+    if (!rdneUserMarker || !rdneLockedTargetMarker || !rdnePowered || !rdneArmed) {
+      setEffect(null);
+      return;
+    }
+    const hardId = Object.keys(lockState).find((id) => lockState[id] === "hard");
+    const lockedId =
+      hardId || Object.keys(lockState).find((id) => lockState[id] === "soft") || null;
+    if (!lockedId) { setEffect(null); return; }
+    const target = contacts.find((c) => c.id === lockedId);
+    if (!target) { setEffect(null); return; }
+
+    const lockCueNx = rdneLockCueNormX(rdneLockedTargetMarker.t);
+    const dxRdne = rdneUserMarker.nx - lockCueNx;
+    const dyRdne = -(rdneUserMarker.ny - 0.5);
+    const offsetMag = Math.hypot(dxRdne, dyRdne);
+    if (offsetMag < 0.001) { setEffect(null); return; }
+
+    const bearingRad = Math.atan2(-target.relDx, target.relDz);
+    const rangeX = -Math.sin(bearingRad);
+    const rangeZ = Math.cos(bearingRad);
+    const crossX = Math.cos(bearingRad);
+    const crossZ = Math.sin(bearingRad);
+
+    const scale = rdneRangeKm / 0.92 * 1000;
+    const worldOffsetX = (dxRdne * rangeX + dyRdne * crossX) * scale;
+    const worldOffsetZ = (dxRdne * rangeZ + dyRdne * crossZ) * scale;
+
+    let forceMag = 0;
+    if (rdneSurfacePx.w > 8 && rdneSurfacePx.h > 8) {
+      const tFlux = clamp(rdneFieldIntensity, 0, 1);
+      const stepPx = RDNE_LOCK_GRID_STEP_PX;
+      const rMin = stepPx * RDNE_FIELD_RMIN_STEPS;
+      const extraSteps =
+        RDNE_FIELD_RMAX_EXTRA_MIN_STEPS +
+        (RDNE_FIELD_RMAX_EXTRA_MAX_STEPS - RDNE_FIELD_RMAX_EXTRA_MIN_STEPS) * tFlux;
+      const rMax = rMin + stepPx * extraSteps;
+      const shaftGain = 0.22 + 0.78 * tFlux;
+      const mx = rdneUserMarker.nx * rdneSurfacePx.w;
+      const my = rdneUserMarker.ny * rdneSurfacePx.h;
+      const sx = lockCueNx * rdneSurfacePx.w;
+      const sy = 0.5 * rdneSurfacePx.h;
+      const pxDist = Math.hypot(mx - sx, my - sy);
+      if (pxDist >= rMin && pxDist <= rMax && pxDist > 1e-4) {
+        const strength = rdneVectorStrengthFromDist(pxDist, rMin, rMax);
+        forceMag = strength * shaftGain;
+      }
+    }
+
+    setEffect({
+      targetId: lockedId,
+      kind: rdneUserMarker.kind === "amber" ? "sink" : "source",
+      worldOffset: [worldOffsetX, 0, worldOffsetZ],
+      intensity: rdneFieldIntensity,
+      forceMagnitude: forceMag,
+    });
+    return () => { useGameStore.getState().setEwRdneFieldEffect(null); };
+  }, [
+    rdneUserMarker, rdneLockedTargetMarker, rdnePowered, rdneArmed,
+    lockState, contacts, rdneRangeKm, rdneFieldIntensity,
+    rdneSurfacePx.w, rdneSurfacePx.h,
+  ]);
+
+  useEffect(() => {
+    if (!multiplayerClient.isConnected()) {
+      lastRdneNetPayloadRef.current = null;
+      return;
+    }
+    const effect = useGameStore.getState().ewRdneFieldEffect;
+    const msg = effect
+      ? {
+          targetShipId: effect.targetId,
+          kind: effect.kind,
+          worldOffset: effect.worldOffset,
+          intensity: effect.intensity,
+          forceMagnitude: effect.forceMagnitude,
+        }
+      : { targetShipId: null };
+
+    const prev = lastRdneNetPayloadRef.current;
+    const isNull = msg.targetShipId === null;
+    const wasNull = !prev || prev.targetShipId === null;
+
+    if (isNull && wasNull) return;
+
+    const now = performance.now();
+    const elapsed = now - lastRdneNetSendMsRef.current;
+    if (!isNull && !wasNull && elapsed < 100) return;
+
+    lastRdneNetPayloadRef.current = msg;
+    lastRdneNetSendMsRef.current = now;
+    multiplayerClient.sendEwRdneField(msg);
+
+    return () => {
+      if (multiplayerClient.isConnected()) {
+        multiplayerClient.sendEwRdneField({ targetShipId: null });
+      }
+      lastRdneNetPayloadRef.current = null;
+    };
+  }, [
+    rdneUserMarker, rdneLockedTargetMarker, rdnePowered, rdneArmed,
+    lockState, contacts, rdneRangeKm, rdneFieldIntensity,
+    rdneSurfacePx.w, rdneSurfacePx.h,
+  ]);
+
+  useEffect(() => {
+    if (ewMfdTab !== "TV") return;
+    useEwTvStore.getState().acquireTv();
+    return () => {
+      useEwTvStore.getState().releaseTv();
+    };
+  }, [ewMfdTab]);
+
+  useLayoutEffect(() => {
+    if (ewMfdTab !== "TV") return;
+    const source = ewTvFeedCanvas;
+    if (!source) return;
+    const disp = ewTvDisplayRef.current;
+    const wrap = ewTvWrapperRef.current;
+    if (!disp || !wrap) return;
+    const ctx = disp.getContext("2d");
+    if (!ctx) return;
+
+    const tick = () => {
+      const d = ewTvDisplayRef.current;
+      const wEl = ewTvWrapperRef.current;
+      const src = useEwTvStore.getState().canvas;
+      if (!d || !wEl || !src) return;
+      const w = Math.max(1, Math.floor(wEl.clientWidth));
+      const h = Math.max(1, Math.floor(wEl.clientHeight));
+      if (d.width !== w || d.height !== h) {
+        d.width = w;
+        d.height = h;
+      }
+      const c = d.getContext("2d");
+      if (!c) return;
+      c.fillStyle = "#000";
+      c.fillRect(0, 0, w, h);
+      const scale = Math.min(w / EW_ORBIT_FEED_W, h / EW_ORBIT_FEED_H);
+      const dw = Math.floor(EW_ORBIT_FEED_W * scale);
+      const dh = Math.floor(EW_ORBIT_FEED_H * scale);
+      const ox = Math.floor((w - dw) / 2);
+      const oy = Math.floor((h - dh) / 2);
+      c.drawImage(src, 0, 0, EW_ORBIT_FEED_W, EW_ORBIT_FEED_H, ox, oy, dw, dh);
+    };
+
+    tick();
+    const id = window.setInterval(tick, 50);
+    return () => window.clearInterval(id);
+  }, [ewMfdTab, ewTvFeedCanvas]);
 
   const hardLockedId = Object.keys(lockState).find(id => lockState[id] === "hard") || null;
   const effectiveRadarMode = hardLockedId ? "STT" : radarMode;
@@ -3717,9 +4192,133 @@ export default function EWConsole() {
           <Panel
             title="Multi-Function Display"
             style={{ flex: 1, minHeight: 0 }}
-            headerRight={<span style={{ color: AMBER_DIM, fontSize: 8 }}>MAP ONLINE</span>}
+            headerRight={
+              ewMfdTab === "MAP" ? (
+                <span style={{ color: AMBER_DIM, fontSize: 8 }}>MAP ONLINE</span>
+              ) : ewMfdTab === "RADAR" ? (
+                <span style={{ color: GREEN_DIM, fontSize: 8, letterSpacing: 1 }}>B-SCOPE</span>
+              ) : (
+                <span style={{ color: GREEN_DIM, fontSize: 8, letterSpacing: 1 }}>PILOT VIEW</span>
+              )
+            }
           >
-            <EWSystemMap time={time} />
+            <div style={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+            >
+              <div style={{
+                display: "flex",
+                gap: 4,
+                padding: "6px 8px",
+                borderBottom: `1px solid ${AMBER_DIM}55`,
+                background: "rgba(0,0,0,0.28)",
+                flexShrink: 0,
+              }}
+              >
+                {EW_MFD_TABS.map((tab) => {
+                  const active = tab === ewMfdTab;
+                  return (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setEwMfdTab(tab)}
+                      style={{
+                        padding: "4px 10px",
+                        borderRadius: 1,
+                        border: `1px solid ${active ? AMBER : AMBER_DIM}`,
+                        background: active ? "rgba(255,176,0,0.14)" : "rgba(255,176,0,0.04)",
+                        color: active ? AMBER_GLOW : AMBER_DIM,
+                        fontFamily: font,
+                        fontSize: 10,
+                        letterSpacing: 1,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {tab}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{
+                flex: 1,
+                minHeight: 0,
+                position: "relative",
+                display: "flex",
+                flexDirection: "column",
+              }}
+              >
+                {ewMfdTab === "TV" ? (
+                  <>
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        border: "1px solid rgba(125,132,142,0.28)",
+                        pointerEvents: "none",
+                        zIndex: 2,
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 14,
+                        left: 16,
+                        color: AMBER_GLOW,
+                        fontFamily: font,
+                        fontSize: 12,
+                        letterSpacing: 1,
+                        pointerEvents: "none",
+                        zIndex: 2,
+                      }}
+                    >
+                      EXT VIS — ORBIT CAM
+                    </div>
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: 14,
+                        left: 16,
+                        color: AMBER_DIM,
+                        fontFamily: font,
+                        fontSize: 11,
+                        pointerEvents: "none",
+                        zIndex: 2,
+                      }}
+                    >
+                      {`${EW_ORBIT_FEED_W}×${EW_ORBIT_FEED_H} · PILOT VIEW`}
+                    </div>
+                    <div
+                      ref={ewTvWrapperRef}
+                      style={{
+                        position: "absolute",
+                        inset: 10,
+                        background: "#000",
+                        border: `1px solid ${AMBER_DIM}88`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <canvas
+                        ref={ewTvDisplayRef}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          display: "block",
+                        }}
+                        aria-label="External visual: pilot orbit camera"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <EWSystemMap time={time} mfdTab={ewMfdTab} />
+                )}
+              </div>
+            </div>
           </Panel>
           <div style={{
             display: "flex",
@@ -3779,6 +4378,17 @@ export default function EWConsole() {
                         touchAction: "none",
                       }}
                     />
+                    <span style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      fontFamily: font,
+                      whiteSpace: "nowrap",
+                      color: AMBER_GLOW,
+                      letterSpacing: "0.06em",
+                      lineHeight: 1,
+                    }}>
+                      {Math.round(rwcaPower * 100)}% PWR
+                    </span>
                   </div>
                 ) : null}
                 headerRight={(
@@ -3808,6 +4418,7 @@ export default function EWConsole() {
                     power={rwcaPower}
                     rangeKm={rwcaRangeKm}
                     rwcaPowered={rwcaPowered}
+                    rwcaArmed={rwcaArmed}
                   />
                 </div>
               </Panel>
@@ -3819,6 +4430,60 @@ export default function EWConsole() {
               <Panel
                 title="RDNE"
                 style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+                headerCenter={rdnePowered && rdneArmed ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      touchAction: "none",
+                      height: 28,
+                      maxHeight: 28,
+                      boxSizing: "border-box",
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <span style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      fontFamily: font,
+                      whiteSpace: "nowrap",
+                      color: AMBER_GLOW,
+                      letterSpacing: "0.02em",
+                      lineHeight: 1,
+                      textShadow: "0 0 6px rgba(255, 204, 68, 0.35)",
+                    }}>
+                      {rdneRangeKm.toFixed(0)}
+                      <span style={{ fontSize: 8, fontWeight: 600, color: AMBER, marginLeft: 3, opacity: 0.92 }}>
+                        km
+                      </span>
+                    </span>
+                    <input
+                      type="range" min={0} max={1} step={0.01} value={rdnePower}
+                      onChange={e => setRdnePower(+e.target.value)}
+                      style={{
+                        width: 96,
+                        minWidth: 96,
+                        accentColor: AMBER,
+                        height: 14,
+                        margin: 0,
+                        cursor: "pointer",
+                        touchAction: "none",
+                      }}
+                    />
+                    <span style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      fontFamily: font,
+                      whiteSpace: "nowrap",
+                      color: AMBER_GLOW,
+                      letterSpacing: "0.06em",
+                      lineHeight: 1,
+                    }}>
+                      {Math.round(rdnePower * 100)}% PWR
+                    </span>
+                  </div>
+                ) : null}
                 headerRight={(
                   <EwSysPowerArmHeader
                     font={font}
@@ -3843,13 +4508,374 @@ export default function EWConsole() {
                     style={{
                       flex: 1,
                       minHeight: 0,
+                      minWidth: 0,
                       margin: 6,
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "stretch",
+                      gap: 2,
+                    }}
+                  >
+                  <div
+                    ref={rdneSurfaceRef}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      minHeight: 0,
                       borderRadius: 2,
                       border: `1px dashed ${AMBER_DIM}44`,
                       background: "rgba(8,8,8,0.35)",
+                      position: "relative",
+                      overflow: "hidden",
+                      touchAction: "none",
                     }}
-                    aria-label="RDNE — Relativistic Drag Net Emitter (placeholder)"
-                  />
+                    aria-label="RDNE — Relativistic Drag Net Emitter range cue"
+                    onContextMenu={(e) => e.preventDefault()}
+                    onPointerDown={(e) => {
+                      if (!rdnePowered || !rdneArmed) return;
+                      const surface = rdneSurfaceRef.current;
+                      if (!surface) return;
+                      if (e.button === 0 || e.button === 2) e.preventDefault();
+                      if (e.button === 0) {
+                        const { nx, ny } = rdneNormFromClient(e.clientX, e.clientY, surface);
+                        setRdneUserMarker({ kind: "amber", nx, ny });
+                        e.stopPropagation();
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                      } else if (e.button === 2) {
+                        const { nx, ny } = rdneNormFromClient(e.clientX, e.clientY, surface);
+                        setRdneUserMarker({ kind: "blue", nx, ny });
+                        e.stopPropagation();
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                      }
+                    }}
+                    onPointerMove={(e) => {
+                      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                      const surface = rdneSurfaceRef.current;
+                      if (!surface) return;
+                      const { nx, ny } = rdneNormFromClient(e.clientX, e.clientY, surface);
+                      setRdneUserMarker((prev) => (prev ? { ...prev, nx, ny } : null));
+                    }}
+                    onPointerUp={(e) => {
+                      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                        e.currentTarget.releasePointerCapture(e.pointerId);
+                      }
+                    }}
+                    onPointerCancel={(e) => {
+                      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                        e.currentTarget.releasePointerCapture(e.pointerId);
+                      }
+                    }}
+                  >
+                    {rdneLockedTargetMarker ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          zIndex: 0,
+                          pointerEvents: "none",
+                          backgroundImage:
+                            "radial-gradient(circle, rgba(255, 204, 68, 0.26) 1px, transparent 1.45px)",
+                          backgroundSize: `${RDNE_LOCK_GRID_STEP_PX}px ${RDNE_LOCK_GRID_STEP_PX}px`,
+                          backgroundPosition: `${RDNE_LOCK_GRID_STEP_PX / 2}px ${RDNE_LOCK_GRID_STEP_PX / 2}px`,
+                        }}
+                        aria-hidden
+                      />
+                    ) : null}
+                    {rdneLockedTargetMarker ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: `${rdneLockCueNormX(rdneLockedTargetMarker.t) * 100}%`,
+                          top: "50%",
+                          width: 0,
+                          height: 0,
+                          overflow: "visible",
+                          pointerEvents: "none",
+                          zIndex: 2,
+                        }}
+                        aria-hidden
+                      >
+                        <svg
+                          width={28}
+                          height={26}
+                          viewBox="0 0 28 26"
+                          style={{
+                            position: "absolute",
+                            left: -RDNE_LOCK_TRI_CX,
+                            top: -RDNE_LOCK_TRI_CY,
+                            transform: `rotate(${rdneLockedTargetMarker.displayRotationDeg}deg)`,
+                            transformOrigin: `${RDNE_LOCK_TRI_CX}px ${RDNE_LOCK_TRI_CY}px`,
+                            overflow: "visible",
+                            filter: "drop-shadow(0 0 3px rgba(255,204,68,0.4))",
+                          }}
+                        >
+                          <polygon
+                            points="14,5 6,24 22,24"
+                            fill={AMBER_GLOW}
+                            stroke={AMBER}
+                            strokeWidth={0.55}
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </div>
+                    ) : null}
+                    {rdnePowered && rdneArmed && rdneUserMarker && rdneVectorArrows.length > 0 ? (
+                      <svg
+                        width={rdneSurfacePx.w}
+                        height={rdneSurfacePx.h}
+                        viewBox={`0 0 ${rdneSurfacePx.w} ${rdneSurfacePx.h}`}
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          top: 0,
+                          display: "block",
+                          pointerEvents: "none",
+                          zIndex: 0,
+                          overflow: "visible",
+                        }}
+                        aria-hidden
+                      >
+                        {rdneVectorArrows.map((a, i) => {
+                          const stroke =
+                            rdneUserMarker.kind === "amber"
+                              ? AMBER_DIM
+                              : "rgba(126, 200, 255, 0.82)";
+                          return (
+                            <g key={`${a.gx}_${a.gy}_${i}`}>
+                              <line
+                                x1={a.gx}
+                                y1={a.gy}
+                                x2={a.bx}
+                                y2={a.by}
+                                stroke={stroke}
+                                strokeWidth={1}
+                                strokeLinecap="round"
+                              />
+                              <line
+                                x1={a.tx}
+                                y1={a.ty}
+                                x2={a.w1x}
+                                y2={a.w1y}
+                                stroke={stroke}
+                                strokeWidth={1}
+                                strokeLinecap="round"
+                              />
+                              <line
+                                x1={a.tx}
+                                y1={a.ty}
+                                x2={a.w2x}
+                                y2={a.w2y}
+                                stroke={stroke}
+                                strokeWidth={1}
+                                strokeLinecap="round"
+                              />
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    ) : null}
+                    {rdnePowered && rdneArmed && rdneResultantForceArrow ? (
+                      <svg
+                        width={rdneSurfacePx.w}
+                        height={rdneSurfacePx.h}
+                        viewBox={`0 0 ${rdneSurfacePx.w} ${rdneSurfacePx.h}`}
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          top: 0,
+                          display: "block",
+                          pointerEvents: "none",
+                          zIndex: 1,
+                          overflow: "visible",
+                        }}
+                        aria-hidden
+                      >
+                        <defs>
+                          <filter id={rdneResultantFilterId} x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="1.2" result="b" />
+                            <feMerge>
+                              <feMergeNode in="b" />
+                              <feMergeNode in="SourceGraphic" />
+                            </feMerge>
+                          </filter>
+                        </defs>
+                        <g filter={`url(#${rdneResultantFilterId})`}>
+                          <line
+                            x1={rdneResultantForceArrow.sx}
+                            y1={rdneResultantForceArrow.sy}
+                            x2={rdneResultantForceArrow.bx}
+                            y2={rdneResultantForceArrow.by}
+                            stroke="rgba(255, 64, 64, 0.95)"
+                            strokeWidth={1.35}
+                            strokeLinecap="round"
+                          />
+                          <line
+                            x1={rdneResultantForceArrow.tx}
+                            y1={rdneResultantForceArrow.ty}
+                            x2={rdneResultantForceArrow.w1x}
+                            y2={rdneResultantForceArrow.w1y}
+                            stroke="rgba(255, 64, 64, 0.95)"
+                            strokeWidth={1.35}
+                            strokeLinecap="round"
+                          />
+                          <line
+                            x1={rdneResultantForceArrow.tx}
+                            y1={rdneResultantForceArrow.ty}
+                            x2={rdneResultantForceArrow.w2x}
+                            y2={rdneResultantForceArrow.w2y}
+                            stroke="rgba(255, 64, 64, 0.95)"
+                            strokeWidth={1.35}
+                            strokeLinecap="round"
+                          />
+                        </g>
+                      </svg>
+                    ) : null}
+                    {rdnePowered && rdneArmed && rdneUserMarker ? (
+                      <div
+                        role="presentation"
+                        style={{
+                          position: "absolute",
+                          left: `${rdneUserMarker.nx * 100}%`,
+                          top: `${rdneUserMarker.ny * 100}%`,
+                          width: RDNE_USER_MARKER_HIT_PX,
+                          height: RDNE_USER_MARKER_HIT_PX,
+                          marginLeft: -RDNE_USER_MARKER_HIT_PX / 2,
+                          marginTop: -RDNE_USER_MARKER_HIT_PX / 2,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          zIndex: 3,
+                          cursor: "grab",
+                          touchAction: "none",
+                        }}
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          const dragAmber = rdneUserMarker.kind === "amber" && e.button === 0;
+                          const dragBlue = rdneUserMarker.kind === "blue" && e.button === 2;
+                          if (!dragAmber && !dragBlue) return;
+                          e.preventDefault();
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                        }}
+                        onPointerMove={(e) => {
+                          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                          const surface = rdneSurfaceRef.current;
+                          if (!surface) return;
+                          const { nx, ny } = rdneNormFromClient(e.clientX, e.clientY, surface);
+                          setRdneUserMarker((prev) => (prev ? { ...prev, nx, ny } : null));
+                        }}
+                        onPointerUp={(e) => {
+                          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                          }
+                        }}
+                        onPointerCancel={(e) => {
+                          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                          }
+                        }}
+                      >
+                        <div
+                          aria-hidden
+                          style={{
+                            width: RDNE_USER_MARKER_DIAM_PX,
+                            height: RDNE_USER_MARKER_DIAM_PX,
+                            borderRadius: "50%",
+                            flexShrink: 0,
+                            pointerEvents: "none",
+                            background:
+                              rdneUserMarker.kind === "amber"
+                                ? AMBER_GLOW
+                                : "radial-gradient(circle at 30% 30%, #a8dcff, #4a9fe8)",
+                            boxShadow:
+                              rdneUserMarker.kind === "amber"
+                                ? "0 0 6px rgba(255, 204, 68, 0.55)"
+                                : "0 0 6px rgba(100, 180, 255, 0.5)",
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                  <div
+                    style={{
+                      width: 48,
+                      flexShrink: 0,
+                      alignSelf: "stretch",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      padding: "4px 4px 6px",
+                      boxSizing: "border-box",
+                      touchAction: "none",
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        fontFamily: font,
+                        color: AMBER_GLOW,
+                        letterSpacing: "0.14em",
+                        userSelect: "none",
+                        flexShrink: 0,
+                        lineHeight: 1,
+                        textAlign: "center",
+                        marginTop: 10,
+                      }}
+                    >
+                      FLUX
+                    </span>
+                    <div
+                      style={{
+                        flex: 1,
+                        minHeight: 40,
+                        width: "100%",
+                        position: "relative",
+                        marginTop: 6,
+                      }}
+                    >
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={rdneFieldIntensity}
+                        onChange={(e) => setRdneFieldIntensity(+e.target.value)}
+                        aria-label="RDNE flux — field radius and strength (0–1)"
+                        title="Flux — field radius and strength"
+                        style={{
+                          position: "absolute",
+                          left: "50%",
+                          top: "50%",
+                          width: 112,
+                          height: 18,
+                          margin: 0,
+                          padding: 0,
+                          transform: "translate(-50%, -50%) rotate(-90deg)",
+                          accentColor: AMBER,
+                          cursor: "pointer",
+                        }}
+                      />
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        fontFamily: font,
+                        color: AMBER,
+                        letterSpacing: "0.02em",
+                        userSelect: "none",
+                        flexShrink: 0,
+                        lineHeight: 1,
+                        marginTop: 4,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                      aria-live="polite"
+                    >
+                      {(Math.round(rdneFieldIntensity * 10) / 10).toFixed(1)}
+                    </span>
+                  </div>
+                  </div>
                 </div>
               </Panel>
             </div>

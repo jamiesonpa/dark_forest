@@ -28,6 +28,15 @@ export interface WireShipSnapshot {
   hullMax: number
   capacitor: number
   capacitorMax: number
+  /** True when another ship's RWCA has this vessel attenuated (server-derived). */
+  warpCoreAttenuated?: boolean
+  /** RDNE field being applied to this ship by a remote operator (server-derived). */
+  rdneFieldEffect?: {
+    kind: 'source' | 'sink'
+    worldOffset: [number, number, number]
+    intensity: number
+    forceMagnitude: number
+  }
 }
 
 export type ShipsSnapshotMessage = Record<string, WireShipSnapshot>
@@ -153,4 +162,18 @@ export interface WarpIntentPayload extends WarpMessage {
   requiredInclination: number
   alignmentErrorDeg: number
   clientStartedAt: number
+}
+
+/** EW RWCA: report active attenuation target (session id); null clears. */
+export interface EwRwcaAttenuateMessage {
+  targetShipId: string | null
+}
+
+/** EW RDNE: report active field effect on a target ship; null targetShipId clears. */
+export interface EwRdneFieldMessage {
+  targetShipId: string | null
+  kind?: 'source' | 'sink'
+  worldOffset?: [number, number, number]
+  intensity?: number
+  forceMagnitude?: number
 }

@@ -42,6 +42,7 @@ export type ColyseusRoomState = {
   }
 }
 
+/** Colyseus room state has no RWCA field; omit `warpCoreAttenuated` so `fromSnapshot` keeps the prior flag until `ships_snapshot` wire messages arrive. */
 export function toWireShipSnapshot(ship: ColyseusShip): WireShipSnapshot {
   const revealedCelestialIds = ship.revealedCelestialIds
     ? Array.from(ship.revealedCelestialIds)

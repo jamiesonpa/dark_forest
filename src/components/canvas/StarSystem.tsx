@@ -2,6 +2,7 @@ import { Skybox } from './Skybox'
 import { CollisionHullBootstrap } from './CollisionHullBootstrap'
 import { Grid } from './Grid'
 import { OrbitCameraController } from './OrbitCameraController'
+import { EwOrbitViewFeed } from './EwOrbitViewFeed'
 import { IRSTCamera } from './IRSTCamera'
 import { IRSTCameraDebugCone } from './IRSTCameraDebugCone'
 import { BScopeRadarDebugCone } from './BScopeRadarDebugCone'
@@ -31,6 +32,7 @@ export function StarSystem() {
       <IRSTCameraDebugCone />
       <BScopeRadarDebugCone />
       <OrbitCameraController />
+      <EwOrbitViewFeed />
     </>
   )
 }

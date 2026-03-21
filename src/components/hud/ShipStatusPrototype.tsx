@@ -204,7 +204,13 @@ export function ShipStatusPrototype() {
     const requiredCapacitor = getWarpCapacitorRequiredAmount(distanceWorldUnits, ship.capacitorMax)
     return ship.capacitor - requiredCapacitor >= WARP_MIN_POST_CAPACITOR
   }, [currentCelestialId, selectedWarpDestinationId, ship.capacitor, ship.capacitorMax, starSystem])
-  const canWarp = !warpBusy && Boolean(selectedWarpDestinationId) && warpAligned && hasWarpCapacitor
+  const warpCoreAttenuated = ship.warpCoreAttenuated
+  const canWarp =
+    !warpBusy &&
+    Boolean(selectedWarpDestinationId) &&
+    warpAligned &&
+    hasWarpCapacitor &&
+    !warpCoreAttenuated
   const selectedWarpDestination = useMemo(
     () => (selectedWarpDestinationId ? getCelestialById(selectedWarpDestinationId, starSystem) : null),
     [selectedWarpDestinationId, starSystem]
@@ -723,14 +729,23 @@ export function ShipStatusPrototype() {
             </div>
             <button
               type="button"
-              className={`warp-button ship-status-v2-warp-button ${canWarp ? 'ready' : ''} ${warpBusy ? 'active' : ''}`.trim()}
+              className={`warp-button ship-status-v2-warp-button ${canWarp ? 'ready' : ''} ${warpBusy ? 'active' : ''} ${warpCoreAttenuated && !warpBusy ? 'attenuated' : ''}`.trim()}
               onClick={() => {
                 if (!selectedWarpDestinationId || !canWarp) return
                 startWarp(selectedWarpDestinationId)
               }}
               disabled={!canWarp}
+              title={
+                warpCoreAttenuated && !warpBusy
+                  ? 'Warp core attenuated — EW interference'
+                  : undefined
+              }
             >
-              {warpBusy ? `WARP ${(warpTravelProgress * 100).toFixed(0)}%` : 'WARP'}
+              {warpBusy
+                ? `WARP ${(warpTravelProgress * 100).toFixed(0)}%`
+                : warpCoreAttenuated
+                  ? 'ATN'
+                  : 'WARP'}
             </button>
           </div>
         </div>

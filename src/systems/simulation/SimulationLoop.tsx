@@ -184,6 +184,7 @@ export function SimulationLoop() {
   const remoteExplosionDamageIdsRef = useRef(new Set<string>())
   const lastCollisionDamageTimeRef = useRef(0)
   const knownShipHullRef = useRef<Record<string, number>>({})
+  const rdneDriftRef = useRef<[number, number, number]>([0, 0, 0])
 
   useEffect(() => {
     void ensureRapierLoaded()
@@ -231,7 +232,8 @@ export function SimulationLoop() {
           state.warpState === 'idle' &&
           Boolean(state.selectedWarpDestinationId) &&
           state.warpAligned &&
-          hasWarpCapacitor
+          hasWarpCapacitor &&
+          !state.ship.warpCoreAttenuated
         if (!canWarp || !state.selectedWarpDestinationId) return
         state.startWarp(state.selectedWarpDestinationId)
         return
@@ -780,6 +782,48 @@ export function SimulationLoop() {
 
       const inertiaDrivenMovement =
         dacInertialDriftActive || (inertialDriftInitialized && dampenersOnline)
+
+      const rdneEffect = ship.rdneFieldEffect
+      if (rdneEffect && rdneEffect.forceMagnitude > 0) {
+        const [ox, , oz] = rdneEffect.worldOffset
+        const offsetLen = Math.sqrt(ox * ox + oz * oz)
+        if (offsetLen > 0.001) {
+          const dirSign = rdneEffect.kind === 'sink' ? 1 : -1
+          const accel = 18 * rdneEffect.forceMagnitude
+          rdneDriftRef.current = [
+            rdneDriftRef.current[0] + (ox / offsetLen) * dirSign * accel * dt,
+            rdneDriftRef.current[1],
+            rdneDriftRef.current[2] + (oz / offsetLen) * dirSign * accel * dt,
+          ]
+        }
+      } else if (
+        rdneDriftRef.current[0] !== 0 ||
+        rdneDriftRef.current[1] !== 0 ||
+        rdneDriftRef.current[2] !== 0
+      ) {
+        const decay = Math.exp(-2.5 * dt)
+        rdneDriftRef.current = [
+          rdneDriftRef.current[0] * decay,
+          rdneDriftRef.current[1] * decay,
+          rdneDriftRef.current[2] * decay,
+        ]
+        if (
+          Math.abs(rdneDriftRef.current[0]) < 0.01 &&
+          Math.abs(rdneDriftRef.current[1]) < 0.01 &&
+          Math.abs(rdneDriftRef.current[2]) < 0.01
+        ) {
+          rdneDriftRef.current = [0, 0, 0]
+        }
+      }
+      if (
+        rdneDriftRef.current[0] !== 0 ||
+        rdneDriftRef.current[1] !== 0 ||
+        rdneDriftRef.current[2] !== 0
+      ) {
+        pdx += rdneDriftRef.current[0] * dt
+        pdy += rdneDriftRef.current[1] * dt
+        pdz += rdneDriftRef.current[2] * dt
+      }
 
       let newPos: [number, number, number] = [
         ship.position[0] + pdx,

@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import type { ShipState } from '@/state/types'
 import { useGameStore } from '@/state/gameStore'
 import { WarpBubbleEffect } from './WarpBubbleEffect'
+import { WarpCoreAttenuationEffect } from './WarpCoreAttenuationEffect'
 
 const RAVEN_OBJ = '/models/caldari_battleship_Raven.obj'
 const RAVEN_TEX = '/models/raven_tex.png'
@@ -839,6 +840,9 @@ export function PlayerShip({ ship, isLocal, playerId }: PlayerShipProps) {
             <primitive object={shieldSurfaceObj} scale={1.006} renderOrder={3} />
             <primitive object={shieldWireframeObj} scale={1.008} renderOrder={4} />
           </>
+        )}
+        {ship.warpCoreAttenuated && (
+          <WarpCoreAttenuationEffect playerId={playerId} />
         )}
         {thrusterEmitters.map((_, index) => {
           const thrusterParticleData = thrusterParticleDataList[index]

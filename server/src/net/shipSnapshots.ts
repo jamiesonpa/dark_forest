@@ -73,10 +73,43 @@ export function toWireShipSnapshot(ship: ShipState): WireShipSnapshot {
   }
 }
 
-export function buildShipsSnapshot(ships: ShipCollection): ShipsSnapshotMessage {
+export interface RdneFieldPayload {
+  kind: 'source' | 'sink'
+  worldOffset: [number, number, number]
+  intensity: number
+  forceMagnitude: number
+}
+
+export function buildShipsSnapshot(
+  ships: ShipCollection,
+  rwcaTargetBySourceSession: Map<string, string | null> = new Map(),
+  rdneFieldBySource: Map<string, { targetShipId: string; payload: RdneFieldPayload } | null> = new Map()
+): ShipsSnapshotMessage {
+  const victims = new Set<string>()
+  rwcaTargetBySourceSession.forEach((target) => {
+    if (typeof target === 'string' && target.length > 0) {
+      victims.add(target)
+    }
+  })
+
+  const rdneByTarget = new Map<string, RdneFieldPayload>()
+  rdneFieldBySource.forEach((entry) => {
+    if (entry && entry.targetShipId) {
+      rdneByTarget.set(entry.targetShipId, entry.payload)
+    }
+  })
+
   const snapshot: ShipsSnapshotMessage = {}
   ships.forEach((ship, sessionId) => {
-    snapshot[sessionId] = toWireShipSnapshot(ship)
+    const wire: WireShipSnapshot = {
+      ...toWireShipSnapshot(ship),
+      warpCoreAttenuated: victims.has(sessionId),
+    }
+    const rdne = rdneByTarget.get(sessionId)
+    if (rdne) {
+      wire.rdneFieldEffect = rdne
+    }
+    snapshot[sessionId] = wire
   })
   return snapshot
 }

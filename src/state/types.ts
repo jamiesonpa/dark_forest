@@ -44,6 +44,15 @@ export interface ShipState {
   irstZoom: number
   irstBearing: number
   irstInclination: number
+  /** Remote warp core attenuation (EW RWCA); server-synced in multiplayer. */
+  warpCoreAttenuated: boolean
+  /** RDNE field being applied to this ship by a remote operator (server-derived). */
+  rdneFieldEffect: {
+    kind: 'source' | 'sink'
+    worldOffset: [number, number, number]
+    intensity: number
+    forceMagnitude: number
+  } | null
 }
 
 export type NpcBehaviorMode = 'manual' | 'stationary' | 'straight' | 'orbit'
@@ -59,6 +68,17 @@ export interface NpcShipConfig {
   radarMode: NpcRadarMode
   orbitCenter: [number, number, number]
   orbitRadius: number
+}
+
+export interface EwRdneFieldEffect {
+  targetId: string
+  kind: 'source' | 'sink'
+  /** Offset from target ship position in world coordinates. */
+  worldOffset: [number, number, number]
+  /** 0–1 field intensity from the RDNE console. */
+  intensity: number
+  /** 0–1 normalized force magnitude on the target (distance-falloff × flux). */
+  forceMagnitude: number
 }
 
 export interface EwJammerState {
@@ -201,10 +221,15 @@ export interface GameStore {
   ewUpperScannerOn: boolean
   ewLowerScannerOn: boolean
   irstCameraOn: boolean
+  ewRdneFieldEffect: EwRdneFieldEffect | null
+  /** Per-ship accumulated velocity from RDNE forces (m/s in world space). */
+  ewRdneShipDrift: Record<string, [number, number, number]>
   ewJammers: EwJammerState[]
   ewActiveGravAnalysis: EwGravAnalysisSession | null
   ewLastGravAnalysisResult: EwGravAnalysisResult | null
   ewRevealedCelestialIds: string[]
+  setEwRdneFieldEffect: (effect: EwRdneFieldEffect | null) => void
+  setEwRdneShipDrift: (drift: Record<string, [number, number, number]>) => void
   setEwJammers: (jammers: EwJammerState[]) => void
   setEwUpperScannerOn: (on: boolean) => void
   setEwLowerScannerOn: (on: boolean) => void
@@ -331,6 +356,8 @@ export interface GameStore {
   setLocalPlayerId: (id: string) => void
   setLocalShipState: (partial: Partial<ShipState>) => void
   upsertRemoteShips: (snapshot: Record<string, WireShipSnapshot>) => void
+  /** Client-only RWCA testing: set `warpCoreAttenuated` on `npc-*` ships (server has no NPC session ids). */
+  applyLocalNpcRwcaAttenuation: (targetNpcShipId: string | null) => void
   setShipState: (partial: Partial<ShipState>) => void
   setTargetSpeed: (mps: number) => void
   setMwdActive: (active: boolean, durationSeconds?: number) => void

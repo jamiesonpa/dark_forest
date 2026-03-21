@@ -63,6 +63,11 @@ function fromSnapshot(snapshot: WireShipSnapshot, existing: GameStore['ship']) {
     hullMax: snapshot.hullMax,
     capacitor: snapshot.capacitor,
     capacitorMax: snapshot.capacitorMax,
+    warpCoreAttenuated:
+      snapshot.warpCoreAttenuated !== undefined
+        ? snapshot.warpCoreAttenuated
+        : existing.warpCoreAttenuated,
+    rdneFieldEffect: snapshot.rdneFieldEffect ?? null,
   }
 }
 
@@ -120,11 +125,56 @@ export const createShipSlice: StateCreator<GameStore, [], [], Partial<GameStore>
         nextShips[id] = fromSnapshot(remoteShip, prevShip)
       })
 
-      nextShips[localId] = prevState.shipsById[localId] ?? prevState.ship
+      const prevLocal = prevState.shipsById[localId] ?? prevState.ship
+      const localSnap = snapshot[localId]
+      nextShips[localId] = {
+        ...prevLocal,
+        warpCoreAttenuated:
+          localSnap?.warpCoreAttenuated !== undefined
+            ? localSnap.warpCoreAttenuated
+            : prevLocal.warpCoreAttenuated,
+        rdneFieldEffect: localSnap?.rdneFieldEffect ?? null,
+      }
 
-      return {
+      const patch: Record<string, unknown> = {
         shipsById: nextShips,
         ship: nextShips[localId],
+      }
+
+      const incomingRdne = localSnap?.rdneFieldEffect
+      if (incomingRdne && !prevState.ewRdneFieldEffect) {
+        patch.ewRdneFieldEffect = {
+          targetId: localId,
+          kind: incomingRdne.kind,
+          worldOffset: incomingRdne.worldOffset,
+          intensity: incomingRdne.intensity,
+          forceMagnitude: incomingRdne.forceMagnitude,
+        }
+      } else if (!incomingRdne && prevState.ewRdneFieldEffect?.targetId === localId) {
+        patch.ewRdneFieldEffect = null
+      }
+
+      return patch
+    }),
+  applyLocalNpcRwcaAttenuation: (targetNpcShipId) =>
+    set((s) => {
+      const state = s as GameStore
+      const localId = getLocalPlayerId(state)
+      const nextShips = { ...state.shipsById }
+      let changed = false
+      for (const id of Object.keys(nextShips)) {
+        if (!id.startsWith('npc-')) continue
+        const ship = nextShips[id]
+        if (!ship) continue
+        const nextAtt = targetNpcShipId !== null && id === targetNpcShipId
+        if (ship.warpCoreAttenuated === nextAtt) continue
+        nextShips[id] = { ...ship, warpCoreAttenuated: nextAtt } satisfies GameStore['ship']
+        changed = true
+      }
+      if (!changed) return {}
+      return {
+        shipsById: nextShips,
+        ship: nextShips[localId] ?? state.ship,
       }
     }),
   setShipState: (partial) =>

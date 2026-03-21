@@ -1,3 +1,4 @@
+import { generatePrimaryStarDesignationFromSeed } from '../../../shared/starDesignation.js'
 import type {
   Celestial,
   CelestialType,
@@ -177,10 +178,11 @@ export function generateStarSystemSnapshot(
     normalized.minSeparationAu,
     rand
   )
+  const primaryStarName = generatePrimaryStarDesignationFromSeed(normalized.seed)
   const celestials: Celestial[] = [
     {
       id: 'star',
-      name: 'Dark Forest Prime',
+      name: primaryStarName,
       type: 'star',
       position: [0, 0, 0],
       gridRadius: 5000,

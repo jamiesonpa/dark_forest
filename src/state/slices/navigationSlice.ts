@@ -1339,6 +1339,9 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
   startWarp: (targetCelestialId) =>
     set((s) => {
       if (s.warpState !== 'idle' || !s.warpAligned) return {}
+      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
+      const localShip = s.shipsById[localId] ?? s.ship
+      if (localShip.warpCoreAttenuated) return {}
       const sourceCelestial = getCelestialById(s.currentCelestialId, s.starSystem)
       const destinationCelestial = getCelestialById(targetCelestialId, s.starSystem)
       if (!sourceCelestial || !destinationCelestial || sourceCelestial.id === destinationCelestial.id) {
@@ -1348,8 +1351,6 @@ export const createNavigationSlice: StateCreator<GameStore, [], [], Partial<Game
       const sourceWorld = worldPositionForCelestial(sourceCelestial)
       const destinationWorld = worldPositionForCelestial(destinationCelestial)
       const distanceWorldUnits = vectorMagnitude(vectorBetweenWorldPoints(sourceWorld, destinationWorld))
-      const localId = s.localPlayerId || OFFLINE_LOCAL_PLAYER_ID
-      const localShip = s.shipsById[localId] ?? s.ship
       const requiredCapacitor = getWarpCapacitorRequiredAmount(distanceWorldUnits, localShip.capacitorMax)
       if (localShip.capacitor - requiredCapacitor < WARP_MIN_POST_CAPACITOR) return {}
 

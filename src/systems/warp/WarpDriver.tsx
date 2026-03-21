@@ -175,7 +175,7 @@ export function WarpDriver() {
     }
 
     if (state.warpState === 'aligning' && state.warpTargetId) {
-      if (!state.warpAligned) {
+      if (!state.warpAligned || state.ship.warpCoreAttenuated) {
         aligningSinceMsRef.current = null
         state.setWarpState('idle', null)
       } else {

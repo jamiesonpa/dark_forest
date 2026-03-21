@@ -29,6 +29,10 @@ export const createEwSlice: StateCreator<GameStore, [], [], Partial<GameStore>> 
   ewActiveGravAnalysis: null,
   ewLastGravAnalysisResult: null,
   ewRevealedCelestialIds: [],
+  ewRdneFieldEffect: null,
+  ewRdneShipDrift: {},
+  setEwRdneFieldEffect: (effect) => set({ ewRdneFieldEffect: effect }),
+  setEwRdneShipDrift: (drift) => set({ ewRdneShipDrift: drift }),
   ewJammers: [
     { mode: null, active: false, freq: 0.2 },
     { mode: null, active: false, freq: 0.4 },

@@ -36,6 +36,8 @@ export const defaultShipState: ShipState = {
   irstZoom: 2,
   irstBearing: 0,
   irstInclination: 0,
+  warpCoreAttenuated: false,
+  rdneFieldEffect: null,
 }
 
 export const defaultNpcShipConfig: NpcShipConfig = {

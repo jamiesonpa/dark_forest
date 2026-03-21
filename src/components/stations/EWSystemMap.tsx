@@ -28,14 +28,15 @@ const BG_SCREEN = '#080808'
 const LINE_GREY = '#7d848e'
 const SELECT_BLUE = '#6cb8ff'
 
-const MAP_TABS = ['MAP', 'RADAR'] as const
 const B_SCOPE_MIN_VIEW_SPAN_DEG = 12
 const B_SCOPE_AZ_GRID_STEP_DEG = 5
 const B_SCOPE_GREEN = '#44ff66'
 const B_SCOPE_GREEN_DIM = '#1f8a39'
 const B_SCOPE_GREEN_GLOW = '#88ffaa'
 
-type MapTab = (typeof MAP_TABS)[number]
+/** MAP / RADAR views only; TV is handled on `EWConsole` MFD. */
+export type EwSystemMapMfdTab = 'MAP' | 'RADAR'
+
 type BScopeTrack = {
   id: string
   label: string
@@ -565,6 +566,7 @@ function SystemMapScene({
   selectedMarkerId,
   selectedTargetPosition,
   shipPosition,
+  primaryStarName,
   time,
 }: {
   hoveredMarkerId: string | null
@@ -575,6 +577,7 @@ function SystemMapScene({
   selectedMarkerId: string | null
   selectedTargetPosition: DisplayPoint
   shipPosition: DisplayPoint
+  primaryStarName: string
   time: number
 }) {
   const starCoreRef = useRef<THREE.Sprite>(null)
@@ -626,7 +629,7 @@ function SystemMapScene({
             bearingDeg: 0,
             id: 'star',
             inclinationDeg: 0,
-            name: 'Dark Forest Prime',
+            name: primaryStarName,
             distanceWorldUnits: 0,
           })
         }}
@@ -663,7 +666,7 @@ function SystemMapScene({
               bearingDeg: 0,
               id: 'star',
               inclinationDeg: 0,
-              name: 'Dark Forest Prime',
+              name: primaryStarName,
               distanceWorldUnits: 0,
             })
           }}
@@ -696,14 +699,13 @@ function SystemMapScene({
   )
 }
 
-export function EWSystemMap({ time }: { time: number }) {
+export function EWSystemMap({ time, mfdTab }: { time: number; mfdTab: EwSystemMapMfdTab }) {
   const dragRef = useRef<{
     pointerId: number
     lastX: number
     lastY: number
   } | null>(null)
   const dragMovedRef = useRef(false)
-  const [activeTab, setActiveTab] = useState<MapTab>('MAP')
   const [bScopeRangeIdx, setBScopeRangeIdx] = useState(B_SCOPE_RANGE_OPTIONS_KM.length - 1)
   const [bScopeBearingMode, setBScopeBearingMode] = useState<'REL' | 'ABS'>('REL')
   const [bScopeViewMinDeg, setBScopeViewMinDeg] = useState(-B_SCOPE_AZ_LIMIT_DEG)
@@ -1087,7 +1089,7 @@ export function EWSystemMap({ time }: { time: number }) {
   }, [ewRadarOn, radarPowerClamped, setEwRadar])
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (activeTab !== 'MAP') return
+    if (mfdTab !== 'MAP') return
     if (hoveredMarker) return
     setHoveredMarker(null)
     dragMovedRef.current = false
@@ -1139,7 +1141,7 @@ export function EWSystemMap({ time }: { time: number }) {
   }
 
   const handleClick = () => {
-    if (activeTab !== 'MAP') return
+    if (mfdTab !== 'MAP') return
     if (dragMovedRef.current) {
       dragMovedRef.current = false
       return
@@ -1152,48 +1154,13 @@ export function EWSystemMap({ time }: { time: number }) {
   }
 
   const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (activeTab !== 'MAP') return
+    if (mfdTab !== 'MAP') return
     event.preventDefault()
     setZoomDistance((prev) => clamp(prev + event.deltaY * 0.01, 6, 18))
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      <div
-        style={{
-          display: 'flex',
-          gap: 4,
-          padding: '6px 8px',
-          borderBottom: `1px solid ${AMBER_DIM}55`,
-          background: 'rgba(0,0,0,0.28)',
-          flexShrink: 0,
-        }}
-      >
-        {MAP_TABS.map((tab) => {
-          const active = tab === activeTab
-          return (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              style={{
-                padding: '4px 10px',
-                borderRadius: 1,
-                border: `1px solid ${active ? AMBER : AMBER_DIM}`,
-                background: active ? 'rgba(255,176,0,0.14)' : 'rgba(255,176,0,0.04)',
-                color: active ? AMBER_GLOW : AMBER_DIM,
-                fontFamily: "'Consolas', 'Monaco', monospace",
-                fontSize: 10,
-                letterSpacing: 1,
-                cursor: 'pointer',
-              }}
-            >
-              {tab}
-            </button>
-          )
-        })}
-      </div>
-
       <div
         style={{
           flex: 1,
@@ -1207,7 +1174,7 @@ export function EWSystemMap({ time }: { time: number }) {
             height: '100%',
             position: 'relative',
             background: BG_SCREEN,
-            cursor: activeTab === 'MAP' ? (isDragging ? 'grabbing' : 'grab') : 'default',
+            cursor: mfdTab === 'MAP' ? (isDragging ? 'grabbing' : 'grab') : 'default',
           }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -1217,7 +1184,7 @@ export function EWSystemMap({ time }: { time: number }) {
           onClick={handleClick}
           onWheel={handleWheel}
         >
-          {activeTab === 'MAP' ? (
+          {mfdTab === 'MAP' ? (
             <>
               <div
                 style={{
@@ -1320,11 +1287,12 @@ export function EWSystemMap({ time }: { time: number }) {
                   selectedMarkerId={selectedMarkerId}
                   selectedTargetPosition={selectedTargetPosition}
                   shipPosition={shipDisplayPosition}
+                  primaryStarName={star?.name ?? 'STAR'}
                   time={time}
                 />
               </Canvas>
             </>
-          ) : activeTab === 'RADAR' ? (
+          ) : (
             <div
               style={{
                 width: '100%',
@@ -1896,24 +1864,6 @@ export function EWSystemMap({ time }: { time: number }) {
                   </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <div
-              style={{
-                width: '100%',
-                height: '100%',
-                border: '1px solid rgba(255,176,0,0.08)',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: AMBER,
-                fontFamily: "'Consolas', 'Monaco', monospace",
-                gap: 10,
-              }}
-            >
-              <div style={{ fontSize: 30, fontWeight: 'bold' }}>{`${activeTab} MODE`}</div>
-              <div style={{ fontSize: 18, color: AMBER_DIM }}>NO SENSOR PAGE INSTALLED</div>
             </div>
           )}
         </div>

@@ -1,6 +1,8 @@
 import { Client, type Room } from 'colyseus.js'
 import type { StarSystemGenerationConfig, StarSystemSnapshot } from '@/types/game'
 import type {
+  EwRdneFieldMessage,
+  EwRwcaAttenuateMessage,
   OrdnanceSnapshotMessage,
   ShipDamageMessage,
   ShipMoveUpdate,
@@ -151,6 +153,16 @@ class ColyseusMultiplayerClient {
   sendWarpIntent(payload: WarpIntentPayload) {
     if (!this.room) return
     this.room.send('warp', payload)
+  }
+
+  sendEwRwcaAttenuate(message: EwRwcaAttenuateMessage) {
+    if (!this.room) return
+    this.room.send('ew_rwca_attenuate', message)
+  }
+
+  sendEwRdneField(message: EwRdneFieldMessage) {
+    if (!this.room) return
+    this.room.send('ew_rdne_field', message)
   }
 
   sendRegenerateSystem(config: Partial<StarSystemGenerationConfig>) {

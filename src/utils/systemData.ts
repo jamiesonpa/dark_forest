@@ -4,6 +4,20 @@ import type {
   StarSystemGenerationConfig,
   StarSystemSnapshot,
 } from '@/types/game'
+import { generatePrimaryStarDesignationFromSeed } from '../../shared/starDesignation'
+
+export const DEFAULT_STAR_SYSTEM_CONFIG: StarSystemGenerationConfig = {
+  seed: 1337,
+  planetCount: 2,
+  asteroidBeltCount: 1,
+  minOrbitAu: 60,
+  maxOrbitAu: 220,
+  minSeparationAu: 35,
+}
+
+const defaultPrimaryStarName = generatePrimaryStarDesignationFromSeed(
+  DEFAULT_STAR_SYSTEM_CONFIG.seed
+)
 
 export const STAR_SYSTEM: StarSystemData = {
   id: 'df-1',
@@ -11,7 +25,7 @@ export const STAR_SYSTEM: StarSystemData = {
   celestials: [
     {
       id: 'star',
-      name: 'Dark Forest Prime',
+      name: defaultPrimaryStarName,
       type: 'star',
       position: [0, 0, 0],
       gridRadius: 5000,
@@ -42,15 +56,6 @@ export const STAR_SYSTEM: StarSystemData = {
       radius: 200,
     },
   ],
-}
-
-export const DEFAULT_STAR_SYSTEM_CONFIG: StarSystemGenerationConfig = {
-  seed: 1337,
-  planetCount: 2,
-  asteroidBeltCount: 1,
-  minOrbitAu: 60,
-  maxOrbitAu: 220,
-  minSeparationAu: 35,
 }
 
 export const DEFAULT_STAR_SYSTEM_SNAPSHOT: StarSystemSnapshot = {

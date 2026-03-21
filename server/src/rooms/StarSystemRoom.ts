@@ -1,5 +1,7 @@
 import colyseus, { type Client } from 'colyseus'
 import type {
+  EwRdneFieldMessage,
+  EwRwcaAttenuateMessage,
   MoveMessage,
   OrdnanceSnapshotMessage,
   ShipDamageMessage,
@@ -11,7 +13,7 @@ import type {
   WireTorpedoExplosion,
 } from '../../../shared/contracts/multiplayer.js'
 import { ROOM_MESSAGES } from '../net/messages.js'
-import { applyMoveMessage, applyWarpMessage, buildShipsSnapshot } from '../net/shipSnapshots.js'
+import { applyMoveMessage, applyWarpMessage, buildShipsSnapshot, type RdneFieldPayload } from '../net/shipSnapshots.js'
 import { createShipForJoin } from '../rooms/roomLifecycle.js'
 import { StarSystemRoomState } from '../schema/GameState.js'
 import type { ShipState } from '../schema/GameState.js'
@@ -89,6 +91,10 @@ function applyLayeredDamage(
 
 export class StarSystemRoom extends Room<StarSystemRoomState> {
   maxClients = 20
+  /** Attacker session id → target session id being RWCA-attenuated (validated). */
+  private rwcaAttenuationTargetBySource = new Map<string, string | null>()
+  /** Attacker session id → RDNE field being applied to a target (validated). */
+  private rdneFieldBySource = new Map<string, { targetShipId: string; payload: RdneFieldPayload } | null>()
   private moveDebugLastLogMs = new Map<string, number>()
   private moveDebugLastPos = new Map<string, { x: number; y: number; z: number }>()
   private starSystemSnapshot: StarSystemSnapshot = buildStarSystemSnapshot(getStartupStarSystemConfig())
@@ -119,7 +125,17 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
   }
 
   private broadcastSnapshot() {
-    this.broadcast(ROOM_MESSAGES.shipsSnapshot, buildShipsSnapshot(this.state.ships))
+    this.broadcast(
+      ROOM_MESSAGES.shipsSnapshot,
+      buildShipsSnapshot(this.state.ships, this.rwcaAttenuationTargetBySource, this.rdneFieldBySource)
+    )
+  }
+
+  private isRwcaAttenuatedVictim(sessionId: string): boolean {
+    for (const target of this.rwcaAttenuationTargetBySource.values()) {
+      if (target === sessionId) return true
+    }
+    return false
   }
 
   private broadcastOrdnanceSnapshot(client?: Client) {
@@ -157,10 +173,67 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
 
     this.onMessage(ROOM_MESSAGES.warp, (client, message: WarpMessage) => {
       const ship = this.state.ships.get(client.sessionId)
-      if (ship) {
-        applyWarpMessage(ship, message)
-        this.broadcastSnapshot()
+      if (!ship) return
+      if (this.isRwcaAttenuatedVictim(client.sessionId)) return
+      applyWarpMessage(ship, message)
+      this.broadcastSnapshot()
+    })
+
+    this.onMessage(ROOM_MESSAGES.ewRwcaAttenuate, (client, message: EwRwcaAttenuateMessage) => {
+      const source = this.state.ships.get(client.sessionId)
+      if (!source) return
+
+      let nextTarget: string | null = null
+      const raw = message?.targetShipId
+      if (typeof raw === 'string' && raw.length > 0) {
+        const target = this.state.ships.get(raw)
+        if (
+          target
+          && raw !== client.sessionId
+          && target.currentCelestialId === source.currentCelestialId
+        ) {
+          nextTarget = raw
+        }
       }
+
+      this.rwcaAttenuationTargetBySource.set(client.sessionId, nextTarget)
+      this.broadcastSnapshot()
+    })
+
+    this.onMessage(ROOM_MESSAGES.ewRdneField, (client, message: EwRdneFieldMessage) => {
+      const source = this.state.ships.get(client.sessionId)
+      if (!source) return
+
+      const raw = message?.targetShipId
+      if (typeof raw !== 'string' || raw.length === 0) {
+        this.rdneFieldBySource.set(client.sessionId, null)
+        this.broadcastSnapshot()
+        return
+      }
+
+      const target = this.state.ships.get(raw)
+      if (
+        !target
+        || raw === client.sessionId
+        || target.currentCelestialId !== source.currentCelestialId
+      ) {
+        this.rdneFieldBySource.set(client.sessionId, null)
+        this.broadcastSnapshot()
+        return
+      }
+
+      const kind = message.kind === 'source' || message.kind === 'sink' ? message.kind : 'sink'
+      const wo = Array.isArray(message.worldOffset) && message.worldOffset.length >= 3
+        ? [message.worldOffset[0], message.worldOffset[1], message.worldOffset[2]] as [number, number, number]
+        : [0, 0, 0] as [number, number, number]
+      const intensity = typeof message.intensity === 'number' ? Math.max(0, Math.min(1, message.intensity)) : 0
+      const forceMagnitude = typeof message.forceMagnitude === 'number' ? Math.max(0, Math.min(1, message.forceMagnitude)) : 0
+
+      this.rdneFieldBySource.set(client.sessionId, {
+        targetShipId: raw,
+        payload: { kind, worldOffset: wo, intensity, forceMagnitude },
+      })
+      this.broadcastSnapshot()
     })
 
     this.onMessage(ROOM_MESSAGES.starSystemRegenerate, (_client, message: Partial<StarSystemGenerationConfig>) => {
@@ -225,6 +298,8 @@ export class StarSystemRoom extends Room<StarSystemRoomState> {
 
   onLeave(client: Client) {
     this.state.ships.delete(client.sessionId)
+    this.rwcaAttenuationTargetBySource.delete(client.sessionId)
+    this.rdneFieldBySource.delete(client.sessionId)
     delete this.ordnanceBySession[client.sessionId]
     this.broadcastSnapshot()
     this.broadcastOrdnanceSnapshot()

@@ -32,6 +32,7 @@ describe('shipSnapshots', () => {
         position: [10, 20, 30],
         actualVelocity: [2, 3, 4],
         actualSpeed: 42,
+        warpCoreAttenuated: false,
       })
     )
   })

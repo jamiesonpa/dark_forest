@@ -1961,6 +1961,16 @@ body {
   cursor: not-allowed;
 }
 
+.warp-button.attenuated {
+  background: rgba(220, 60, 60, 0.22);
+  border-color: rgba(255, 120, 120, 0.95);
+  color: rgba(255, 200, 200, 1);
+}
+
+.warp-button.attenuated:disabled {
+  opacity: 1;
+}
+
 .warp-marker-tooltip {
   background: rgba(8, 10, 16, 0.9);
   border: 1px solid rgba(117, 215, 255, 0.6);

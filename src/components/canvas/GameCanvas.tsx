@@ -2,6 +2,7 @@ import { Canvas, useThree } from '@react-three/fiber'
 import { EffectComposer, Bloom } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { StarSystem } from './StarSystem'
+import { RdneSpacetimeWarpEffect } from './RdneSpacetimeWarpEffect'
 
 function MainCameraSetup() {
   const { camera } = useThree()
@@ -27,6 +28,7 @@ export function GameCanvas() {
         <MainCameraSetup />
         <StarSystem />
         <EffectComposer multisampling={0}>
+          <RdneSpacetimeWarpEffect />
           <Bloom
             intensity={2.6}
             luminanceThreshold={0.03}
